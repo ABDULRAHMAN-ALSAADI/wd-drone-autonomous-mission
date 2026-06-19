@@ -23,6 +23,8 @@ class VehicleStatus:
     relative_altitude_m: float | None = None
     groundspeed_m_s: float | None = None
     heading_deg: float | None = None
+    current_waypoint: int | None = None
+    last_reached_waypoint: int | None = None
 
     def update(self, message: Any) -> None:
         message_type = message.get_type()
@@ -64,6 +66,12 @@ class VehicleStatus:
             self.groundspeed_m_s = float(message.groundspeed)
             self.heading_deg = float(message.heading)
 
+        elif message_type == "MISSION_CURRENT":
+            self.current_waypoint = int(message.seq)
+
+        elif message_type == "MISSION_ITEM_REACHED":
+            self.last_reached_waypoint = int(message.seq)
+
     def heartbeat_age_s(self) -> float | None:
         if self.last_heartbeat_monotonic is None:
             return None
@@ -93,6 +101,8 @@ class VehicleStatus:
             f"sys={self.system_id or '-'} "
             f"mode={self.mode} "
             f"state={armed_text} "
+            f"wp={self.current_waypoint if self.current_waypoint is not None else '-'} "
+            f"reached={self.last_reached_waypoint if self.last_reached_waypoint is not None else '-'} "
             f"gps_fix={self.gps_fix_type if self.gps_fix_type is not None else '-'} "
             f"sats={self.satellites_visible if self.satellites_visible is not None else '-'} "
             f"alt={fmt(self.relative_altitude_m)}m "

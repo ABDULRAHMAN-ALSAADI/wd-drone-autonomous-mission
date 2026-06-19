@@ -5,16 +5,18 @@
 - [x] Repository structure
 - [x] SITL and Cube UART connection profiles
 - [x] Read-only heartbeat and telemetry monitor
-- [ ] Confirm stable SITL connection on port 14551
-- [ ] Save a first `.tlog` and terminal test record
+- [x] Confirm stable SITL connection on port 14551
+- [x] Run unit tests
 
 ## Phase 2 — Mission observation
 
-- [ ] Read current AUTO mission index
-- [ ] Detect entry into the search area
-- [ ] Create mission event logger
-- [ ] Add deterministic mission-state transitions
-- [ ] Add unit tests for every state transition
+- [x] Read current AUTO mission index
+- [x] Detect entry into the search area
+- [x] Create mission event logger
+- [x] Add deterministic mission-state transitions
+- [x] Add unit tests for mission-state transitions
+- [ ] Validate waypoint changes during a real SITL AUTO mission
+- [ ] Set the final search-start waypoint from the competition mission
 
 ## Phase 3 — Safe AUTO/GUIDED control
 

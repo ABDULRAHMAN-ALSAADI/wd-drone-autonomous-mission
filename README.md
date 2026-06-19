@@ -7,149 +7,117 @@ The flight stack is divided into two systems:
 - **Cube Orange Plus / ArduPilot:** flight control, navigation, failsafes and payload outputs.
 - **Raspberry Pi 5:** mission supervision, computer vision, target centering and payload decisions.
 
-The first repository version contains only a **read-only MAVLink monitor**. It does not arm, change mode, move the aircraft or release a payload.
+## Current version: Phase 2
 
-## Hardware target
+Phase 2 is still read-only. It now:
 
-- Cube Orange Plus
-- Raspberry Pi 5
-- Raspberry Pi AI HAT+
-- Raspberry Pi Camera Module 3 Standard
-- HERE3+ GNSS
-- RFD900x telemetry
-- Two payload release channels
+- Connects to SITL or the future Cube UART profile
+- Reads vehicle telemetry
+- Reads the current AUTO mission waypoint
+- Detects when the configured search waypoint is reached
+- Runs a deterministic mission-state observer
+- Logs state transitions and waypoint events to JSON Lines
+- Sends no flight commands
 
-## Repository structure
-
-```text
-wd-drone-autonomous-mission/
-├── config/
-│   └── settings.json
-├── docs/
-│   ├── ARCHITECTURE.md
-│   └── ROADMAP.md
-├── scripts/
-│   ├── run_sitl_monitor.sh
-│   ├── run_uart_monitor.sh
-│   └── setup.sh
-├── src/
-│   └── wd_drone/
-│       ├── __init__.py
-│       ├── config.py
-│       ├── main.py
-│       ├── mavlink_client.py
-│       └── vehicle_status.py
-├── tests/
-│   └── test_config.py
-├── .gitignore
-├── README.md
-└── requirements.txt
-```
-
-## 1. Install
+## Install
 
 ```bash
-cd ~/wd-drone-autonomous-mission
+cd ~/FOR_COMP/wd-drone-autonomous-mission
 chmod +x scripts/*.sh
 ./scripts/setup.sh
 ```
 
-## 2. Start SITL with a dedicated application output
+## Configure the search waypoint
 
-Your current `sitl` alias must forward MAVLink to UDP port `14551`.
-
-A direct command has this structure:
-
-```bash
-cd ~/ardupilot/ArduCopter
-
-../Tools/autotest/sim_vehicle.py \
-  -v ArduCopter \
-  -f gazebo-iris \
-  --model JSON \
-  --map \
-  --console \
-  --out=udp:127.0.0.1:14551
-```
-
-Keep Gazebo and SITL running.
-
-## 3. Run the Phase 1 monitor
-
-Open another terminal:
-
-```bash
-cd ~/wd-drone-autonomous-mission
-./scripts/run_sitl_monitor.sh
-```
-
-Expected result:
+Edit:
 
 ```text
-Connected with profile 'sitl'. This Phase 1 program is read-only.
-link=OK sys=1 mode=STABILIZE state=DISARMED gps_fix=3 sats=10 alt=0.0m ...
+config/settings.json
 ```
 
-Stop it with `Ctrl+C`.
+The important fields are:
 
-## 4. Run tests
+```json
+{
+  "search_start_waypoint": 2,
+  "mission_complete_waypoint": 999
+}
+```
+
+`search_start_waypoint` is the first mission item at which computer-vision search is considered active.
+
+`mission_complete_waypoint` is a temporary upper threshold. It remains `999` until the final mission item numbering is fixed.
+
+## Start the simulation
+
+Terminal 1:
 
 ```bash
-cd ~/wd-drone-autonomous-mission
+drone
+```
+
+Terminal 2:
+
+```bash
+sitl
+```
+
+Terminal 3:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./scripts/run_sitl_observer.sh
+```
+
+Expected initial output:
+
+```text
+MISSION_STATE STARTUP -> WAITING_FOR_ARM: vehicle is disarmed
+mission=WAITING_FOR_ARM link=OK sys=1 mode=STABILIZE state=DISARMED wp=0 ...
+```
+
+During an AUTO mission, the observer changes through states such as:
+
+```text
+WAITING_FOR_ARM
+WAITING_FOR_AUTO
+AUTO_TRANSIT
+SEARCH_ACTIVE
+MISSION_COMPLETE
+```
+
+## Event log
+
+Mission events are stored at:
+
+```text
+logs/mission_events.jsonl
+```
+
+View the latest events:
+
+```bash
+tail -n 20 logs/mission_events.jsonl
+```
+
+Each line is valid JSON and contains a UTC timestamp, event type, mission state, mode, arm status and waypoint data.
+
+## Tests
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
 source .venv/bin/activate
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-## 5. Connection profiles
-
-The profiles are stored in `config/settings.json`.
-
-### SITL
-
-```json
-{
-  "connection": "udpin:0.0.0.0:14551",
-  "baud": null
-}
-```
-
-### Cube Orange to Raspberry Pi UART
-
-```json
-{
-  "connection": "/dev/serial0",
-  "baud": 921600
-}
-```
-
-Do not use the real-aircraft profile until the Cube–Pi wiring and serial parameters have been verified without propellers.
-
-## 6. Initial Git setup
+## Push Phase 2
 
 ```bash
-cd ~/wd-drone-autonomous-mission
-
-git init
 git add .
-git commit -m "feat: add Phase 1 MAVLink telemetry monitor"
-git branch -M main
+git commit -m "feat: add Phase 2 mission observation and event logging"
+git push
 ```
-
-Create an empty GitHub repository named:
-
-```text
-wd-drone-autonomous-mission
-```
-
-Then connect and push it:
-
-```bash
-git remote add origin https://github.com/YOUR_USERNAME/wd-drone-autonomous-mission.git
-git push -u origin main
-```
-
-Replace `YOUR_USERNAME` with the GitHub account name.
 
 ## Safety boundary
 
-Phase 1 is deliberately read-only. Flight commands will be added only after heartbeat reception, telemetry staleness detection, state logging and failure handling are verified in SITL.
+Phase 2 does not arm, disarm, change flight mode, move the aircraft, alter the mission or actuate payload outputs.

@@ -29,6 +29,8 @@ class MissionConfig:
     lane_spacing_m: float
     centering_max_speed_m_s: float
     drop_altitude_m: float
+    search_start_waypoint: int
+    mission_complete_waypoint: int
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,18 @@ def load_config(path: str | Path, profile_override: str | None = None) -> AppCon
     baud_value = selected.get("baud")
     baud = int(baud_value) if baud_value is not None else None
 
+    search_start_waypoint = int(_require(mission, "search_start_waypoint"))
+    mission_complete_waypoint = int(
+        _require(mission, "mission_complete_waypoint")
+    )
+
+    if search_start_waypoint < 0:
+        raise ValueError("search_start_waypoint must be zero or greater")
+    if mission_complete_waypoint <= search_start_waypoint:
+        raise ValueError(
+            "mission_complete_waypoint must be greater than search_start_waypoint"
+        )
+
     return AppConfig(
         profile=ConnectionProfile(
             name=profile_name,
@@ -94,5 +108,7 @@ def load_config(path: str | Path, profile_override: str | None = None) -> AppCon
                 _require(mission, "centering_max_speed_m_s")
             ),
             drop_altitude_m=float(_require(mission, "drop_altitude_m")),
+            search_start_waypoint=search_start_waypoint,
+            mission_complete_waypoint=mission_complete_waypoint,
         ),
     )

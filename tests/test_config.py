@@ -27,7 +27,9 @@ class ConfigTests(unittest.TestCase):
                 "search_speed_m_s": 2.5,
                 "lane_spacing_m": 5.5,
                 "centering_max_speed_m_s": 1,
-                "drop_altitude_m": 3.5
+                "drop_altitude_m": 3.5,
+                "search_start_waypoint": 2,
+                "mission_complete_waypoint": 20
             }
         }
 
@@ -42,6 +44,8 @@ class ConfigTests(unittest.TestCase):
             "udpin:0.0.0.0:14551"
         )
         self.assertIsNone(config.profile.baud)
+        self.assertEqual(config.mission.search_start_waypoint, 2)
+        self.assertEqual(config.mission.mission_complete_waypoint, 20)
 
 
 if __name__ == "__main__":
