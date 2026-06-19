@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+import unittest
+
+import cv2
+import numpy as np
+
+from strict_vision import HitTracker, StrictShapeDetector
+from control_math import altitude_velocity_down
+from target_mission_v2 import (
+    enforce_parameters,
+    payload_colour_for_target,
+    required_ardupilot_parameters,
+    validate_config,
+)
+
+
+class VisionTests(unittest.TestCase):
+    def setUp(self):
+        self.detector = StrictShapeDetector(search_min_area_px=100)
+
+    def targets(self, image):
+        detections, _ = self.detector.search(image)
+        return {x.target for x in detections}
+
+    def detections(self, image):
+        detections, _ = self.detector.search(image)
+        return detections
+
+    def test_detects_red_triangle(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        cv2.fillConvexPoly(image, np.array([[220, 70], [70, 370], [370, 370]], np.int32), (0, 0, 255))
+        self.assertIn("red_triangle", self.targets(image))
+
+    def test_rejects_red_square(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        cv2.rectangle(image, (150, 110), (430, 390), (0, 0, 255), -1)
+        self.assertNotIn("red_triangle", self.targets(image))
+
+    def test_rejects_red_rectangle(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        cv2.rectangle(image, (100, 170), (500, 320), (0, 0, 255), -1)
+        self.assertNotIn("red_triangle", self.targets(image))
+
+    def test_rejects_blurred_red_square(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        cv2.rectangle(image, (160, 120), (420, 380), (0, 0, 255), -1)
+        image = cv2.GaussianBlur(image, (11, 11), 2.0)
+        self.assertNotIn("red_triangle", self.targets(image))
+
+    def test_detects_blue_hexagon(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        points = np.array([[520, 220], [585, 120], [710, 120], [775, 220], [710, 320], [585, 320]], np.int32)
+        cv2.fillConvexPoly(image, points, (255, 0, 0))
+        self.assertIn("blue_hexagon", self.targets(image))
+
+    def test_detects_perspective_blue_hexagon(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        points = np.array([[510, 235], [580, 145], [720, 160], [785, 245], [700, 325], [570, 305]], np.int32)
+        cv2.fillConvexPoly(image, points, (255, 0, 0))
+        image = cv2.GaussianBlur(image, (7, 7), 1.2)
+        self.assertIn("blue_hexagon", self.targets(image))
+
+    def test_detects_gazebo_purple_blue_hexagon(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        image[:] = (55, 85, 45)
+        points = np.array([[300, 185], [388, 135], [480, 188], [478, 295], [392, 355], [298, 300]], np.int32)
+        cv2.fillConvexPoly(image, points, (210, 70, 105))
+        image = cv2.GaussianBlur(image, (5, 5), 0.9)
+        self.assertIn("blue_hexagon", self.targets(image))
+
+    def test_rejects_blue_square(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        cv2.rectangle(image, (150, 110), (430, 390), (255, 0, 0), -1)
+        self.assertNotIn("blue_hexagon", self.targets(image))
+
+    def test_rejects_blue_rectangle(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        cv2.rectangle(image, (100, 170), (500, 320), (255, 0, 0), -1)
+        self.assertNotIn("blue_hexagon", self.targets(image))
+
+    def test_rejects_blue_runway_strip(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        image[:] = (180, 180, 180)
+        box = cv2.boxPoints(((520, 300), (260, 52), -32)).astype(np.int32)
+        cv2.fillConvexPoly(image, box, (210, 70, 105))
+        image = cv2.GaussianBlur(image, (5, 5), 0.8)
+        self.assertNotIn("blue_hexagon", self.targets(image))
+
+    def test_rejects_multiple_blue_runway_bars(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        image[:] = (180, 180, 180)
+        for center in ((210, 310), (385, 285), (560, 260), (735, 235)):
+            box = cv2.boxPoints((center, (135, 28), -10)).astype(np.int32)
+            cv2.fillConvexPoly(image, box, (210, 70, 105))
+        image = cv2.GaussianBlur(image, (5, 5), 0.8)
+        self.assertNotIn("blue_hexagon", self.targets(image))
+
+    def test_rejects_rotated_blue_square(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        cv2.fillConvexPoly(image, np.array([[300, 70], [465, 235], [300, 400], [135, 235]], np.int32), (255, 0, 0))
+        self.assertNotIn("blue_hexagon", self.targets(image))
+
+    def test_three_hit_confirmation(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        cv2.fillConvexPoly(image, np.array([[220, 70], [70, 370], [370, 370]], np.int32), (0, 0, 255))
+        detections = self.detections(image)
+        tracker = HitTracker(required_hits=3, window_s=1.5, max_jump_px=160)
+        self.assertIsNone(tracker.update(detections, {"red_triangle"}, 1.0))
+        self.assertIsNone(tracker.update(detections, {"red_triangle"}, 1.2))
+        confirmed = tracker.update(detections, {"red_triangle"}, 1.4)
+        self.assertIsNotNone(confirmed)
+        self.assertEqual(confirmed.hits, 3)
+
+    def test_tracker_rejects_unreasonable_jump(self):
+        detector = StrictShapeDetector(search_min_area_px=100)
+        image = np.zeros((540, 960, 3), np.uint8)
+        cv2.fillConvexPoly(image, np.array([[820, 70], [670, 370], [970, 370]], np.int32), (0, 0, 255))
+        tracked, _ = detector.track_colour(image, "red_triangle", (100, 100), max_jump_px=80)
+        self.assertIsNone(tracked)
+
+    def test_tracker_rejects_blue_runway_strip_as_hexagon(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        image[:] = (180, 180, 180)
+        box = cv2.boxPoints(((520, 300), (260, 52), -3)).astype(np.int32)
+        cv2.fillConvexPoly(image, box, (210, 70, 105))
+        tracked, _ = self.detector.track_colour(image, "blue_hexagon", (520, 300), max_jump_px=400)
+        self.assertIsNone(tracked)
+
+    def test_tracker_keeps_valid_blue_hexagon(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        points = np.array([[300, 185], [388, 135], [480, 188], [478, 295], [392, 355], [298, 300]], np.int32)
+        cv2.fillConvexPoly(image, points, (210, 70, 105))
+        tracked, _ = self.detector.track_colour(image, "blue_hexagon", (390, 245), max_jump_px=120)
+        self.assertIsNotNone(tracked)
+        self.assertEqual(tracked.target, "blue_hexagon")
+
+    def test_tracker_rejects_unknown_target(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        tracked, _ = self.detector.track_colour(image, "yellow_circle", (100, 100))
+        self.assertIsNone(tracked)
+
+
+class AltitudeTests(unittest.TestCase):
+    def test_holds_five_metres(self):
+        self.assertEqual(altitude_velocity_down(5.0, 5.0, 0.2, 0.45, 0.3), 0.0)
+
+    def test_descends_only_when_above_five(self):
+        self.assertGreater(altitude_velocity_down(6.0, 5.0, 0.2, 0.45, 0.3), 0.0)
+
+    def test_climbs_only_when_below_five(self):
+        self.assertLess(altitude_velocity_down(4.0, 5.0, 0.2, 0.45, 0.3), 0.0)
+
+    def test_vertical_speed_is_limited(self):
+        self.assertAlmostEqual(altitude_velocity_down(15.0, 5.0, 0.2, 0.45, 0.3), 0.3)
+
+
+class MissionConfigTests(unittest.TestCase):
+    def config(self):
+        return {
+            "mavlink": {"connection": "udpin:0.0.0.0:14551"},
+            "camera": {"udp_port": 5600},
+            "mission": {
+                "search_start_wp": 2,
+                "survey_altitude_m": 5.0,
+                "mode_change_timeout_s": 5.0,
+                "max_flight_time_s": 600.0,
+            },
+            "parameters": {
+                "enforce": True,
+                "rtl_alt_cm": 500.0,
+                "rtl_climb_min_cm": 0.0,
+                "mis_restart": 0,
+                "read_timeout_s": 8.0,
+                "missing_action": "warn",
+            },
+            "vision": {
+                "process_width": 960,
+                "search_min_area_px": 220.0,
+                "tracking_min_area_px": 120.0,
+                "required_hits": 3,
+                "confirmation_window_s": 1.5,
+                "max_lock_jump_px": 160.0,
+                "debug_rejects": False,
+            },
+            "control": {
+                "command_rate_hz": 10.0,
+                "center_kp": 0.85,
+                "center_max_speed_m_s": 0.65,
+                "center_tolerance_px": 34.0,
+                "center_hold_s": 0.8,
+                "target_lost_timeout_s": 2.0,
+                "altitude_control": "hold_configured",
+                "altitude_tolerance_m": 0.2,
+                "altitude_kp": 0.45,
+                "altitude_max_speed_m_s": 0.3,
+                "image_y_to_forward_sign": -1.0,
+                "image_x_to_right_sign": 1.0,
+            },
+            "payload": {
+                "simulate_only": True,
+                "servo_channel": 9,
+                "release_pwm": 1900,
+                "reset_pwm": 1100,
+                "release_hold_s": 1.0,
+                "total_action_time_s": 1.5,
+            },
+            "display": {"show_main_window": False, "show_masks": False},
+            "logging": {"directory": "logs/mission_v2", "flush_interval_s": 0.5},
+        }
+
+    def test_payload_colour_matches_rotary_wing_rules(self):
+        self.assertEqual(payload_colour_for_target("blue_hexagon"), "red")
+        self.assertEqual(payload_colour_for_target("red_triangle"), "blue")
+
+    def test_ardupilot_parameters_use_real_names_and_centimetres(self):
+        self.assertEqual(
+            required_ardupilot_parameters(self.config()),
+            {"RTL_ALT": 500.0, "RTL_CLIMB_MIN": 0.0, "MIS_RESTART": 0.0},
+        )
+
+    def test_legacy_metre_parameter_config_is_converted(self):
+        config = self.config()
+        config["parameters"] = {"rtl_alt_m": 5.0, "rtl_climb_min_m": 0.0, "mis_restart": 0}
+        self.assertEqual(required_ardupilot_parameters(config)["RTL_ALT"], 500.0)
+
+    def test_validate_config_rejects_bad_command_rate(self):
+        config = self.config()
+        config["control"]["command_rate_hz"] = 0
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_validate_config_rejects_unknown_missing_action(self):
+        config = self.config()
+        config["parameters"]["missing_action"] = "ignore"
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_validate_config_allows_qgc_owned_altitude_without_survey_altitude(self):
+        config = self.config()
+        config["control"]["altitude_control"] = "off"
+        del config["mission"]["survey_altitude_m"]
+        validate_config(config)
+
+    def test_validate_config_rejects_unknown_altitude_control(self):
+        config = self.config()
+        config["control"]["altitude_control"] = "sometimes"
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_enforce_parameters_can_be_disabled(self):
+        class FakeVehicle:
+            def read_parameter(self, name, timeout_s=8.0):
+                raise AssertionError("read_parameter should not be called")
+
+            def set_parameter(self, name, value):
+                raise AssertionError("set_parameter should not be called")
+
+        config = self.config()
+        config["parameters"]["enforce"] = False
+        enforce_parameters(FakeVehicle(), config)
+
+    def test_enforce_parameters_sets_only_when_needed(self):
+        class FakeVehicle:
+            def __init__(self):
+                self.values = {"RTL_ALT": 1500.0, "RTL_CLIMB_MIN": 0.0, "MIS_RESTART": 0.0}
+                self.set_calls = []
+
+            def read_parameter(self, name, timeout_s=8.0):
+                return self.values[name]
+
+            def set_parameter(self, name, value):
+                self.set_calls.append((name, value))
+                self.values[name] = value
+
+        vehicle = FakeVehicle()
+        enforce_parameters(vehicle, self.config())
+        self.assertEqual(vehicle.set_calls, [("RTL_ALT", 500.0)])
+
+    def test_enforce_parameters_can_warn_for_missing_sitl_parameter(self):
+        class FakeVehicle:
+            def __init__(self):
+                self.reads = []
+
+            def read_parameter(self, name, timeout_s=8.0):
+                self.reads.append((name, timeout_s))
+                return None
+
+            def set_parameter(self, name, value):
+                raise AssertionError("set_parameter should not be called")
+
+        config = self.config()
+        config["parameters"]["read_timeout_s"] = 2.5
+        enforce_parameters(FakeVehicle(), config)
+
+    def test_enforce_parameters_fails_for_missing_real_parameter_when_strict(self):
+        class FakeVehicle:
+            def read_parameter(self, name, timeout_s=8.0):
+                return None
+
+            def set_parameter(self, name, value):
+                raise AssertionError("set_parameter should not be called")
+
+        config = self.config()
+        config["parameters"]["missing_action"] = "fail"
+        with self.assertRaises(RuntimeError):
+            enforce_parameters(FakeVehicle(), config)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

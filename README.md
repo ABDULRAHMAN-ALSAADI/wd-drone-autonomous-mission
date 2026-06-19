@@ -7,9 +7,29 @@ The flight stack is divided into two systems:
 - **Cube Orange Plus / ArduPilot:** flight control, navigation, failsafes and payload outputs.
 - **Raspberry Pi 5:** mission supervision, computer vision, target centering and payload decisions.
 
-## Current version: Phase 2
+## Active target mission
 
-Phase 2 is still read-only. It now:
+The active SITL/Gazebo controller for the rotary-wing second mission is in:
+
+```text
+target_mission_v2/
+```
+
+It performs target detection, GUIDED centering, simulated payload release, AUTO
+resume, repeat-run reset, and RTL after both targets. QGC/ArduPilot owns AUTO
+altitude and AUTO speed by default; the companion controller only controls
+horizontal centering velocity after target lock.
+
+Run it with:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission/target_mission_v2
+./run.sh
+```
+
+## Phase 2 observer
+
+Phase 2 is read-only. It:
 
 - Connects to SITL or the future Cube UART profile
 - Reads vehicle telemetry
