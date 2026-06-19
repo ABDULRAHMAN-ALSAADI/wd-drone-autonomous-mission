@@ -154,18 +154,24 @@ After both targets:
 
 ## Replay vision frames
 
-Record a short session:
+Vision replay and tuning are development tools in the root-level `vision_lab/`
+folder. They are intentionally outside this mission runtime folder so the Pi can
+stay lean.
+
+Record a short session from the repo root:
 
 ```bash
-python3 vision_tools.py --config configs/sim_gazebo.json record --frames 300
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+python3 vision_lab/vision_lab.py --config target_mission_v2/configs/sim_gazebo.json \
+  record --label blue_hexagon --altitude-m 7 --frames 300
 ```
 
 Replay it:
 
 ```bash
-python3 vision_tools.py --config configs/sim_gazebo.json replay \
-  --input data/vision/SESSION_FOLDER \
-  --output-jsonl data/vision/SESSION_FOLDER/report.jsonl
+python3 vision_lab/vision_lab.py --config target_mission_v2/configs/sim_gazebo.json replay \
+  --input vision_lab/data/SESSION_FOLDER \
+  --output-jsonl vision_lab/reports/session_report.jsonl
 ```
 
 Use this before changing thresholds. The tests also include synthetic runway

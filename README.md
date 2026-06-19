@@ -42,6 +42,19 @@ Useful mission docs:
 - `docs/SITL_TEST_PLAN.md`
 - `docs/REAL_DRONE_CHECKLIST.md`
 
+Development-only vision tuning lives in:
+
+```text
+vision_lab/
+```
+
+Keep `vision_lab/` off the Raspberry Pi flight image. Build a small Pi runtime
+package with:
+
+```bash
+./scripts/package_pi_runtime.sh
+```
+
 ## Phase 2 observer
 
 Phase 2 is read-only. It:
