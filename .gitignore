@@ -19,6 +19,7 @@ htmlcov/
 logs/
 data/raw/
 data/processed/
+target_mission_v2/data/
 models/*.hef
 models/*.onnx
 models/*.pt

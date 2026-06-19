@@ -1,0 +1,40 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-venv python3-opencv python3-numpy
+
+      - name: Create Python environment
+        run: |
+          python3 -m venv --system-site-packages .ci-venv
+          . .ci-venv/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run package tests
+        run: |
+          . .ci-venv/bin/activate
+          PYTHONPATH=src python -m unittest discover -s tests -v
+
+      - name: Run target mission tests
+        run: |
+          . .ci-venv/bin/activate
+          cd target_mission_v2
+          python -m unittest -v test_mission_controller.py
+
+      - name: Compile mission scripts
+        run: |
+          . .ci-venv/bin/activate
+          python -m py_compile target_mission_v2/*.py src/wd_drone/*.py

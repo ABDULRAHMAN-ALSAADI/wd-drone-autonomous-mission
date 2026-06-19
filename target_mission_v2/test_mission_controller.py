@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
+import json
+import tempfile
+import time
 import unittest
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -7,11 +11,14 @@ import numpy as np
 from vision import HitTracker, StrictShapeDetector
 from control import altitude_velocity_down
 from mission_controller import (
+    Controller,
+    State,
     enforce_parameters,
     payload_colour_for_target,
     required_ardupilot_parameters,
     validate_config,
 )
+from vision_tools import replay_images
 
 
 class VisionTests(unittest.TestCase):
@@ -155,7 +162,8 @@ class AltitudeTests(unittest.TestCase):
 
 
 class MissionConfigTests(unittest.TestCase):
-    def config(self):
+    @staticmethod
+    def config():
         return {
             "mavlink": {"connection": "udpin:0.0.0.0:14551"},
             "camera": {"udp_port": 5600},
@@ -204,6 +212,13 @@ class MissionConfigTests(unittest.TestCase):
                 "release_hold_s": 1.0,
                 "total_action_time_s": 1.5,
             },
+            "safety": {
+                "max_center_time_s": 25.0,
+                "max_guided_speed_m_s": 0.45,
+                "payload_requires_guided": True,
+                "payload_min_altitude_m": None,
+                "payload_max_altitude_m": None,
+            },
             "display": {"show_main_window": False, "show_masks": False},
             "logging": {"directory": "logs/mission_v2", "flush_interval_s": 0.5},
         }
@@ -246,6 +261,17 @@ class MissionConfigTests(unittest.TestCase):
         config["control"]["altitude_control"] = "sometimes"
         with self.assertRaises(ValueError):
             validate_config(config)
+
+    def test_validate_config_rejects_bad_safety_speed(self):
+        config = self.config()
+        config["safety"]["max_guided_speed_m_s"] = 0.0
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_profile_configs_are_valid(self):
+        for path in sorted(Path(__file__).with_name("configs").glob("*.json")):
+            with self.subTest(path=path.name):
+                validate_config(json.loads(path.read_text(encoding="utf-8")))
 
     def test_enforce_parameters_can_be_disabled(self):
         class FakeVehicle:
@@ -304,6 +330,130 @@ class MissionConfigTests(unittest.TestCase):
         config["parameters"]["missing_action"] = "fail"
         with self.assertRaises(RuntimeError):
             enforce_parameters(FakeVehicle(), config)
+
+
+class FakeVehicle:
+    def __init__(self):
+        self.mode = "GUIDED"
+        self.armed = True
+        self.mission_seq = 2
+        self.relative_alt_m = 7.0
+        self.horizontal_speed_m_s = 0.0
+        self.velocity_down_m_s = 0.0
+        self.total_speed_m_s = 0.0
+        self.acceleration_m_s2 = 0.0
+        self.mode_requests = []
+        self.velocities = []
+        self.servos = []
+
+    def send_body_velocity(self, forward, right, down):
+        self.velocities.append((forward, right, down))
+
+    def set_mode(self, name):
+        self.mode_requests.append(name)
+        self.mode = name
+
+    def set_servo(self, channel, pwm):
+        self.servos.append((channel, pwm))
+
+
+class FakeCamera:
+    def release(self):
+        pass
+
+
+class ControllerFlowTests(unittest.TestCase):
+    def config(self):
+        config = MissionConfigTests.config()
+        config["display"]["show_main_window"] = False
+        config["display"]["show_masks"] = False
+        return config
+
+    def controller(self, config=None, vehicle=None):
+        tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tempdir.cleanup)
+        cfg = config or self.config()
+        cfg["logging"]["directory"] = str(Path(tempdir.name) / "logs")
+        ctrl = Controller(cfg, vehicle or FakeVehicle(), FakeCamera())
+        self.addCleanup(ctrl.log_file.close)
+        return ctrl
+
+    def blank_frame(self):
+        return np.zeros((540, 960, 3), np.uint8)
+
+    def blank_masks(self):
+        mask = np.zeros((540, 960), np.uint8)
+        return {"red": mask, "blue": mask}
+
+    def test_guided_speed_is_clamped_by_safety_config(self):
+        vehicle = FakeVehicle()
+        config = self.config()
+        config["safety"]["max_guided_speed_m_s"] = 0.2
+        ctrl = self.controller(config, vehicle)
+        ctrl.send_velocity(1.0, -1.0, 0.0)
+        self.assertEqual(vehicle.velocities[-1], (0.2, -0.2, 0.0))
+
+    def test_center_timeout_returns_to_auto(self):
+        vehicle = FakeVehicle()
+        config = self.config()
+        config["safety"]["max_center_time_s"] = 0.1
+        ctrl = self.controller(config, vehicle)
+        ctrl.state = State.CENTER
+        ctrl.current_target = "red_triangle"
+        ctrl.center_started_at = time.monotonic() - 1.0
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO_RESUME)
+        self.assertEqual(vehicle.mode_requests[-1], "AUTO")
+        self.assertIsNone(ctrl.current_target)
+
+    def test_payload_is_blocked_outside_guided(self):
+        vehicle = FakeVehicle()
+        vehicle.mode = "AUTO"
+        ctrl = self.controller(vehicle=vehicle)
+        ctrl.state = State.PAYLOAD
+        ctrl.current_target = "red_triangle"
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO_RESUME)
+        self.assertEqual(vehicle.servos, [])
+        self.assertNotIn("red_triangle", ctrl.completed_targets)
+
+    def test_complete_state_resets_for_next_auto_run(self):
+        vehicle = FakeVehicle()
+        vehicle.mode = "AUTO"
+        vehicle.mission_seq = 2
+        ctrl = self.controller(vehicle=vehicle)
+        ctrl.state = State.COMPLETE
+        ctrl.completed_targets = {"red_triangle", "blue_hexagon"}
+        ctrl.mission_done_count = 1
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+        self.assertEqual(ctrl.state, State.SEARCH)
+        self.assertEqual(ctrl.completed_targets, set())
+        self.assertEqual(ctrl.mission_done_count, 1)
+
+
+class VisionReplayTests(unittest.TestCase):
+    def test_replay_detects_hexagon_and_rejects_runway_rectangle(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            hexagon = np.zeros((540, 960, 3), np.uint8)
+            cv2.fillConvexPoly(
+                hexagon,
+                np.array([[300, 185], [388, 135], [480, 188], [478, 295], [392, 355], [298, 300]], np.int32),
+                (210, 70, 105),
+            )
+            runway = np.zeros((540, 960, 3), np.uint8)
+            runway[:] = (180, 180, 180)
+            box = cv2.boxPoints(((520, 300), (260, 52), -6)).astype(np.int32)
+            cv2.fillConvexPoly(runway, box, (210, 70, 105))
+            cv2.imwrite(str(directory / "000_hexagon.jpg"), hexagon)
+            cv2.imwrite(str(directory / "001_runway.jpg"), runway)
+
+            results = replay_images(Path(__file__).with_name("mission_config.json"), directory, directory / "report.jsonl")
+
+            self.assertEqual(len(results), 2)
+            self.assertIn("blue_hexagon", {item["target"] for item in results[0]["detections"]})
+            self.assertNotIn("blue_hexagon", {item["target"] for item in results[1]["detections"]})
+            self.assertTrue((directory / "report.jsonl").exists())
 
 
 if __name__ == "__main__":

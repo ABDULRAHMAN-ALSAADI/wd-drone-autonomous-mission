@@ -27,6 +27,21 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission/target_mission_v2
 ./run.sh
 ```
 
+Use an explicit profile when needed:
+
+```bash
+./run.sh configs/sim_gazebo.json
+./run.sh configs/real_pi_camera_module_3.json
+```
+
+Useful mission docs:
+
+- `docs/TARGET_MISSION_OPERATIONS.md`
+- `docs/VISION_REPLAY_WORKFLOW.md`
+- `docs/CAMERA_CALIBRATION.md`
+- `docs/SITL_TEST_PLAN.md`
+- `docs/REAL_DRONE_CHECKLIST.md`
+
 ## Phase 2 observer
 
 Phase 2 is read-only. It:
@@ -128,16 +143,17 @@ Each line is valid JSON and contains a UTC timestamp, event type, mission state,
 cd ~/FOR_COMP/wd-drone-autonomous-mission
 source .venv/bin/activate
 PYTHONPATH=src python -m unittest discover -s tests -v
+cd target_mission_v2
+python -m unittest -v test_mission_controller.py
 ```
 
-## Push Phase 2
-
-```bash
-git add .
-git commit -m "feat: add Phase 2 mission observation and event logging"
-git push
-```
+GitHub Actions runs these tests on every push.
 
 ## Safety boundary
 
-Phase 2 does not arm, disarm, change flight mode, move the aircraft, alter the mission or actuate payload outputs.
+The Phase 2 observer does not arm, disarm, change flight mode, move the
+aircraft, alter the mission or actuate payload outputs.
+
+The active target mission controller can request GUIDED/AUTO/RTL and can send
+low-speed horizontal centering velocity only after target confirmation. AUTO
+altitude and AUTO speed stay under QGC/ArduPilot control by default.

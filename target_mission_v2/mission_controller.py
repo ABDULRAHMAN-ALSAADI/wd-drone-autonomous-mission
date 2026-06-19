@@ -34,12 +34,26 @@ TARGET_PAYLOAD_COLOUR = {
     "red_triangle": "blue",
 }
 
+DEFAULT_SAFETY = {
+    "max_center_time_s": 25.0,
+    "max_guided_speed_m_s": 0.45,
+    "payload_requires_guided": True,
+    "payload_min_altitude_m": None,
+    "payload_max_altitude_m": None,
+}
+
 
 def payload_colour_for_target(target: str) -> str:
     try:
         return TARGET_PAYLOAD_COLOUR[target]
     except KeyError as exc:
         raise ValueError(f"Unknown mission target: {target}") from exc
+
+
+def safety_config(config: dict[str, Any]) -> dict[str, Any]:
+    safety = dict(DEFAULT_SAFETY)
+    safety.update(config.get("safety", {}))
+    return safety
 
 
 def required_ardupilot_parameters(config: dict[str, Any]) -> dict[str, float]:
@@ -79,6 +93,17 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("control.altitude_control must be 'off' or 'hold_configured'")
     if altitude_control == "hold_configured" and float(config["mission"]["survey_altitude_m"]) <= 0:
         raise ValueError("mission.survey_altitude_m must be positive when altitude hold is enabled")
+    safety = safety_config(config)
+    max_center_time_s = safety.get("max_center_time_s")
+    if max_center_time_s is not None and float(max_center_time_s) <= 0:
+        raise ValueError("safety.max_center_time_s must be positive or null")
+    max_guided_speed_m_s = safety.get("max_guided_speed_m_s")
+    if max_guided_speed_m_s is not None and float(max_guided_speed_m_s) <= 0:
+        raise ValueError("safety.max_guided_speed_m_s must be positive or null")
+    min_alt = safety.get("payload_min_altitude_m")
+    max_alt = safety.get("payload_max_altitude_m")
+    if min_alt is not None and max_alt is not None and float(min_alt) > float(max_alt):
+        raise ValueError("safety.payload_min_altitude_m cannot exceed payload_max_altitude_m")
     required_ardupilot_parameters(config)
 
 
@@ -283,6 +308,7 @@ class Controller:
         vcfg = config["vision"]
         self.detector = StrictShapeDetector(vcfg["search_min_area_px"], vcfg["tracking_min_area_px"], vcfg["debug_rejects"])
         self.tracker = HitTracker(vcfg["required_hits"], vcfg["confirmation_window_s"], vcfg["max_lock_jump_px"])
+        self.safety = safety_config(config)
         self.state = State.WAITING_FOR_AUTO
         self.state_started_at = time.monotonic()
         self.last_mode_request_at = 0.0
@@ -295,6 +321,7 @@ class Controller:
         self.last_detection: Optional[Detection] = None
         self.last_seen_at = 0.0
         self.centered_since: Optional[float] = None
+        self.center_started_at: Optional[float] = None
         self.last_center_error_px: Optional[float] = None
         self.last_center_forward: Optional[float] = None
         self.last_center_right: Optional[float] = None
@@ -311,6 +338,7 @@ class Controller:
         self.state = state
         self.state_started_at = time.monotonic()
         self.centered_since = None
+        self.center_started_at = self.state_started_at if state == State.CENTER else None
         self.status_message = reason
         if state == State.SEARCH and self.mission_started_at is None:
             self.mission_started_at = self.state_started_at
@@ -324,6 +352,7 @@ class Controller:
         self.last_detection = None
         self.last_seen_at = 0.0
         self.centered_since = None
+        self.center_started_at = None
         self.last_center_error_px = None
         self.last_center_forward = None
         self.last_center_right = None
@@ -348,6 +377,10 @@ class Controller:
     def send_velocity(self, forward: float, right: float, down: float) -> None:
         now = time.monotonic()
         if now - self.last_velocity_at >= 1.0 / float(self.config["control"]["command_rate_hz"]):
+            max_guided_speed = self.safety.get("max_guided_speed_m_s")
+            if max_guided_speed is not None:
+                forward = clamp(forward, float(max_guided_speed))
+                right = clamp(right, float(max_guided_speed))
             self.vehicle.send_body_velocity(forward, right, down)
             self.last_velocity_at = now
 
@@ -373,8 +406,40 @@ class Controller:
         maximum = float(c["center_max_speed_m_s"])
         return clamp(forward, maximum), clamp(right, maximum), math.hypot(ex, ey)
 
+    def payload_safety_error(self) -> Optional[str]:
+        if bool(self.safety.get("payload_requires_guided", True)) and self.vehicle.mode != "GUIDED":
+            return f"vehicle mode is {self.vehicle.mode}, not GUIDED"
+        altitude = self.vehicle.relative_alt_m
+        min_alt = self.safety.get("payload_min_altitude_m")
+        max_alt = self.safety.get("payload_max_altitude_m")
+        if min_alt is not None:
+            if altitude is None:
+                return "altitude is unknown"
+            if altitude < float(min_alt):
+                return f"altitude {altitude:.2f} m is below {float(min_alt):.2f} m"
+        if max_alt is not None:
+            if altitude is None:
+                return "altitude is unknown"
+            if altitude > float(max_alt):
+                return f"altitude {altitude:.2f} m is above {float(max_alt):.2f} m"
+        return None
+
+    def abandon_target_and_resume_auto(self, now: float, reason: str) -> None:
+        print(f"[TARGET ABORT] {reason}; returning to AUTO")
+        self.send_velocity(0.0, 0.0, self.altitude_down())
+        self.current_target = None
+        self.last_detection = None
+        self.tracker.reset()
+        self.vehicle.set_mode("AUTO")
+        self.last_mode_request_at = now
+        self.transition(State.WAITING_FOR_AUTO_RESUME, reason)
+
     def payload_action(self, now: float) -> None:
         p = self.config["payload"]
+        safety_error = self.payload_safety_error()
+        if safety_error:
+            self.abandon_target_and_resume_auto(now, f"payload blocked: {safety_error}")
+            return
         self.send_velocity(0.0, 0.0, self.altitude_down())
         if not self.payload_started:
             altitude = self.vehicle.relative_alt_m if self.vehicle.relative_alt_m is not None else float("nan")
@@ -458,6 +523,14 @@ class Controller:
             if self.vehicle.mode != "GUIDED":
                 self.transition(State.WAITING_FOR_AUTO, f"left GUIDED: {self.vehicle.mode}")
                 return detections, masks
+            max_center_time_s = self.safety.get("max_center_time_s")
+            if (
+                max_center_time_s is not None
+                and self.center_started_at is not None
+                and now - self.center_started_at > float(max_center_time_s)
+            ):
+                self.abandon_target_and_resume_auto(now, f"center timeout after {float(max_center_time_s):.1f}s")
+                return detections, masks
             if self.last_detection:
                 tracked, masks = self.detector.track_colour(
                     frame,
@@ -470,14 +543,7 @@ class Controller:
                     self.last_seen_at = now
                     detections = [tracked]
             if self.last_detection is None or now - self.last_seen_at > float(c["target_lost_timeout_s"]):
-                print("[TARGET LOST] Returning to AUTO")
-                self.send_velocity(0.0, 0.0, self.altitude_down())
-                self.current_target = None
-                self.last_detection = None
-                self.tracker.reset()
-                self.vehicle.set_mode("AUTO")
-                self.last_mode_request_at = now
-                self.transition(State.WAITING_FOR_AUTO_RESUME, "target lost")
+                self.abandon_target_and_resume_auto(now, "target lost")
                 return detections, masks
             forward, right, distance = self.centre_velocity(self.last_detection, width, height)
             self.last_center_error_px = distance

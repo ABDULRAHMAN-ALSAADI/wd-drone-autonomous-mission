@@ -21,18 +21,18 @@
   },
   "vision": {
     "process_width": 960,
-    "search_min_area_px": 220.0,
-    "tracking_min_area_px": 120.0,
-    "required_hits": 3,
-    "confirmation_window_s": 1.5,
-    "max_lock_jump_px": 160.0,
+    "search_min_area_px": 180.0,
+    "tracking_min_area_px": 100.0,
+    "required_hits": 4,
+    "confirmation_window_s": 1.8,
+    "max_lock_jump_px": 180.0,
     "debug_rejects": false
   },
   "control": {
     "command_rate_hz": 10.0,
-    "center_kp": 0.65,
-    "center_max_speed_m_s": 0.45,
-    "center_tolerance_px": 18.0,
+    "center_kp": 0.55,
+    "center_max_speed_m_s": 0.35,
+    "center_tolerance_px": 22.0,
     "center_hold_s": 1.2,
     "target_lost_timeout_s": 2.0,
     "altitude_control": "off",
@@ -51,8 +51,8 @@
     "total_action_time_s": 1.5
   },
   "safety": {
-    "max_center_time_s": 25.0,
-    "max_guided_speed_m_s": 0.45,
+    "max_center_time_s": 30.0,
+    "max_guided_speed_m_s": 0.35,
     "payload_requires_guided": true,
     "payload_min_altitude_m": null,
     "payload_max_altitude_m": null
