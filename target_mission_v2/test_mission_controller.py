@@ -4,9 +4,9 @@ import unittest
 import cv2
 import numpy as np
 
-from strict_vision import HitTracker, StrictShapeDetector
-from control_math import altitude_velocity_down
-from target_mission_v2 import (
+from vision import HitTracker, StrictShapeDetector
+from control import altitude_velocity_down
+from mission_controller import (
     enforce_parameters,
     payload_colour_for_target,
     required_ardupilot_parameters,

@@ -13,17 +13,19 @@ Category second mission:
 - keep the mission inside the 10 minute second-mission flight limit.
 
 ```text
-AUTO survey at 5 m
+AUTO survey controlled by QGC/ArduPilot
 → strict target confirmation
 → GUIDED
-→ centre while holding 5 m
-→ correct-colour payload event at 5 m
+→ horizontal centering only
+→ correct-colour payload event
 → AUTO resume
 → second target
-→ RTL at 5 m
+→ RTL
 ```
 
-There is no descent phase and no post-payload climb phase.
+QGC/ArduPilot owns AUTO altitude and speed. By default the companion
+controller does not enforce RTL parameters and does not send vertical velocity
+during GUIDED centering.
 
 ## MAVLink port
 
@@ -36,25 +38,21 @@ UDP 14551
 Mission Planner must be disconnected before this program starts because both
 cannot reliably bind the same UDP listening port.
 
-## RTL altitude correction
+## Parameter policy
 
-At startup the controller reads, sets when necessary, and verifies:
-
-```text
-RTL_ALT = 500 cm
-RTL_CLIMB_MIN = 0 cm
-MIS_RESTART = 0
-```
-
-This prevents ArduCopter's normal default RTL climb to 15 m.
-
-The config stores these as centimetres because ArduPilot's parameters are
-centimetre-based:
+By default, parameter enforcement is disabled:
 
 ```json
-"rtl_alt_cm": 500.0,
-"rtl_climb_min_cm": 0.0
+"parameters": {
+  "enforce": false
+},
+"control": {
+  "altitude_control": "off"
+}
 ```
+
+Use QGC or ArduPilot parameters for waypoint speed, mission altitude, RTL
+altitude, and acceleration limits.
 
 ## Vision correction
 
@@ -85,10 +83,7 @@ blue_hexagon hits: 0/3
 ## Install
 
 ```bash
-cd ~/FOR_COMP
-unzip -o ~/Downloads/wd_drone_target_mission_v2.zip -d .
-
-cd ~/FOR_COMP/wd_drone_target_mission_v2
+cd ~/FOR_COMP/wd-drone-autonomous-mission/target_mission_v2
 chmod +x setup.sh run.sh
 ./setup.sh
 ```
@@ -96,7 +91,7 @@ chmod +x setup.sh run.sh
 Expected test result:
 
 ```text
-Ran 21 tests
+Ran 32 tests
 OK
 ```
 
@@ -113,7 +108,7 @@ enable_camera
 Start the controller:
 
 ```bash
-cd ~/FOR_COMP/wd_drone_target_mission_v2
+cd ~/FOR_COMP/wd-drone-autonomous-mission/target_mission_v2
 ./run.sh
 ```
 
@@ -128,15 +123,13 @@ mode auto
 ## Expected output
 
 ```text
-[PARAMETER VERIFIED] RTL_ALT=500
-[PARAMETER VERIFIED] RTL_CLIMB_MIN=0
-[PARAMETER VERIFIED] MIS_RESTART=0
+[PARAMETER] Enforcement disabled; QGC/ArduPilot parameters are left unchanged
 [STATE] WAITING_FOR_AUTO -> SEARCH
 [TARGET CONFIRMED] red_triangle hits=3/3
 [MODE REQUEST] AUTO -> GUIDED
 [STATE] WAITING_FOR_GUIDED -> CENTER
 [STATE] CENTER -> PAYLOAD
-[PAYLOAD] SIMULATED blue DROP over red_triangle at 5.00 m
+[PAYLOAD] SIMULATED blue DROP over red_triangle ...
 [MODE REQUEST] GUIDED -> AUTO
 ```
 

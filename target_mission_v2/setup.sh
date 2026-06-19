@@ -9,4 +9,4 @@ python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install pymavlink
-python -m unittest -v test_target_mission_v2.py
+python -m unittest -v test_mission_controller.py

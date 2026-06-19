@@ -14,8 +14,8 @@ from typing import Any, Optional
 import cv2
 from pymavlink import mavutil
 
-from strict_vision import Detection, HitTracker, StrictShapeDetector
-from control_math import altitude_velocity_down, clamp
+from vision import Detection, HitTracker, StrictShapeDetector
+from control import altitude_velocity_down, clamp
 
 
 class State(str, Enum):
