@@ -47,6 +47,7 @@ Useful mission docs:
 - `docs/SITL_TEST_PLAN.md`
 - `docs/REAL_DRONE_CHECKLIST.md`
 - `docs/RASPBERRY_PI_PIXHAWK_MAVLINK.md`
+- `docs/TEAM_PI_WORKFLOW.md`
 
 ## Phase 2 observer
 
@@ -67,6 +68,24 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission
 chmod +x scripts/*.sh
 ./scripts/setup.sh
 ```
+
+## Raspberry Pi Team Workflow
+
+Sync the Ubuntu laptop source tree to the Pi without deleting Pi files:
+
+```bash
+DRY_RUN=1 ./scripts/sync_to_pi.sh
+./scripts/sync_to_pi.sh
+```
+
+Prepare and validate the Pi copy without running hardware commands:
+
+```bash
+./scripts/pi_validate.sh
+```
+
+See `docs/TEAM_PI_WORKFLOW.md` for teammate access, editing, sync, and safe
+MAVLink bench-test rules.
 
 ## Configure the search waypoint
 
