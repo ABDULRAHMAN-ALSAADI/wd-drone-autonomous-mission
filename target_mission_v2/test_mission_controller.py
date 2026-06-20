@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from vision_lab.vision_lab import evaluate_sessions, list_sessions, replay_images
+from vision_lab.vision_lab import evaluate_sessions, replay_images
 
 
 class VisionTests(unittest.TestCase):
@@ -470,7 +470,6 @@ class VisionReplayTests(unittest.TestCase):
             positive_results = replay_images(config_path, positive, directory / "positive_report.jsonl")
             negative_results = replay_images(config_path, negative, directory / "negative_report.jsonl")
             summary = evaluate_sessions(config_path, [positive, negative], output_json=directory / "eval.json")
-            sessions = list_sessions(directory)
 
             self.assertEqual(len(positive_results), 1)
             self.assertEqual(len(negative_results), 1)
@@ -479,15 +478,7 @@ class VisionReplayTests(unittest.TestCase):
             self.assertEqual(summary["targets"]["blue_hexagon"]["true_frames"], 1)
             self.assertEqual(summary["targets"]["blue_hexagon"]["false_frames"], 0)
             self.assertEqual(summary["false_positive_frames"], 0)
-            self.assertEqual({item["label"] for item in sessions}, {"unknown"})
-            self.assertEqual(sum(item["frames"] for item in sessions), 2)
             self.assertTrue((directory / "eval.json").exists())
-
-    def test_evaluate_explains_session_folder_placeholder(self):
-        with tempfile.TemporaryDirectory() as temp:
-            fake_session = Path(temp) / "SESSION_FOLDER"
-            with self.assertRaisesRegex(ValueError, "placeholder"):
-                evaluate_sessions(Path(__file__).with_name("mission_config.json"), [fake_session])
 
 
 if __name__ == "__main__":

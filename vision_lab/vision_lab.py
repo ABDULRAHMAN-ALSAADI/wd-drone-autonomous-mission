@@ -7,7 +7,7 @@ import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Iterable, Optional, Sequence
+from typing import Iterable, Optional, Sequence
 
 import cv2
 
@@ -49,10 +49,6 @@ def resize_for_processing(frame, process_width: int):
 
 
 def iter_image_files(path: Path) -> Iterable[Path]:
-    if not path.exists():
-        if path.name == "SESSION_FOLDER":
-            raise ValueError("SESSION_FOLDER is a placeholder. Run `python3 vision_lab/vision_lab.py list` and use a real folder name.")
-        raise ValueError(f"Input path does not exist: {path}")
     if path.is_dir():
         yield from sorted(item for item in path.iterdir() if item.suffix.lower() in IMAGE_EXTENSIONS)
     elif path.suffix.lower() in IMAGE_EXTENSIONS:
@@ -132,63 +128,6 @@ def default_recording_dir(label: str) -> Path:
     return DEFAULT_DATA_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}_{safe_label}"
 
 
-def image_count(path: Path) -> int:
-    if not path.exists():
-        return 0
-    if path.is_file():
-        return 1 if path.suffix.lower() in IMAGE_EXTENSIONS else 0
-    return sum(1 for item in path.iterdir() if item.suffix.lower() in IMAGE_EXTENSIONS)
-
-
-def directory_size_mb(path: Path) -> float:
-    if not path.exists():
-        return 0.0
-    total = 0
-    for item in path.rglob("*"):
-        if item.is_file():
-            total += item.stat().st_size
-    return total / (1024.0 * 1024.0)
-
-
-def load_manifest(path: Path) -> dict[str, Any]:
-    manifest_path = path / "manifest.json"
-    if not manifest_path.exists():
-        return {}
-    return json.loads(manifest_path.read_text(encoding="utf-8"))
-
-
-def list_sessions(data_dir: Path = DEFAULT_DATA_DIR) -> list[dict[str, Any]]:
-    if not data_dir.exists():
-        return []
-    sessions: list[dict[str, Any]] = []
-    for session in sorted((item for item in data_dir.iterdir() if item.is_dir()), reverse=True):
-        manifest = load_manifest(session)
-        sessions.append(
-            {
-                "path": str(session),
-                "label": manifest.get("label", "unknown"),
-                "expected_targets": manifest.get("expected_targets", []),
-                "altitude_m": manifest.get("altitude_m"),
-                "notes": manifest.get("notes", ""),
-                "frames": image_count(session),
-                "size_mb": round(directory_size_mb(session), 2),
-            }
-        )
-    return sessions
-
-
-def print_sessions(sessions: list[dict[str, Any]]) -> None:
-    if not sessions:
-        print("No vision sessions found.")
-        return
-    for item in sessions:
-        print(
-            f"{item['path']} | label={item['label']} | frames={item['frames']} | "
-            f"alt={item['altitude_m']} | expected={item['expected_targets']} | "
-            f"size={item['size_mb']:.2f} MB | notes={item['notes']}"
-        )
-
-
 def expected_targets_from_label(label: str) -> list[str]:
     if label in TARGETS:
         return [label]
@@ -205,8 +144,6 @@ def write_manifest(
     seconds: Optional[float],
     altitude_m: Optional[float],
     notes: str,
-    save_raw: bool,
-    jpeg_quality: int,
 ) -> None:
     manifest = {
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -217,8 +154,6 @@ def write_manifest(
         "seconds_requested": seconds,
         "altitude_m": altitude_m,
         "notes": notes,
-        "save_raw": save_raw,
-        "jpeg_quality": jpeg_quality,
     }
     (destination / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -232,15 +167,12 @@ def record_frames(
     label: str = "unknown",
     altitude_m: Optional[float] = None,
     notes: str = "",
-    save_raw: bool = False,
-    jpeg_quality: int = 85,
-    progress_every: int = 25,
 ) -> Path:
     config = load_config(config_path)
     detector = build_detector(config)
     destination = output_dir or default_recording_dir(label)
     destination.mkdir(parents=True, exist_ok=True)
-    write_manifest(destination, config_path, label, frames, seconds, altitude_m, notes, save_raw, jpeg_quality)
+    write_manifest(destination, config_path, label, frames, seconds, altitude_m, notes)
     cap = open_camera(int(config["camera"]["udp_port"]))
     report_path = destination / "detections.jsonl"
     deadline = time.monotonic() + seconds if seconds is not None else None
@@ -256,8 +188,7 @@ def record_frames(
                     continue
                 processed, detections = analyse_frame(config, detector, frame)
                 frame_path = destination / f"{count:06d}.jpg"
-                saved_frame = frame if save_raw else processed
-                cv2.imwrite(str(frame_path), saved_frame, [cv2.IMWRITE_JPEG_QUALITY, int(jpeg_quality)])
+                cv2.imwrite(str(frame_path), frame)
                 record = {
                     "index": count,
                     "frame": str(frame_path),
@@ -269,8 +200,6 @@ def record_frames(
                     if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
                         break
                 count += 1
-                if progress_every > 0 and count % progress_every == 0:
-                    print(f"recorded {count}/{frames} frames -> {destination}", flush=True)
     finally:
         cap.release()
         if show:
@@ -279,17 +208,13 @@ def record_frames(
 
 
 def load_expected_targets(session: Path, fallback: Optional[set[str]], negative: bool) -> set[str]:
-    if not session.exists():
-        if session.name == "SESSION_FOLDER":
-            raise ValueError("SESSION_FOLDER is a placeholder. Run `python3 vision_lab/vision_lab.py list` and use a real folder name.")
-        raise ValueError(f"Input path does not exist: {session}")
     if negative:
         return set()
     if fallback is not None:
         return set(fallback)
     manifest_path = session / "manifest.json"
     if manifest_path.exists():
-        manifest = load_manifest(session)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         return set(manifest.get("expected_targets", []))
     raise ValueError(f"{session} has no manifest.json. Pass --expected-target or --negative.")
 
@@ -373,9 +298,6 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--label", choices=sorted(TARGETS | {"none", "unknown"}), default="unknown")
     record.add_argument("--altitude-m", type=float)
     record.add_argument("--notes", default="")
-    record.add_argument("--save-raw", action="store_true", help="save full raw camera frames instead of processed-width frames")
-    record.add_argument("--jpg-quality", type=int, default=85)
-    record.add_argument("--progress-every", type=int, default=25)
 
     replay = subparsers.add_parser("replay", help="run detection on saved frames")
     replay.add_argument("--input", type=Path, required=True)
@@ -387,9 +309,6 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--expected-target", action="append", choices=sorted(TARGETS))
     evaluate.add_argument("--negative", action="store_true")
     evaluate.add_argument("--output-json", type=Path)
-
-    list_cmd = subparsers.add_parser("list", help="list recorded sessions")
-    list_cmd.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     return parser
 
 
@@ -406,9 +325,6 @@ def main() -> int:
             args.label,
             args.altitude_m,
             args.notes,
-            args.save_raw,
-            args.jpg_quality,
-            args.progress_every,
         )
         print(f"Recorded vision session: {destination}")
         return 0
@@ -423,9 +339,6 @@ def main() -> int:
         expected = set(args.expected_target) if args.expected_target else None
         summary = evaluate_sessions(args.config, args.input, expected, args.negative, args.output_json)
         print_evaluation(summary)
-        return 0
-    if args.command == "list":
-        print_sessions(list_sessions(args.data_dir))
         return 0
     parser.error("unknown command")
     return 2
