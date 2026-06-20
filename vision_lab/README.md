@@ -24,8 +24,12 @@ Record a labelled session:
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
 python3 vision_lab/vision_lab.py --config target_mission_v2/configs/sim_gazebo.json \
-  record --label blue_hexagon --altitude-m 7 --frames 500 --show
+  record --label blue_hexagon --altitude-m 7 --frames 300
 ```
+
+Add `--show` only when you need a preview. Recording without preview is lighter
+while Gazebo and QGC are open. The recorder saves processed-width frames by
+default; add `--save-raw` only when you really need full raw camera frames.
 
 Negative example:
 
@@ -36,11 +40,19 @@ python3 vision_lab/vision_lab.py --config target_mission_v2/configs/sim_gazebo.j
 
 Recordings go under `vision_lab/data/`, which is ignored by Git.
 
+## List
+
+Use this to see real session folder names:
+
+```bash
+python3 vision_lab/vision_lab.py list
+```
+
 ## Replay
 
 ```bash
 python3 vision_lab/vision_lab.py --config target_mission_v2/configs/sim_gazebo.json \
-  replay --input vision_lab/data/SESSION_FOLDER \
+  replay --input vision_lab/data/REAL_SESSION_FOLDER \
   --output-jsonl vision_lab/reports/session_report.jsonl
 ```
 
@@ -50,7 +62,7 @@ If the session has a `manifest.json`, evaluation can read the expected target:
 
 ```bash
 python3 vision_lab/vision_lab.py --config target_mission_v2/configs/sim_gazebo.json \
-  evaluate --input vision_lab/data/SESSION_FOLDER \
+  evaluate --input vision_lab/data/REAL_SESSION_FOLDER \
   --output-json vision_lab/reports/eval.json
 ```
 

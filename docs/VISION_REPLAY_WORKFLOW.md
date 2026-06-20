@@ -27,6 +27,10 @@ python3 vision_lab/vision_lab.py --config target_mission_v2/configs/sim_gazebo.j
   record --label blue_hexagon --altitude-m 7 --frames 300 --show
 ```
 
+If the computer feels heavy while Gazebo/QGC are running, do not use `--show`.
+The recorder saves processed-width frames by default to keep sessions smaller.
+Use `--save-raw` only for full-resolution camera debugging.
+
 Recordings are written under:
 
 ```text
@@ -38,9 +42,15 @@ development-laptop folder, not a Pi runtime folder.
 
 ## Replay A Session
 
+List real session folders first:
+
+```bash
+python3 vision_lab/vision_lab.py list
+```
+
 ```bash
 python3 vision_lab/vision_lab.py --config target_mission_v2/configs/sim_gazebo.json replay \
-  --input vision_lab/data/SESSION_FOLDER \
+  --input vision_lab/data/REAL_SESSION_FOLDER \
   --output-jsonl vision_lab/reports/session_report.jsonl
 ```
 
@@ -55,7 +65,7 @@ detector quality:
 
 ```bash
 python3 vision_lab/vision_lab.py --config target_mission_v2/configs/sim_gazebo.json evaluate \
-  --input vision_lab/data/SESSION_FOLDER \
+  --input vision_lab/data/REAL_SESSION_FOLDER \
   --output-json vision_lab/reports/eval.json
 ```
 

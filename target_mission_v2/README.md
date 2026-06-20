@@ -166,11 +166,14 @@ python3 vision_lab/vision_lab.py --config target_mission_v2/configs/sim_gazebo.j
   record --label blue_hexagon --altitude-m 7 --frames 300
 ```
 
+Use `--show` only when you need preview; recording without it is lighter.
+
 Replay it:
 
 ```bash
+python3 vision_lab/vision_lab.py list
 python3 vision_lab/vision_lab.py --config target_mission_v2/configs/sim_gazebo.json replay \
-  --input vision_lab/data/SESSION_FOLDER \
+  --input vision_lab/data/REAL_SESSION_FOLDER \
   --output-jsonl vision_lab/reports/session_report.jsonl
 ```
 
