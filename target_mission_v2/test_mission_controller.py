@@ -185,6 +185,7 @@ class MissionConfigTests(unittest.TestCase):
                 "missing_action": "warn",
             },
             "vision": {
+                "backend": "strict_shape",
                 "process_width": 960,
                 "search_min_area_px": 220.0,
                 "tracking_min_area_px": 120.0,
@@ -251,6 +252,12 @@ class MissionConfigTests(unittest.TestCase):
     def test_validate_config_rejects_unknown_missing_action(self):
         config = self.config()
         config["parameters"]["missing_action"] = "ignore"
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_validate_config_rejects_unknown_vision_backend(self):
+        config = self.config()
+        config["vision"]["backend"] = "yolo_experiment"
         with self.assertRaises(ValueError):
             validate_config(config)
 

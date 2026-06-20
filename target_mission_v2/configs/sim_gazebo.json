@@ -24,6 +24,7 @@
     "missing_action": "warn"
   },
   "vision": {
+    "backend": "strict_shape",
     "process_width": 960,
     "search_min_area_px": 220.0,
     "tracking_min_area_px": 120.0,

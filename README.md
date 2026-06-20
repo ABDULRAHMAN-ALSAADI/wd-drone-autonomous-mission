@@ -48,6 +48,7 @@ Useful mission docs:
 - `docs/REAL_DRONE_CHECKLIST.md`
 - `docs/RASPBERRY_PI_PIXHAWK_MAVLINK.md`
 - `docs/TEAM_PI_WORKFLOW.md`
+- `docs/VISION_MODEL_PLAN.md`
 
 ## Phase 2 observer
 
@@ -166,13 +167,17 @@ Each line is valid JSON and contains a UTC timestamp, event type, mission state,
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
-source .venv/bin/activate
-PYTHONPATH=src python -m unittest discover -s tests -v
-cd target_mission_v2
-python -m unittest -v test_mission_controller.py
+./scripts/check_project.sh
 ```
 
 GitHub Actions runs these tests on every push.
+
+Clean local ignored caches and optional runtime logs:
+
+```bash
+./scripts/clean_workspace.sh
+./scripts/clean_workspace.sh --logs
+```
 
 ## Safety boundary
 

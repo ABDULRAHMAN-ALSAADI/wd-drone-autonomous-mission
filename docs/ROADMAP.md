@@ -20,32 +20,35 @@
 
 ## Phase 3 — Safe AUTO/GUIDED control
 
-- [ ] Implement guarded mode-change helper
-- [ ] Implement GUIDED velocity command with timeout
-- [ ] Implement immediate stop command
-- [ ] Restore AUTO at the saved mission waypoint
-- [ ] Test without camera and without payload
+- [x] Implement guarded GUIDED/AUTO/RTL mode requests
+- [x] Implement GUIDED velocity command with timeout
+- [x] Stop horizontal velocity when leaving GUIDED
+- [x] Resume AUTO after the first target
+- [x] Keep QGC/ArduPilot owner of AUTO speed and altitude by default
+- [ ] Test mode transitions on Cube without propellers
 
 ## Phase 4 — Simulated target detection
 
-- [ ] Add simulated triangle and hexagon targets
-- [ ] Add OpenCV colour and polygon detector
-- [ ] Display annotated detection output
-- [ ] Reject fixed-wing rectangular targets
+- [x] Add OpenCV colour and polygon detector
+- [x] Display annotated detection output
+- [x] Reject fixed-wing rectangular targets
+- [x] Add multi-frame target confirmation
+- [ ] Validate against real Pi Camera Module 3 frames
 
 ## Phase 5 — Visual centering
 
-- [ ] Convert image error to body-frame velocity
-- [ ] Add proportional speed reduction near target
-- [ ] Add target-loss recovery
-- [ ] Require stable centering before descent
+- [x] Convert image error to body-frame velocity
+- [x] Add proportional speed reduction near target
+- [x] Add target-loss recovery
+- [x] Require stable centering before payload action
+- [ ] Tune centering gain on real camera/video
 
 ## Phase 6 — Payload logic
 
-- [ ] Map red payload to blue hexagon
-- [ ] Map blue payload to red triangle
-- [ ] Add release interlocks
-- [ ] Simulate servo output
+- [x] Map red payload to blue hexagon
+- [x] Map blue payload to red triangle
+- [x] Add release interlocks
+- [x] Simulate servo output
 - [ ] Test real Cube AUX output without propellers
 
 ## Phase 7 — Raspberry Pi and AI HAT+
@@ -55,8 +58,9 @@
 - [ ] Configure Camera Module 3
 - [ ] Train and validate target model
 - [ ] Convert model to Hailo HEF
+- [ ] Add `yolo_shape_gate` backend after model validation
 - [ ] Run inference on AI HAT+
-- [ ] Add systemd service and watchdog
+- [ ] Add systemd service and watchdog after manual launch is stable
 
 ## Phase 8 — Flight validation
 

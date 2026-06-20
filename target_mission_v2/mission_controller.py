@@ -14,7 +14,7 @@ from typing import Any, Optional
 import cv2
 from pymavlink import mavutil
 
-from vision import Detection, HitTracker, StrictShapeDetector
+from vision import Detection, HitTracker, SUPPORTED_VISION_BACKENDS, create_detector
 from control import altitude_velocity_down, clamp
 
 
@@ -95,6 +95,10 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("mission.max_flight_time_s must be positive")
     if int(config["vision"]["required_hits"]) < 1:
         raise ValueError("vision.required_hits must be at least 1")
+    vision_backend = config["vision"].get("backend", "strict_shape")
+    if vision_backend not in SUPPORTED_VISION_BACKENDS:
+        supported = ", ".join(sorted(SUPPORTED_VISION_BACKENDS))
+        raise ValueError(f"vision.backend must be one of: {supported}")
     if float(config["control"]["command_rate_hz"]) <= 0:
         raise ValueError("control.command_rate_hz must be positive")
     missing_action = config["parameters"].get("missing_action", "fail")
@@ -343,7 +347,7 @@ class Controller:
         self.vehicle = vehicle
         self.camera = camera
         vcfg = config["vision"]
-        self.detector = StrictShapeDetector(vcfg["search_min_area_px"], vcfg["tracking_min_area_px"], vcfg["debug_rejects"])
+        self.detector = create_detector(vcfg)
         self.tracker = HitTracker(vcfg["required_hits"], vcfg["confirmation_window_s"], vcfg["max_lock_jump_px"])
         self.safety = safety_config(config)
         self.navigation = navigation_config(config)

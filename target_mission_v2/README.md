@@ -114,6 +114,17 @@ red_triangle hits: 0/3
 blue_hexagon hits: 0/3
 ```
 
+The active flight backend is selected explicitly:
+
+```json
+"vision": {
+  "backend": "strict_shape"
+}
+```
+
+Future YOLO or AI HAT work should be added as a separate backend after the model
+passes the safety gates in `docs/VISION_MODEL_PLAN.md`.
+
 ## Install
 
 ```bash
@@ -125,7 +136,7 @@ chmod +x setup.sh run.sh
 Expected test result:
 
 ```text
-Ran 32 tests
+Ran 45 tests
 OK
 ```
 

@@ -49,6 +49,18 @@ The real profile is a starting point, not a final calibration. Validate it with
 recorded frames at the exact camera mount angle, lens, exposure, target size, and
 flight altitude.
 
+The active vision backend is:
+
+```json
+"vision": {
+  "backend": "strict_shape"
+}
+```
+
+Keep this backend for SITL, MAVLink bench tests, and first real-camera checks.
+Add YOLO or AI HAT inference only as a separate backend after the trained model
+passes the safety gates in `docs/VISION_MODEL_PLAN.md`.
+
 ## Operator Config
 
 `./run.sh` uses `operator_config.json` by default. This is the file to edit for

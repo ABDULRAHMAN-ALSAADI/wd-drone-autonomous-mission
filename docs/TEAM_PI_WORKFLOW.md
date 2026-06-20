@@ -84,6 +84,18 @@ cd ..
 ./scripts/pi_validate.sh
 ```
 
+Full laptop check before a serious sync:
+
+```bash
+./scripts/check_project.sh
+```
+
+Clean ignored local caches when the workspace gets noisy:
+
+```bash
+./scripts/clean_workspace.sh
+```
+
 Only commit and push after tests pass:
 
 ```bash

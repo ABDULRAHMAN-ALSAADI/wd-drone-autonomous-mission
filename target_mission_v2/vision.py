@@ -5,10 +5,14 @@ import math
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque, Dict, Iterable, Optional
+from typing import Any, Deque, Dict, Iterable, Optional
 
 import cv2
 import numpy as np
+
+
+VISION_BACKEND_STRICT_SHAPE = "strict_shape"
+SUPPORTED_VISION_BACKENDS = {VISION_BACKEND_STRICT_SHAPE}
 
 
 @dataclass(frozen=True)
@@ -332,3 +336,15 @@ class StrictShapeDetector:
         if distance > max_jump_px:
             return None, masks
         return item, masks
+
+
+def create_detector(vision_config: dict[str, Any]) -> StrictShapeDetector:
+    backend = vision_config.get("backend", VISION_BACKEND_STRICT_SHAPE)
+    if backend != VISION_BACKEND_STRICT_SHAPE:
+        supported = ", ".join(sorted(SUPPORTED_VISION_BACKENDS))
+        raise ValueError(f"Unsupported vision.backend {backend!r}. Supported backends: {supported}")
+    return StrictShapeDetector(
+        search_min_area_px=float(vision_config["search_min_area_px"]),
+        tracking_min_area_px=float(vision_config["tracking_min_area_px"]),
+        debug_rejects=bool(vision_config.get("debug_rejects", False)),
+    )
