@@ -54,6 +54,40 @@ By default, parameter enforcement is disabled:
 Use QGC or ArduPilot parameters for waypoint speed, mission altitude, RTL
 altitude, and acceleration limits.
 
+## Operator configuration
+
+`./run.sh` uses `operator_config.json` by default. Edit this file for normal
+SITL testing and bench tuning.
+
+Common values:
+
+```json
+"navigation": {
+  "search_speed_source": "qgc_mission",
+  "search_speed_m_s": 3.0
+},
+"control": {
+  "center_max_speed_m_s": 0.45,
+  "center_tolerance_px": 18.0
+},
+"safety": {
+  "guided_auto_bounce_grace_s": 2.0
+}
+```
+
+`search_speed_source` has two modes:
+
+- `qgc_mission`: QGC/ArduPilot owns AUTO search speed. This is the default.
+- `companion_do_change_speed`: the companion sends `MAV_CMD_DO_CHANGE_SPEED`
+  with `search_speed_m_s` when SEARCH starts or resumes.
+
+For real flights, prefer `qgc_mission` unless companion-owned AUTO speed is
+intentional.
+
+`guided_auto_bounce_grace_s` prevents one temporary AUTO heartbeat from causing
+the controller to drop a target after GUIDED was requested. During this grace
+period it keeps the target lock and retries GUIDED.
+
 ## Vision correction
 
 Red triangle acceptance requires:
@@ -112,6 +146,12 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission/target_mission_v2
 ./run.sh
 ```
 
+Default config:
+
+```text
+operator_config.json
+```
+
 Equivalent explicit profile:
 
 ```bash
@@ -151,25 +191,6 @@ After both targets:
 [MODE REQUEST] GUIDED -> RTL
 [STATE] WAITING_FOR_RTL -> COMPLETE
 ```
-
-## Replay vision frames
-
-Record a short session:
-
-```bash
-python3 vision_tools.py --config configs/sim_gazebo.json record --frames 300
-```
-
-Replay it:
-
-```bash
-python3 vision_tools.py --config configs/sim_gazebo.json replay \
-  --input data/vision/SESSION_FOLDER \
-  --output-jsonl data/vision/SESSION_FOLDER/report.jsonl
-```
-
-Use this before changing thresholds. The tests also include synthetic runway
-rectangles so the detector keeps rejecting blue non-target shapes.
 
 ## Direction correction
 

@@ -11,6 +11,10 @@
     "mode_change_timeout_s": 5.0,
     "max_flight_time_s": 600.0
   },
+  "navigation": {
+    "search_speed_source": "qgc_mission",
+    "search_speed_m_s": 3.0
+  },
   "parameters": {
     "enforce": false,
     "rtl_alt_cm": 500.0,
@@ -53,6 +57,7 @@
   "safety": {
     "max_center_time_s": 25.0,
     "max_guided_speed_m_s": 0.45,
+    "guided_auto_bounce_grace_s": 2.0,
     "payload_requires_guided": true,
     "payload_min_altitude_m": null,
     "payload_max_altitude_m": null

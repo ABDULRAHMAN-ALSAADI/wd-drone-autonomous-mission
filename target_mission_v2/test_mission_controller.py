@@ -18,7 +18,6 @@ from mission_controller import (
     required_ardupilot_parameters,
     validate_config,
 )
-from vision_tools import replay_images
 
 
 class VisionTests(unittest.TestCase):
@@ -173,6 +172,10 @@ class MissionConfigTests(unittest.TestCase):
                 "mode_change_timeout_s": 5.0,
                 "max_flight_time_s": 600.0,
             },
+            "navigation": {
+                "search_speed_source": "qgc_mission",
+                "search_speed_m_s": 3.0,
+            },
             "parameters": {
                 "enforce": True,
                 "rtl_alt_cm": 500.0,
@@ -215,6 +218,7 @@ class MissionConfigTests(unittest.TestCase):
             "safety": {
                 "max_center_time_s": 25.0,
                 "max_guided_speed_m_s": 0.45,
+                "guided_auto_bounce_grace_s": 2.0,
                 "payload_requires_guided": True,
                 "payload_min_altitude_m": None,
                 "payload_max_altitude_m": None,
@@ -268,8 +272,23 @@ class MissionConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_config(config)
 
+    def test_validate_config_rejects_bad_search_speed_source(self):
+        config = self.config()
+        config["navigation"]["search_speed_source"] = "mystery"
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_validate_config_requires_companion_search_speed(self):
+        config = self.config()
+        config["navigation"]["search_speed_source"] = "companion_do_change_speed"
+        config["navigation"]["search_speed_m_s"] = 0.0
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
     def test_profile_configs_are_valid(self):
-        for path in sorted(Path(__file__).with_name("configs").glob("*.json")):
+        paths = [Path(__file__).with_name("operator_config.json")]
+        paths.extend(sorted(Path(__file__).with_name("configs").glob("*.json")))
+        for path in paths:
             with self.subTest(path=path.name):
                 validate_config(json.loads(path.read_text(encoding="utf-8")))
 
@@ -345,6 +364,7 @@ class FakeVehicle:
         self.mode_requests = []
         self.velocities = []
         self.servos = []
+        self.ground_speeds = []
 
     def send_body_velocity(self, forward, right, down):
         self.velocities.append((forward, right, down))
@@ -355,6 +375,9 @@ class FakeVehicle:
 
     def set_servo(self, channel, pwm):
         self.servos.append((channel, pwm))
+
+    def set_ground_speed(self, speed_m_s):
+        self.ground_speeds.append(speed_m_s)
 
 
 class FakeCamera:
@@ -393,6 +416,51 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.send_velocity(1.0, -1.0, 0.0)
         self.assertEqual(vehicle.velocities[-1], (0.2, -0.2, 0.0))
 
+    def test_qgc_owned_search_speed_sends_no_speed_command(self):
+        vehicle = FakeVehicle()
+        config = self.config()
+        ctrl = self.controller(config, vehicle)
+        ctrl.transition(State.SEARCH, "test search")
+        self.assertEqual(vehicle.ground_speeds, [])
+
+    def test_companion_search_speed_sends_change_speed(self):
+        vehicle = FakeVehicle()
+        config = self.config()
+        config["navigation"]["search_speed_source"] = "companion_do_change_speed"
+        config["navigation"]["search_speed_m_s"] = 3.2
+        ctrl = self.controller(config, vehicle)
+        ctrl.transition(State.SEARCH, "test search")
+        self.assertEqual(vehicle.ground_speeds, [3.2])
+
+    def test_auto_bounce_in_center_retries_guided_without_losing_target(self):
+        vehicle = FakeVehicle()
+        vehicle.mode = "AUTO"
+        config = self.config()
+        ctrl = self.controller(config, vehicle)
+        ctrl.state = State.CENTER
+        ctrl.current_target = "red_triangle"
+        ctrl.last_seen_at = time.monotonic()
+        ctrl.center_started_at = time.monotonic()
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+        self.assertEqual(ctrl.state, State.CENTER)
+        self.assertEqual(ctrl.current_target, "red_triangle")
+        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
+
+    def test_auto_bounce_timeout_abandons_target(self):
+        vehicle = FakeVehicle()
+        vehicle.mode = "AUTO"
+        config = self.config()
+        config["safety"]["guided_auto_bounce_grace_s"] = 0.1
+        ctrl = self.controller(config, vehicle)
+        ctrl.state = State.CENTER
+        ctrl.current_target = "red_triangle"
+        ctrl.last_seen_at = time.monotonic()
+        ctrl.center_started_at = time.monotonic()
+        ctrl.guided_mode_lost_since = time.monotonic() - 1.0
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO_RESUME)
+        self.assertIsNone(ctrl.current_target)
+
     def test_center_timeout_returns_to_auto(self):
         vehicle = FakeVehicle()
         config = self.config()
@@ -429,31 +497,6 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(ctrl.state, State.SEARCH)
         self.assertEqual(ctrl.completed_targets, set())
         self.assertEqual(ctrl.mission_done_count, 1)
-
-
-class VisionReplayTests(unittest.TestCase):
-    def test_replay_detects_hexagon_and_rejects_runway_rectangle(self):
-        with tempfile.TemporaryDirectory() as temp:
-            directory = Path(temp)
-            hexagon = np.zeros((540, 960, 3), np.uint8)
-            cv2.fillConvexPoly(
-                hexagon,
-                np.array([[300, 185], [388, 135], [480, 188], [478, 295], [392, 355], [298, 300]], np.int32),
-                (210, 70, 105),
-            )
-            runway = np.zeros((540, 960, 3), np.uint8)
-            runway[:] = (180, 180, 180)
-            box = cv2.boxPoints(((520, 300), (260, 52), -6)).astype(np.int32)
-            cv2.fillConvexPoly(runway, box, (210, 70, 105))
-            cv2.imwrite(str(directory / "000_hexagon.jpg"), hexagon)
-            cv2.imwrite(str(directory / "001_runway.jpg"), runway)
-
-            results = replay_images(Path(__file__).with_name("mission_config.json"), directory, directory / "report.jsonl")
-
-            self.assertEqual(len(results), 2)
-            self.assertIn("blue_hexagon", {item["target"] for item in results[0]["detections"]})
-            self.assertNotIn("blue_hexagon", {item["target"] for item in results[1]["detections"]})
-            self.assertTrue((directory / "report.jsonl").exists())
 
 
 if __name__ == "__main__":

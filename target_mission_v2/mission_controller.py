@@ -37,9 +37,15 @@ TARGET_PAYLOAD_COLOUR = {
 DEFAULT_SAFETY = {
     "max_center_time_s": 25.0,
     "max_guided_speed_m_s": 0.45,
+    "guided_auto_bounce_grace_s": 2.0,
     "payload_requires_guided": True,
     "payload_min_altitude_m": None,
     "payload_max_altitude_m": None,
+}
+
+DEFAULT_NAVIGATION = {
+    "search_speed_source": "qgc_mission",
+    "search_speed_m_s": None,
 }
 
 
@@ -54,6 +60,12 @@ def safety_config(config: dict[str, Any]) -> dict[str, Any]:
     safety = dict(DEFAULT_SAFETY)
     safety.update(config.get("safety", {}))
     return safety
+
+
+def navigation_config(config: dict[str, Any]) -> dict[str, Any]:
+    navigation = dict(DEFAULT_NAVIGATION)
+    navigation.update(config.get("navigation", {}))
+    return navigation
 
 
 def required_ardupilot_parameters(config: dict[str, Any]) -> dict[str, float]:
@@ -100,10 +112,19 @@ def validate_config(config: dict[str, Any]) -> None:
     max_guided_speed_m_s = safety.get("max_guided_speed_m_s")
     if max_guided_speed_m_s is not None and float(max_guided_speed_m_s) <= 0:
         raise ValueError("safety.max_guided_speed_m_s must be positive or null")
+    guided_auto_bounce_grace_s = safety.get("guided_auto_bounce_grace_s")
+    if guided_auto_bounce_grace_s is not None and float(guided_auto_bounce_grace_s) < 0:
+        raise ValueError("safety.guided_auto_bounce_grace_s must be zero, positive, or null")
     min_alt = safety.get("payload_min_altitude_m")
     max_alt = safety.get("payload_max_altitude_m")
     if min_alt is not None and max_alt is not None and float(min_alt) > float(max_alt):
         raise ValueError("safety.payload_min_altitude_m cannot exceed payload_max_altitude_m")
+    navigation = navigation_config(config)
+    if navigation["search_speed_source"] not in {"qgc_mission", "companion_do_change_speed"}:
+        raise ValueError("navigation.search_speed_source must be 'qgc_mission' or 'companion_do_change_speed'")
+    if navigation["search_speed_source"] == "companion_do_change_speed":
+        if navigation.get("search_speed_m_s") is None or float(navigation["search_speed_m_s"]) <= 0:
+            raise ValueError("navigation.search_speed_m_s must be positive when companion speed control is enabled")
     required_ardupilot_parameters(config)
 
 
@@ -212,6 +233,22 @@ class Vehicle:
             float(channel), float(pwm), 0, 0, 0, 0, 0,
         )
 
+    def set_ground_speed(self, speed_m_s: float) -> None:
+        print(f"[SPEED REQUEST] AUTO ground speed {speed_m_s:.2f} m/s")
+        self.master.mav.command_long_send(
+            self.target_system,
+            self.target_component,
+            mavutil.mavlink.MAV_CMD_DO_CHANGE_SPEED,
+            0,
+            1.0,
+            float(speed_m_s),
+            -1.0,
+            0,
+            0,
+            0,
+            0,
+        )
+
     @staticmethod
     def _param_id(message: Any) -> str:
         param_id = message.param_id.decode(errors="replace") if isinstance(message.param_id, bytes) else message.param_id
@@ -309,10 +346,12 @@ class Controller:
         self.detector = StrictShapeDetector(vcfg["search_min_area_px"], vcfg["tracking_min_area_px"], vcfg["debug_rejects"])
         self.tracker = HitTracker(vcfg["required_hits"], vcfg["confirmation_window_s"], vcfg["max_lock_jump_px"])
         self.safety = safety_config(config)
+        self.navigation = navigation_config(config)
         self.state = State.WAITING_FOR_AUTO
         self.state_started_at = time.monotonic()
         self.last_mode_request_at = 0.0
         self.last_velocity_at = 0.0
+        self.last_search_speed_request_at = 0.0
         self.mission_started_at: Optional[float] = None
         self.last_log_flush_at = time.monotonic()
         self.stop_requested = False
@@ -322,6 +361,7 @@ class Controller:
         self.last_seen_at = 0.0
         self.centered_since: Optional[float] = None
         self.center_started_at: Optional[float] = None
+        self.guided_mode_lost_since: Optional[float] = None
         self.last_center_error_px: Optional[float] = None
         self.last_center_forward: Optional[float] = None
         self.last_center_right: Optional[float] = None
@@ -339,9 +379,12 @@ class Controller:
         self.state_started_at = time.monotonic()
         self.centered_since = None
         self.center_started_at = self.state_started_at if state == State.CENTER else None
+        self.guided_mode_lost_since = None
         self.status_message = reason
         if state == State.SEARCH and self.mission_started_at is None:
             self.mission_started_at = self.state_started_at
+        if state == State.SEARCH:
+            self.apply_search_speed_policy()
 
     def incomplete_targets(self) -> set[str]:
         return {"red_triangle", "blue_hexagon"} - self.completed_targets
@@ -353,6 +396,7 @@ class Controller:
         self.last_seen_at = 0.0
         self.centered_since = None
         self.center_started_at = None
+        self.guided_mode_lost_since = None
         self.last_center_error_px = None
         self.last_center_forward = None
         self.last_center_right = None
@@ -389,6 +433,15 @@ class Controller:
         if now - self.last_mode_request_at >= 1.0:
             self.vehicle.set_mode(mode)
             self.last_mode_request_at = now
+
+    def apply_search_speed_policy(self) -> None:
+        if self.navigation["search_speed_source"] != "companion_do_change_speed":
+            return
+        now = time.monotonic()
+        if now - self.last_search_speed_request_at < 1.0:
+            return
+        self.vehicle.set_ground_speed(float(self.navigation["search_speed_m_s"]))
+        self.last_search_speed_request_at = now
 
     def resize(self, frame):
         width = int(self.config["vision"]["process_width"])
@@ -521,8 +574,18 @@ class Controller:
 
         elif self.state == State.CENTER:
             if self.vehicle.mode != "GUIDED":
-                self.transition(State.WAITING_FOR_AUTO, f"left GUIDED: {self.vehicle.mode}")
+                if self.vehicle.mode == "AUTO":
+                    if self.guided_mode_lost_since is None:
+                        self.guided_mode_lost_since = now
+                    elapsed = now - self.guided_mode_lost_since
+                    grace_s = self.safety.get("guided_auto_bounce_grace_s")
+                    if grace_s is not None and elapsed <= float(grace_s):
+                        self.status_message = f"GUIDED bounce guard: mode=AUTO for {elapsed:.1f}/{float(grace_s):.1f}s"
+                        self.request_mode_repeated("GUIDED")
+                        return detections, masks
+                self.abandon_target_and_resume_auto(now, f"left GUIDED: {self.vehicle.mode}")
                 return detections, masks
+            self.guided_mode_lost_since = None
             max_center_time_s = self.safety.get("max_center_time_s")
             if (
                 max_center_time_s is not None

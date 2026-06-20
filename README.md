@@ -27,6 +27,12 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission/target_mission_v2
 ./run.sh
 ```
 
+The default operator-facing config is:
+
+```text
+target_mission_v2/operator_config.json
+```
+
 Use an explicit profile when needed:
 
 ```bash
@@ -37,10 +43,10 @@ Use an explicit profile when needed:
 Useful mission docs:
 
 - `docs/TARGET_MISSION_OPERATIONS.md`
-- `docs/VISION_REPLAY_WORKFLOW.md`
 - `docs/CAMERA_CALIBRATION.md`
 - `docs/SITL_TEST_PLAN.md`
 - `docs/REAL_DRONE_CHECKLIST.md`
+- `docs/RASPBERRY_PI_PIXHAWK_MAVLINK.md`
 
 ## Phase 2 observer
 

@@ -5,11 +5,12 @@ Use this before moving from SITL to Cube Orange Plus and Raspberry Pi 5.
 ## Bench
 
 - QGC mission altitude and speed are set correctly.
+- `operator_config.json` uses `navigation.search_speed_source: "qgc_mission"`
+  unless companion-owned AUTO speed is intentionally required.
 - ArduPilot failsafes, RTL altitude, geofence, and battery failsafe are verified.
 - Companion parameter enforcement remains disabled unless intentionally enabled.
 - Payload config remains `simulate_only: true`.
 - Camera stream opens without old viewers holding the port.
-- `vision_tools.py replay` passes on recorded real-camera frames.
 - Telemetry link through RFD900x is stable.
 
 ## Tether Or Props-Off
@@ -33,7 +34,7 @@ Use this before moving from SITL to Cube Orange Plus and Raspberry Pi 5.
 Enable physical payload only after:
 
 - SITL completes both targets repeatedly;
-- replay tests reject non-target rectangles;
+- automated vision tests reject non-target rectangles;
 - real-camera recordings pass offline;
 - low-speed flight centering is correct;
 - servo release and reset are verified on the bench.

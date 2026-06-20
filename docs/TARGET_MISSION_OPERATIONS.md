@@ -49,6 +49,33 @@ The real profile is a starting point, not a final calibration. Validate it with
 recorded frames at the exact camera mount angle, lens, exposure, target size, and
 flight altitude.
 
+## Operator Config
+
+`./run.sh` uses `operator_config.json` by default. This is the file to edit for
+normal SITL testing.
+
+AUTO search speed is controlled by:
+
+```json
+"navigation": {
+  "search_speed_source": "qgc_mission",
+  "search_speed_m_s": 3.0
+}
+```
+
+With `qgc_mission`, QGC/ArduPilot owns AUTO speed. With
+`companion_do_change_speed`, the companion sends `MAV_CMD_DO_CHANGE_SPEED` when
+SEARCH starts or resumes.
+
+GUIDED bounce protection is controlled by:
+
+```json
+"guided_auto_bounce_grace_s": 2.0
+```
+
+If ArduPilot briefly reports AUTO after GUIDED was requested, the controller
+keeps the target lock and retries GUIDED during this grace period.
+
 ## Repeat Tests
 
 After both targets are complete and RTL is confirmed, the process stays open.

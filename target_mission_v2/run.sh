@@ -22,5 +22,5 @@ PYTHON_BIN="$(pick_python)" || {
   exit 1
 }
 
-CONFIG_PATH="${1:-mission_config.json}"
+CONFIG_PATH="${1:-operator_config.json}"
 exec "$PYTHON_BIN" mission_controller.py --config "$CONFIG_PATH"
