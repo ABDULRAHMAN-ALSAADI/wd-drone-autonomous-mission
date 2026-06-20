@@ -164,8 +164,8 @@ class MissionConfigTests(unittest.TestCase):
     @staticmethod
     def config():
         return {
-            "mavlink": {"connection": "udpin:0.0.0.0:14551"},
-            "camera": {"udp_port": 5600},
+            "mavlink": {"connection": "udpin:0.0.0.0:14551", "baud": None},
+            "camera": {"source": "udp_h264", "udp_port": 5600},
             "mission": {
                 "search_start_wp": 2,
                 "survey_altitude_m": 5.0,
@@ -246,6 +246,18 @@ class MissionConfigTests(unittest.TestCase):
     def test_validate_config_rejects_bad_command_rate(self):
         config = self.config()
         config["control"]["command_rate_hz"] = 0
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_validate_config_rejects_bad_mavlink_baud(self):
+        config = self.config()
+        config["mavlink"]["baud"] = 0
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_validate_config_rejects_bad_camera_source(self):
+        config = self.config()
+        config["camera"]["source"] = "magic_camera"
         with self.assertRaises(ValueError):
             validate_config(config)
 

@@ -45,6 +45,9 @@ Real Raspberry Pi Camera Module 3 starting profile:
 ./run.sh configs/real_pi_camera_module_3.json
 ```
 
+This profile uses `/dev/serial0` at `921600` baud for the Cube UART link. Use
+`operator_config.json` or `configs/sim_gazebo.json` for Ubuntu SITL.
+
 The real profile is a starting point, not a final calibration. Validate it with
 recorded frames at the exact camera mount angle, lens, exposure, target size, and
 flight altitude.

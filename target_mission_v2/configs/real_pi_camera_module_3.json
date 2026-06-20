@@ -1,9 +1,11 @@
 {
   "mavlink": {
-    "connection": "udpin:0.0.0.0:14551",
+    "connection": "/dev/serial0",
+    "baud": 921600,
     "heartbeat_timeout_s": 8.0
   },
   "camera": {
+    "source": "udp_h264",
     "udp_port": 5600
   },
   "mission": {

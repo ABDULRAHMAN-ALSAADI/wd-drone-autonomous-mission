@@ -48,6 +48,8 @@ DEFAULT_NAVIGATION = {
     "search_speed_m_s": None,
 }
 
+SUPPORTED_CAMERA_SOURCES = {"udp_h264", "gstreamer_pipeline", "device"}
+
 
 def payload_colour_for_target(target: str) -> str:
     try:
@@ -91,6 +93,19 @@ def validate_config(config: dict[str, Any]) -> None:
     missing = [section for section in required_sections if section not in config]
     if missing:
         raise ValueError(f"Missing config sections: {', '.join(missing)}")
+    baud = config["mavlink"].get("baud")
+    if baud is not None and int(baud) <= 0:
+        raise ValueError("mavlink.baud must be positive or null")
+    camera_source = config["camera"].get("source", "udp_h264")
+    if camera_source not in SUPPORTED_CAMERA_SOURCES:
+        supported = ", ".join(sorted(SUPPORTED_CAMERA_SOURCES))
+        raise ValueError(f"camera.source must be one of: {supported}")
+    if camera_source == "udp_h264" and int(config["camera"].get("udp_port", 0)) <= 0:
+        raise ValueError("camera.udp_port must be positive for udp_h264")
+    if camera_source == "gstreamer_pipeline" and not str(config["camera"].get("pipeline", "")).strip():
+        raise ValueError("camera.pipeline is required for gstreamer_pipeline")
+    if camera_source == "device" and int(config["camera"].get("device_index", 0)) < 0:
+        raise ValueError("camera.device_index must be zero or positive")
     if float(config["mission"].get("max_flight_time_s", 600.0)) <= 0:
         raise ValueError("mission.max_flight_time_s must be positive")
     if int(config["vision"]["required_hits"]) < 1:
@@ -135,9 +150,12 @@ def validate_config(config: dict[str, Any]) -> None:
 class Vehicle:
     VELOCITY_ONLY_MASK = 3527
 
-    def __init__(self, connection: str) -> None:
-        print(f"[MAVLINK] Connecting to {connection}")
-        self.master = mavutil.mavlink_connection(connection, source_system=245, source_component=191)
+    def __init__(self, connection: str, baud: Optional[int] = None) -> None:
+        print(f"[MAVLINK] Connecting to {connection} baud={baud or 'default'}")
+        kwargs: dict[str, Any] = {"source_system": 245, "source_component": 191}
+        if baud is not None:
+            kwargs["baud"] = int(baud)
+        self.master = mavutil.mavlink_connection(connection, **kwargs)
         hb = self.master.wait_heartbeat(timeout=30)
         if hb is None:
             raise RuntimeError("No ArduPilot heartbeat")
@@ -301,7 +319,7 @@ class Vehicle:
         raise RuntimeError(f"ArduPilot did not confirm {name}={value}")
 
 
-def pipeline(port: int) -> str:
+def udp_h264_pipeline(port: int) -> str:
     return (
         f'udpsrc address=0.0.0.0 port={port} '
         'caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! '
@@ -312,10 +330,21 @@ def pipeline(port: int) -> str:
     )
 
 
-def open_camera(port: int) -> cv2.VideoCapture:
-    cap = cv2.VideoCapture(pipeline(port), cv2.CAP_GSTREAMER)
+def open_camera(camera_config: dict[str, Any]) -> cv2.VideoCapture:
+    source = camera_config.get("source", "udp_h264")
+    if source == "udp_h264":
+        description = f"UDP H264 port {int(camera_config['udp_port'])}"
+        cap = cv2.VideoCapture(udp_h264_pipeline(int(camera_config["udp_port"])), cv2.CAP_GSTREAMER)
+    elif source == "gstreamer_pipeline":
+        description = "custom GStreamer pipeline"
+        cap = cv2.VideoCapture(str(camera_config["pipeline"]), cv2.CAP_GSTREAMER)
+    elif source == "device":
+        description = f"camera device {int(camera_config.get('device_index', 0))}"
+        cap = cv2.VideoCapture(int(camera_config.get("device_index", 0)))
+    else:
+        raise RuntimeError(f"Unsupported camera source: {source}")
     if not cap.isOpened():
-        raise RuntimeError(f"Camera UDP {port} did not open. Run enable_camera and close every old viewer.")
+        raise RuntimeError(f"Camera source did not open: {description}")
     return cap
 
 
@@ -762,9 +791,9 @@ def main() -> int:
     args = parser.parse_args()
     config = json.loads(args.config.read_text(encoding="utf-8"))
     validate_config(config)
-    vehicle = Vehicle(config["mavlink"]["connection"])
+    vehicle = Vehicle(config["mavlink"]["connection"], config["mavlink"].get("baud"))
     enforce_parameters(vehicle, config)
-    camera = open_camera(int(config["camera"]["udp_port"]))
+    camera = open_camera(config["camera"])
     controller = Controller(config, vehicle, camera)
     signal.signal(signal.SIGINT, lambda *_: setattr(controller, "stop_requested", True))
     signal.signal(signal.SIGTERM, lambda *_: setattr(controller, "stop_requested", True))

@@ -38,6 +38,17 @@ UDP 14551
 Mission Planner must be disconnected before this program starts because both
 cannot reliably bind the same UDP listening port.
 
+The real Raspberry Pi/Cube profile uses:
+
+```text
+/dev/serial0
+921600 baud
+```
+
+Camera input is selected with `camera.source`. SITL currently uses `udp_h264`
+from `enable_camera`; custom GStreamer or direct camera-device sources are
+reserved for real-camera setup after cooling is installed.
+
 ## Parameter policy
 
 By default, parameter enforcement is disabled:
@@ -136,7 +147,7 @@ chmod +x setup.sh run.sh
 Expected test result:
 
 ```text
-Ran 45 tests
+Ran 47 tests
 OK
 ```
 
@@ -174,6 +185,9 @@ Starting profile for Raspberry Pi Camera Module 3:
 ```bash
 ./run.sh configs/real_pi_camera_module_3.json
 ```
+
+That real profile is for the Pi-to-Cube UART path. Use the SITL profile when
+running only Gazebo on the Ubuntu laptop.
 
 Start the mission from MAVProxy:
 
