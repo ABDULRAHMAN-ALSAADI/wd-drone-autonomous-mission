@@ -9,8 +9,7 @@ Use this before moving from SITL to Cube Orange Plus and Raspberry Pi 5.
 - Companion parameter enforcement remains disabled unless intentionally enabled.
 - Payload config remains `simulate_only: true`.
 - Camera stream opens without old viewers holding the port.
-- `vision_lab/vision_lab.py replay` passes on recorded real-camera frames.
-- Pi runtime package excludes `vision_lab/`, tests, recordings, and reports.
+- `vision_tools.py replay` passes on recorded real-camera frames.
 - Telemetry link through RFD900x is stable.
 
 ## Tether Or Props-Off

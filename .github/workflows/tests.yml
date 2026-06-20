@@ -37,4 +37,4 @@ jobs:
       - name: Compile mission scripts
         run: |
           . .ci-venv/bin/activate
-          python -m py_compile target_mission_v2/*.py src/wd_drone/*.py vision_lab/*.py
+          python -m py_compile target_mission_v2/*.py src/wd_drone/*.py

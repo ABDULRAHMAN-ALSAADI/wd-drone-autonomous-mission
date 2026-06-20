@@ -29,7 +29,7 @@ rectangle rejection tests. Do not lower them blindly during flight.
 1. Mount the Pi Camera Module 3 rigidly and point it straight down.
 2. Lock exposure and white balance if possible after field testing.
 3. Record target frames on the ground before flying.
-4. Replay those frames with `vision_lab/vision_lab.py`.
+4. Replay those frames with `vision_tools.py`.
 5. Confirm the blue runway rectangles and other blue objects are rejected.
 6. Keep payload `simulate_only` enabled until repeated SITL and tethered tests
    are clean.

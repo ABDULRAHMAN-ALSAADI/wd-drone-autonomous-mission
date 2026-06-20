@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import json
-import sys
 import tempfile
 import time
 import unittest
@@ -19,12 +18,7 @@ from mission_controller import (
     required_ardupilot_parameters,
     validate_config,
 )
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from vision_lab.vision_lab import evaluate_sessions, replay_images
+from vision_tools import replay_images
 
 
 class VisionTests(unittest.TestCase):
@@ -441,10 +435,6 @@ class VisionReplayTests(unittest.TestCase):
     def test_replay_detects_hexagon_and_rejects_runway_rectangle(self):
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
-            positive = directory / "blue_hexagon"
-            negative = directory / "runway_negative"
-            positive.mkdir()
-            negative.mkdir()
             hexagon = np.zeros((540, 960, 3), np.uint8)
             cv2.fillConvexPoly(
                 hexagon,
@@ -455,30 +445,15 @@ class VisionReplayTests(unittest.TestCase):
             runway[:] = (180, 180, 180)
             box = cv2.boxPoints(((520, 300), (260, 52), -6)).astype(np.int32)
             cv2.fillConvexPoly(runway, box, (210, 70, 105))
-            cv2.imwrite(str(positive / "000_hexagon.jpg"), hexagon)
-            cv2.imwrite(str(negative / "000_runway.jpg"), runway)
-            (positive / "manifest.json").write_text(
-                json.dumps({"expected_targets": ["blue_hexagon"]}) + "\n",
-                encoding="utf-8",
-            )
-            (negative / "manifest.json").write_text(
-                json.dumps({"expected_targets": []}) + "\n",
-                encoding="utf-8",
-            )
+            cv2.imwrite(str(directory / "000_hexagon.jpg"), hexagon)
+            cv2.imwrite(str(directory / "001_runway.jpg"), runway)
 
-            config_path = Path(__file__).with_name("mission_config.json")
-            positive_results = replay_images(config_path, positive, directory / "positive_report.jsonl")
-            negative_results = replay_images(config_path, negative, directory / "negative_report.jsonl")
-            summary = evaluate_sessions(config_path, [positive, negative], output_json=directory / "eval.json")
+            results = replay_images(Path(__file__).with_name("mission_config.json"), directory, directory / "report.jsonl")
 
-            self.assertEqual(len(positive_results), 1)
-            self.assertEqual(len(negative_results), 1)
-            self.assertIn("blue_hexagon", {item["target"] for item in positive_results[0]["detections"]})
-            self.assertNotIn("blue_hexagon", {item["target"] for item in negative_results[0]["detections"]})
-            self.assertEqual(summary["targets"]["blue_hexagon"]["true_frames"], 1)
-            self.assertEqual(summary["targets"]["blue_hexagon"]["false_frames"], 0)
-            self.assertEqual(summary["false_positive_frames"], 0)
-            self.assertTrue((directory / "eval.json").exists())
+            self.assertEqual(len(results), 2)
+            self.assertIn("blue_hexagon", {item["target"] for item in results[0]["detections"]})
+            self.assertNotIn("blue_hexagon", {item["target"] for item in results[1]["detections"]})
+            self.assertTrue((directory / "report.jsonl").exists())
 
 
 if __name__ == "__main__":
