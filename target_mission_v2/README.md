@@ -86,7 +86,7 @@ Common values:
 },
 "safety": {
   "guided_auto_bounce_grace_s": 8.0,
-  "mode_retry_interval_s": 0.5
+  "mode_retry_interval_s": 0.2
 }
 ```
 

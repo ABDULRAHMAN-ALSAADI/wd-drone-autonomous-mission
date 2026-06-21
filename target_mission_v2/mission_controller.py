@@ -482,11 +482,11 @@ class Controller:
             self.vehicle.send_body_velocity(forward, right, down)
             self.last_velocity_at = now
 
-    def request_mode_repeated(self, mode: str) -> None:
+    def request_mode_repeated(self, mode: str, force: bool = False) -> None:
         now = time.monotonic()
         interval = self.safety.get("mode_retry_interval_s")
         retry_interval_s = 1.0 if interval is None else float(interval)
-        if now - self.last_mode_request_at >= retry_interval_s:
+        if force or now - self.last_mode_request_at >= retry_interval_s:
             self.vehicle.set_mode(mode)
             self.last_mode_request_at = now
 
@@ -646,10 +646,10 @@ class Controller:
                         if now - self.last_guided_bounce_print_at >= 1.0:
                             print(
                                 f"[GUIDED BOUNCE] target={self.current_target} "
-                                f"auto_for={elapsed:.1f}/{float(grace_s):.1f}s count={self.guided_bounce_count}; retrying GUIDED"
+                                f"auto_for={elapsed:.1f}/{float(grace_s):.1f}s count={self.guided_bounce_count}; forcing GUIDED"
                             )
                             self.last_guided_bounce_print_at = now
-                        self.request_mode_repeated("GUIDED")
+                        self.request_mode_repeated("GUIDED", force=True)
                         return detections, masks
                 self.abandon_target_and_resume_auto(now, f"left GUIDED: {self.vehicle.mode}")
                 return detections, masks

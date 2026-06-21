@@ -90,11 +90,12 @@ GUIDED bounce protection is controlled by:
 
 ```json
 "guided_auto_bounce_grace_s": 8.0,
-"mode_retry_interval_s": 0.5
+"mode_retry_interval_s": 0.2
 ```
 
 If ArduPilot briefly reports AUTO after GUIDED was requested, the controller
-keeps the target lock and retries GUIDED during this grace period.
+keeps the target lock and immediately forces GUIDED again during this grace
+period.
 
 The overlay shows `Guided bounces`. This counter increases only when the
 controller is already centering a target and ArduPilot reports AUTO. It does not

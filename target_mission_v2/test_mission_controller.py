@@ -221,7 +221,7 @@ class MissionConfigTests(unittest.TestCase):
                 "max_center_time_s": 25.0,
                 "max_guided_speed_m_s": 0.45,
                 "guided_auto_bounce_grace_s": 8.0,
-                "mode_retry_interval_s": 0.5,
+                "mode_retry_interval_s": 0.2,
                 "payload_requires_guided": True,
                 "payload_min_altitude_m": None,
                 "payload_max_altitude_m": None,
@@ -480,6 +480,7 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.current_target = "red_triangle"
         ctrl.last_seen_at = time.monotonic()
         ctrl.center_started_at = time.monotonic()
+        ctrl.last_mode_request_at = time.monotonic()
         ctrl.update(self.blank_frame(), [], self.blank_masks())
         self.assertEqual(ctrl.state, State.CENTER)
         self.assertEqual(ctrl.current_target, "red_triangle")
