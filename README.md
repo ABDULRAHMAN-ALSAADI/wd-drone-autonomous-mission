@@ -48,6 +48,7 @@ Useful mission docs:
 - `docs/SITL_TEST_PLAN.md`
 - `docs/REAL_DRONE_CHECKLIST.md`
 - `docs/RASPBERRY_PI_PIXHAWK_MAVLINK.md`
+- `docs/PIXHAWK_PI_TEST_DAY.md`
 - `docs/TEAM_PI_WORKFLOW.md`
 - `docs/VISION_MODEL_PLAN.md`
 

@@ -14,6 +14,7 @@ fi
 
 EXCLUDES=(
     --exclude=".venv/"
+    --exclude=".wheelhouse/"
     --exclude="venv/"
     --exclude="env/"
     --exclude="__pycache__/"

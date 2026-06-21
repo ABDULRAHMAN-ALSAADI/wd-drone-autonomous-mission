@@ -2,6 +2,9 @@
 
 Use this to verify communication before running the autonomous mission.
 
+For the full bench order, including servo and motor-test sequence, see
+`docs/PIXHAWK_PI_TEST_DAY.md`.
+
 ## Wiring
 
 - Pi GPIO 14 TXD connects to Pixhawk TELEM RX.
