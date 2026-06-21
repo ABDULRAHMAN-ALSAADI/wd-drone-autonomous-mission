@@ -10,18 +10,24 @@ from pymavlink import mavutil
 
 DEFAULT_UART = "/dev/serial0"
 DEFAULT_BAUD = 921600
-AUTOPILOT_COMPONENTS = {0, 1}
+AUTOPILOT_COMPONENTS = {mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1}
 
 
-def heartbeat_is_autopilot(msg, target_system: int) -> bool:
-    if msg.get_srcSystem() != target_system:
+def heartbeat_is_vehicle(msg) -> bool:
+    if msg.get_srcSystem() <= 0:
         return False
     if msg.get_srcComponent() not in AUTOPILOT_COMPONENTS:
         return False
-    return msg.type not in (
+    if msg.type in (
         mavutil.mavlink.MAV_TYPE_GCS,
         mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER,
-    )
+    ):
+        return False
+    return msg.autopilot != mavutil.mavlink.MAV_AUTOPILOT_INVALID
+
+
+def heartbeat_is_target_vehicle(msg, target_system: int) -> bool:
+    return msg.get_srcSystem() == target_system and heartbeat_is_vehicle(msg)
 
 
 def connect(connection: str, baud: Optional[int], timeout_s: float):
@@ -34,11 +40,25 @@ def connect(connection: str, baud: Optional[int], timeout_s: float):
         kwargs["baud"] = baud
     print(f"[CONNECT] {connection} baud={baud or 'default'}")
     master = mavutil.mavlink_connection(connection, **kwargs)
-    heartbeat = master.wait_heartbeat(timeout=timeout_s)
+    heartbeat = None
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        msg = master.recv_match(type="HEARTBEAT", blocking=True, timeout=0.5)
+        if msg is None:
+            continue
+        src = f"{msg.get_srcSystem()}:{msg.get_srcComponent()}"
+        if not heartbeat_is_vehicle(msg):
+            print(f"[HEARTBEAT IGNORED] src={src} mode={mavutil.mode_string_v10(msg)}")
+            continue
+        heartbeat = msg
+        master.target_system = msg.get_srcSystem()
+        master.target_component = msg.get_srcComponent()
+        break
     if heartbeat is None:
-        raise TimeoutError(f"No heartbeat received within {timeout_s:.1f}s")
+        raise TimeoutError(f"No vehicle heartbeat received within {timeout_s:.1f}s")
+    src = f"{heartbeat.get_srcSystem()}:{heartbeat.get_srcComponent()}"
     print(
-        f"[HEARTBEAT] system={master.target_system} component={master.target_component} "
+        f"[HEARTBEAT] src={src} "
         f"mode={mavutil.mode_string_v10(heartbeat)} armed={bool(heartbeat.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)}"
     )
     return master
@@ -106,7 +126,7 @@ def set_mode(master, mode: str) -> None:
 
 def observe_mode(master, seconds: float) -> tuple[str, bool]:
     end = time.monotonic() + seconds
-    actual = mode_name(master)
+    actual = "UNKNOWN"
     armed = False
     target_system = master.target_system
     while time.monotonic() < end:
@@ -114,7 +134,7 @@ def observe_mode(master, seconds: float) -> tuple[str, bool]:
         if msg is None:
             continue
         src = f"{msg.get_srcSystem()}:{msg.get_srcComponent()}"
-        if not heartbeat_is_autopilot(msg, target_system):
+        if not heartbeat_is_target_vehicle(msg, target_system):
             print(f"[MODE IGNORED] src={src} mode={mavutil.mode_string_v10(msg)}")
             continue
         actual = mavutil.mode_string_v10(msg)
