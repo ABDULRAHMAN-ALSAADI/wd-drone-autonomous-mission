@@ -10,6 +10,18 @@ from pymavlink import mavutil
 
 DEFAULT_UART = "/dev/serial0"
 DEFAULT_BAUD = 921600
+AUTOPILOT_COMPONENTS = {0, 1}
+
+
+def heartbeat_is_autopilot(msg, target_system: int) -> bool:
+    if msg.get_srcSystem() != target_system:
+        return False
+    if msg.get_srcComponent() not in AUTOPILOT_COMPONENTS:
+        return False
+    return msg.type not in (
+        mavutil.mavlink.MAV_TYPE_GCS,
+        mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER,
+    )
 
 
 def connect(connection: str, baud: Optional[int], timeout_s: float):
@@ -58,7 +70,8 @@ def command_status(args) -> int:
             continue
         kind = msg.get_type()
         if kind == "HEARTBEAT":
-            print(f"HEARTBEAT mode={mavutil.mode_string_v10(msg)} armed={bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)}")
+            src = f"{msg.get_srcSystem()}:{msg.get_srcComponent()}"
+            print(f"HEARTBEAT src={src} mode={mavutil.mode_string_v10(msg)} armed={bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)}")
         elif kind == "SYS_STATUS":
             print(f"SYS_STATUS voltage={msg.voltage_battery / 1000.0:.2f}V battery={msg.battery_remaining}%")
         elif kind == "GPS_RAW_INT":
@@ -95,13 +108,18 @@ def observe_mode(master, seconds: float) -> tuple[str, bool]:
     end = time.monotonic() + seconds
     actual = mode_name(master)
     armed = False
+    target_system = master.target_system
     while time.monotonic() < end:
         msg = master.recv_match(type="HEARTBEAT", blocking=True, timeout=0.5)
         if msg is None:
             continue
+        src = f"{msg.get_srcSystem()}:{msg.get_srcComponent()}"
+        if not heartbeat_is_autopilot(msg, target_system):
+            print(f"[MODE IGNORED] src={src} mode={mavutil.mode_string_v10(msg)}")
+            continue
         actual = mavutil.mode_string_v10(msg)
         armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-        print(f"[MODE OBSERVED] mode={actual} armed={armed}")
+        print(f"[MODE OBSERVED] src={src} mode={actual} armed={armed}")
     return actual, armed
 
 
