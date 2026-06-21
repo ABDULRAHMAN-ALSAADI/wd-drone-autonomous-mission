@@ -67,8 +67,9 @@ altitude, and acceleration limits.
 
 ## Operator configuration
 
-`./run.sh` uses `operator_config.json` by default. Edit this file for normal
-SITL testing and bench tuning.
+`./run.sh` uses `parameter_config.json` by default. Edit this file for normal
+SITL testing and bench tuning. It contains `_help` notes beside the important
+tuning values.
 
 Common values:
 
@@ -78,11 +79,13 @@ Common values:
   "search_speed_m_s": 3.0
 },
 "control": {
-  "center_max_speed_m_s": 0.45,
-  "center_tolerance_px": 18.0
+  "center_max_speed_m_s": 0.35,
+  "center_tolerance_px": 12.0,
+  "target_lost_timeout_s": 4.0,
+  "reacquire_after_lost_s": 0.25
 },
 "safety": {
-  "guided_auto_bounce_grace_s": 2.0
+  "guided_auto_bounce_grace_s": 8.0
 }
 ```
 
@@ -98,6 +101,10 @@ intentional.
 `guided_auto_bounce_grace_s` prevents one temporary AUTO heartbeat from causing
 the controller to drop a target after GUIDED was requested. During this grace
 period it keeps the target lock and retries GUIDED.
+
+If the target is briefly lost during centering, the controller stays in GUIDED,
+stops horizontal movement, searches the full frame for the same target, and only
+returns to AUTO after `target_lost_timeout_s`.
 
 ## Vision correction
 
@@ -147,7 +154,7 @@ chmod +x setup.sh run.sh
 Expected test result:
 
 ```text
-Ran 47 tests
+Ran 49 tests
 OK
 ```
 
@@ -171,13 +178,14 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission/target_mission_v2
 Default config:
 
 ```text
-operator_config.json
+parameter_config.json
 ```
 
 Equivalent explicit profile:
 
 ```bash
 ./run.sh configs/sim_gazebo.json
+./run.sh operator_config.json
 ```
 
 Starting profile for Raspberry Pi Camera Module 3:

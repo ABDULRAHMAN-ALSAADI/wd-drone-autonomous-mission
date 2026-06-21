@@ -37,7 +37,7 @@ TARGET_PAYLOAD_COLOUR = {
 DEFAULT_SAFETY = {
     "max_center_time_s": 25.0,
     "max_guided_speed_m_s": 0.45,
-    "guided_auto_bounce_grace_s": 2.0,
+    "guided_auto_bounce_grace_s": 8.0,
     "payload_requires_guided": True,
     "payload_min_altitude_m": None,
     "payload_max_altitude_m": None,
@@ -108,6 +108,10 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("camera.device_index must be zero or positive")
     if float(config["mission"].get("max_flight_time_s", 600.0)) <= 0:
         raise ValueError("mission.max_flight_time_s must be positive")
+    if int(config["mission"].get("search_start_wp", 0)) < 0:
+        raise ValueError("mission.search_start_wp must be zero or positive")
+    if float(config["mission"].get("mode_change_timeout_s", 5.0)) <= 0:
+        raise ValueError("mission.mode_change_timeout_s must be positive")
     if int(config["vision"]["required_hits"]) < 1:
         raise ValueError("vision.required_hits must be at least 1")
     vision_backend = config["vision"].get("backend", "strict_shape")
@@ -116,6 +120,12 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError(f"vision.backend must be one of: {supported}")
     if float(config["control"]["command_rate_hz"]) <= 0:
         raise ValueError("control.command_rate_hz must be positive")
+    if float(config["control"].get("center_tolerance_px", 1.0)) <= 0:
+        raise ValueError("control.center_tolerance_px must be positive")
+    if float(config["control"].get("target_lost_timeout_s", 2.0)) <= 0:
+        raise ValueError("control.target_lost_timeout_s must be positive")
+    if float(config["control"].get("reacquire_after_lost_s", 0.25)) < 0:
+        raise ValueError("control.reacquire_after_lost_s must be zero or positive")
     missing_action = config["parameters"].get("missing_action", "fail")
     if missing_action not in {"fail", "warn"}:
         raise ValueError("parameters.missing_action must be 'fail' or 'warn'")
@@ -144,6 +154,11 @@ def validate_config(config: dict[str, Any]) -> None:
     if navigation["search_speed_source"] == "companion_do_change_speed":
         if navigation.get("search_speed_m_s") is None or float(navigation["search_speed_m_s"]) <= 0:
             raise ValueError("navigation.search_speed_m_s must be positive when companion speed control is enabled")
+    if float(config["display"].get("overlay_font_scale", 0.46)) <= 0:
+        raise ValueError("display.overlay_font_scale must be positive")
+    overlay_alpha = float(config["display"].get("overlay_background_alpha", 0.42))
+    if not 0.0 <= overlay_alpha <= 1.0:
+        raise ValueError("display.overlay_background_alpha must be between 0 and 1")
     required_ardupilot_parameters(config)
 
 
@@ -492,6 +507,11 @@ class Controller:
         maximum = float(c["center_max_speed_m_s"])
         return clamp(forward, maximum), clamp(right, maximum), math.hypot(ex, ey)
 
+    def search_speed_label(self) -> str:
+        if self.navigation["search_speed_source"] == "companion_do_change_speed":
+            return f"companion {float(self.navigation['search_speed_m_s']):.1f}m/s"
+        return "QGC mission"
+
     def payload_safety_error(self) -> Optional[str]:
         if bool(self.safety.get("payload_requires_guided", True)) and self.vehicle.mode != "GUIDED":
             return f"vehicle mode is {self.vehicle.mode}, not GUIDED"
@@ -627,6 +647,7 @@ class Controller:
             ):
                 self.abandon_target_and_resume_auto(now, f"center timeout after {float(max_center_time_s):.1f}s")
                 return detections, masks
+            fresh_detection = False
             if self.last_detection:
                 tracked, masks = self.detector.track_colour(
                     frame,
@@ -638,8 +659,31 @@ class Controller:
                     self.last_detection = tracked
                     self.last_seen_at = now
                     detections = [tracked]
+                    fresh_detection = True
+            lost_for = now - self.last_seen_at if self.last_seen_at else float("inf")
+            if not fresh_detection and self.current_target and lost_for >= float(c.get("reacquire_after_lost_s", 0.25)):
+                search_detections, masks = self.detector.search(frame)
+                matches = [item for item in search_detections if item.target == self.current_target]
+                if matches:
+                    reacquired = max(matches, key=lambda item: item.confidence)
+                    self.last_detection = reacquired
+                    self.last_seen_at = now
+                    detections = [reacquired]
+                    fresh_detection = True
+                    self.status_message = f"Reacquired {self.current_target}; centering"
+                else:
+                    detections = search_detections
+            lost_for = now - self.last_seen_at if self.last_seen_at else float("inf")
             if self.last_detection is None or now - self.last_seen_at > float(c["target_lost_timeout_s"]):
                 self.abandon_target_and_resume_auto(now, "target lost")
+                return detections, masks
+            if not fresh_detection:
+                self.centered_since = None
+                self.status_message = (
+                    f"Looking for {self.current_target} in GUIDED "
+                    f"{lost_for:.1f}/{float(c['target_lost_timeout_s']):.1f}s"
+                )
+                self.send_velocity(0.0, 0.0, self.altitude_down())
                 return detections, masks
             forward, right, distance = self.centre_velocity(self.last_detection, width, height)
             self.last_center_error_px = distance
@@ -689,7 +733,7 @@ class Controller:
         out = frame.copy()
         h, w = out.shape[:2]
         image_center = (w // 2, h // 2)
-        cv2.drawMarker(out, image_center, (255, 255, 255), cv2.MARKER_CROSS, 34, 2)
+        cv2.drawMarker(out, image_center, (255, 255, 255), cv2.MARKER_CROSS, 26, 1)
         draw_items = list(detections)
         if self.last_detection and all(item.target != self.last_detection.target for item in draw_items):
             draw_items.append(self.last_detection)
@@ -699,47 +743,54 @@ class Controller:
             cv2.circle(out, (item.center_x, item.center_y), 5, colour, -1)
             cv2.line(out, image_center, (item.center_x, item.center_y), colour, 2, cv2.LINE_AA)
             error = math.hypot(item.center_x - image_center[0], item.center_y - image_center[1])
-            cv2.putText(out, f"{item.target} conf={item.confidence:.2f} v={item.vertices} ext={item.extent:.2f}",
-                        (item.bbox_x, max(24, item.bbox_y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 2, cv2.LINE_AA)
-            cv2.putText(out, f"err={error:.0f}px tol={float(self.config['control']['center_tolerance_px']):.0f}px",
-                        (item.bbox_x, item.bbox_y + item.bbox_h + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 2, cv2.LINE_AA)
+            cv2.putText(out, f"{item.target} {item.confidence:.2f} err {error:.0f}px",
+                        (item.bbox_x, max(18, item.bbox_y - 7)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, colour, 1, cv2.LINE_AA)
         hits = self.tracker.status()
         alt = "unknown" if self.vehicle.relative_alt_m is None else f"{self.vehicle.relative_alt_m:.2f} m"
         centered_for = 0.0 if self.centered_since is None else time.monotonic() - self.centered_since
         center_error = "none" if self.last_center_error_px is None else f"{self.last_center_error_px:.0f}px"
-        lines = [
-            f"STATE: {self.state.value}", f"MODE: {self.vehicle.mode}", f"ALT: {alt}",
-            f"ACTION: {self.status_message}",
-            f"TARGET: {self.current_target or 'none'} center_err={center_error} centered_for={centered_for:.1f}s",
-            f"WAYPOINT: {self.vehicle.mission_seq}",
-            f"MISSIONS DONE: {self.mission_done_count}",
-            f"red_triangle hits: {hits['red_triangle']}/{self.config['vision']['required_hits']}",
-            f"blue_hexagon hits: {hits['blue_hexagon']}/{self.config['vision']['required_hits']}",
-            f"DONE: {sorted(self.completed_targets)}",
-        ]
-        y = 24
-        for line in lines:
-            cv2.putText(out, line, (12, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
-            y += 24
         def fmt(value: Optional[float], unit: str) -> str:
             return "n/a" if value is None else f"{value:.2f}{unit}"
 
-        telemetry = [
-            f"hspd {fmt(self.vehicle.horizontal_speed_m_s, 'm/s')}",
-            f"vspd {fmt(None if self.vehicle.velocity_down_m_s is None else -self.vehicle.velocity_down_m_s, 'm/s')}",
-            f"spd  {fmt(self.vehicle.total_speed_m_s, 'm/s')}",
-            f"acc  {fmt(self.vehicle.acceleration_m_s2, 'm/s2')}",
-        ]
-        ty = h - 74
-        for line in telemetry:
-            cv2.putText(out, line, (12, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
-            ty += 18
+        done = ",".join(sorted(self.completed_targets)) if self.completed_targets else "none"
+        font_scale = float(self.config["display"].get("overlay_font_scale", 0.46))
+        max_text_width = max(120, w - 42)
+
+        def fit_line(text: str) -> str:
+            if cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)[0][0] <= max_text_width:
+                return text
+            clipped = text
+            while len(clipped) > 4 and cv2.getTextSize(clipped + "...", cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)[0][0] > max_text_width:
+                clipped = clipped[:-1]
+            return clipped + "..."
+
+        lines = [fit_line(line) for line in [
+            f"Mission {self.state.value} | Mode {self.vehicle.mode} | WP {self.vehicle.mission_seq}",
+            f"Action: {self.status_message}",
+            f"Target: {self.current_target or 'none'} | Err {center_error} | Hold {centered_for:.1f}s",
+            f"Hits: triangle {hits['red_triangle']}/{self.config['vision']['required_hits']} | hexagon {hits['blue_hexagon']}/{self.config['vision']['required_hits']}",
+            f"Done: {done} | Runs {self.mission_done_count} | Search speed {self.search_speed_label()}",
+            f"Alt {alt} | Hspd {fmt(self.vehicle.horizontal_speed_m_s, 'm/s')} | Vspd {fmt(None if self.vehicle.velocity_down_m_s is None else -self.vehicle.velocity_down_m_s, 'm/s')} | Acc {fmt(self.vehicle.acceleration_m_s2, 'm/s2')}",
+        ]]
+        line_height = max(16, int(38 * font_scale))
+        panel_width = min(w - 16, max(cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)[0][0] for line in lines) + 20)
+        panel_height = 12 + line_height * len(lines)
+        panel = out.copy()
+        cv2.rectangle(panel, (8, 8), (8 + panel_width, 8 + panel_height), (0, 0, 0), -1)
+        alpha = float(self.config["display"].get("overlay_background_alpha", 0.42))
+        cv2.addWeighted(panel, alpha, out, 1.0 - alpha, 0, out)
+        y = 28
+        for line in lines:
+            cv2.putText(out, line, (18, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+            y += line_height
         return out
 
     def run(self) -> int:
         print("=" * 72)
         print("WD DRONE TARGET MISSION V2")
         print("QGC/ARDUPILOT OWNS AUTO ALTITUDE/SPEED. COMPANION CENTERS TARGETS IN GUIDED.")
+        print(f"SEARCH START WP: {self.config['mission']['search_start_wp']} | SEARCH SPEED OWNER: {self.search_speed_label()}")
+        print(f"GUIDED HOLD: {float(self.safety.get('guided_auto_bounce_grace_s', 0.0)):.1f}s | TARGET LOST TIMEOUT: {float(self.config['control']['target_lost_timeout_s']):.1f}s")
         print("=" * 72)
         try:
             while not self.stop_requested:

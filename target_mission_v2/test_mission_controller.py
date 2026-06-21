@@ -8,7 +8,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from vision import HitTracker, StrictShapeDetector
+from vision import Detection, HitTracker, StrictShapeDetector
 from control import altitude_velocity_down
 from mission_controller import (
     Controller,
@@ -201,6 +201,7 @@ class MissionConfigTests(unittest.TestCase):
                 "center_tolerance_px": 34.0,
                 "center_hold_s": 0.8,
                 "target_lost_timeout_s": 2.0,
+                "reacquire_after_lost_s": 0.25,
                 "altitude_control": "hold_configured",
                 "altitude_tolerance_m": 0.2,
                 "altitude_kp": 0.45,
@@ -219,12 +220,17 @@ class MissionConfigTests(unittest.TestCase):
             "safety": {
                 "max_center_time_s": 25.0,
                 "max_guided_speed_m_s": 0.45,
-                "guided_auto_bounce_grace_s": 2.0,
+                "guided_auto_bounce_grace_s": 8.0,
                 "payload_requires_guided": True,
                 "payload_min_altitude_m": None,
                 "payload_max_altitude_m": None,
             },
-            "display": {"show_main_window": False, "show_masks": False},
+            "display": {
+                "show_main_window": False,
+                "show_masks": False,
+                "overlay_font_scale": 0.46,
+                "overlay_background_alpha": 0.42,
+            },
             "logging": {"directory": "logs/mission_v2", "flush_interval_s": 0.5},
         }
 
@@ -305,7 +311,7 @@ class MissionConfigTests(unittest.TestCase):
             validate_config(config)
 
     def test_profile_configs_are_valid(self):
-        paths = [Path(__file__).with_name("operator_config.json")]
+        paths = [Path(__file__).with_name("operator_config.json"), Path(__file__).with_name("parameter_config.json")]
         paths.extend(sorted(Path(__file__).with_name("configs").glob("*.json")))
         for path in paths:
             with self.subTest(path=path.name):
@@ -404,6 +410,19 @@ class FakeCamera:
         pass
 
 
+class FakeDetector:
+    def __init__(self, search_detections=None):
+        self.search_detections = search_detections or []
+
+    def track_colour(self, frame, target, previous_center, max_jump_px=220.0):
+        mask = np.zeros(frame.shape[:2], np.uint8)
+        return None, {"red": mask, "blue": mask}
+
+    def search(self, frame):
+        mask = np.zeros(frame.shape[:2], np.uint8)
+        return list(self.search_detections), {"red": mask, "blue": mask}
+
+
 class ControllerFlowTests(unittest.TestCase):
     def config(self):
         config = MissionConfigTests.config()
@@ -464,6 +483,42 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(ctrl.state, State.CENTER)
         self.assertEqual(ctrl.current_target, "red_triangle")
         self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
+
+    def test_center_holds_guided_while_target_is_temporarily_lost(self):
+        vehicle = FakeVehicle()
+        config = self.config()
+        config["control"]["target_lost_timeout_s"] = 4.0
+        config["control"]["reacquire_after_lost_s"] = 0.25
+        ctrl = self.controller(config, vehicle)
+        ctrl.detector = FakeDetector()
+        ctrl.state = State.CENTER
+        ctrl.current_target = "red_triangle"
+        ctrl.last_detection = Detection("red_triangle", 450, 260, 400.0, 0.8, 3, 3, 0, 0, 0.5, 0.6, 0.9, 430, 240, 40, 40)
+        ctrl.last_seen_at = time.monotonic() - 1.0
+        ctrl.center_started_at = time.monotonic()
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+        self.assertEqual(ctrl.state, State.CENTER)
+        self.assertEqual(ctrl.current_target, "red_triangle")
+        self.assertEqual(vehicle.mode_requests, [])
+        self.assertEqual(vehicle.velocities[-1][:2], (0.0, 0.0))
+
+    def test_center_reacquires_same_target_before_timeout(self):
+        vehicle = FakeVehicle()
+        config = self.config()
+        config["control"]["target_lost_timeout_s"] = 4.0
+        config["control"]["reacquire_after_lost_s"] = 0.25
+        ctrl = self.controller(config, vehicle)
+        reacquired = Detection("red_triangle", 480, 270, 500.0, 0.9, 3, 3, 0, 0, 0.5, 0.6, 0.9, 460, 250, 40, 40)
+        ctrl.detector = FakeDetector([reacquired])
+        ctrl.state = State.CENTER
+        ctrl.current_target = "red_triangle"
+        ctrl.last_detection = Detection("red_triangle", 300, 260, 400.0, 0.8, 3, 3, 0, 0, 0.5, 0.6, 0.9, 280, 240, 40, 40)
+        ctrl.last_seen_at = time.monotonic() - 1.0
+        ctrl.center_started_at = time.monotonic()
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+        self.assertEqual(ctrl.state, State.CENTER)
+        self.assertEqual(ctrl.last_detection, reacquired)
+        self.assertTrue(ctrl.last_seen_at > ctrl.state_started_at)
 
     def test_auto_bounce_timeout_abandons_target(self):
         vehicle = FakeVehicle()

@@ -66,8 +66,8 @@ passes the safety gates in `docs/VISION_MODEL_PLAN.md`.
 
 ## Operator Config
 
-`./run.sh` uses `operator_config.json` by default. This is the file to edit for
-normal SITL testing.
+`./run.sh` uses `parameter_config.json` by default. This is the file to edit for
+normal SITL testing; it includes `_help` notes for the important tuning values.
 
 AUTO search speed is controlled by:
 
@@ -82,14 +82,28 @@ With `qgc_mission`, QGC/ArduPilot owns AUTO speed. With
 `companion_do_change_speed`, the companion sends `MAV_CMD_DO_CHANGE_SPEED` when
 SEARCH starts or resumes.
 
+If you see search speed around 1.5-1.6 m/s while `qgc_mission` is selected, it
+is coming from the QGC mission or ArduPilot waypoint navigation settings, not
+from this controller.
+
 GUIDED bounce protection is controlled by:
 
 ```json
-"guided_auto_bounce_grace_s": 2.0
+"guided_auto_bounce_grace_s": 8.0
 ```
 
 If ArduPilot briefly reports AUTO after GUIDED was requested, the controller
 keeps the target lock and retries GUIDED during this grace period.
+
+Temporary target loss during centering is controlled by:
+
+```json
+"target_lost_timeout_s": 4.0,
+"reacquire_after_lost_s": 0.25
+```
+
+During this window the controller stays in GUIDED, sends zero horizontal
+velocity, and searches for the same target again.
 
 ## Repeat Tests
 
@@ -103,8 +117,8 @@ you close the camera window and restart the program, the count starts from zero.
 ## Camera Window
 
 The main window intentionally shows mission state, mode, current waypoint, target
-lock, hit counts, completed targets, speed, vertical speed, total speed, and
-acceleration.
+lock, hit counts, completed targets, speed owner, speed, vertical speed, and
+acceleration in a compact panel.
 
 Mask windows are disabled by default:
 

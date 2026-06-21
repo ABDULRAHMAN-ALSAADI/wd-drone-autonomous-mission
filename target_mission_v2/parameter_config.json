@@ -1,7 +1,18 @@
 {
+  "_help": {
+    "mission.search_start_wp": "First AUTO mission item where vision search is allowed. Set this to 7 or 8 if you want search to begin later.",
+    "navigation.search_speed_source": "qgc_mission means QGC/ArduPilot mission ChangeSpeed items control search speed. companion_do_change_speed makes this program send MAV_CMD_DO_CHANGE_SPEED.",
+    "navigation.search_speed_m_s": "Used only when search_speed_source is companion_do_change_speed.",
+    "control.center_tolerance_px": "How close the target center must be to the camera center before payload action. Smaller is more precise but can oscillate.",
+    "control.target_lost_timeout_s": "How long the drone stays in GUIDED trying to reacquire the confirmed target before returning to AUTO.",
+    "control.reacquire_after_lost_s": "Delay before doing a wider frame search when the locked target disappears.",
+    "safety.guided_auto_bounce_grace_s": "How long to keep requesting GUIDED if ArduPilot briefly reports AUTO after a target is confirmed.",
+    "display.overlay_font_scale": "Camera-window text size.",
+    "parameters.enforce": "Keep false unless you intentionally want the companion computer to change ArduPilot parameters."
+  },
   "mavlink": {
-    "connection": "/dev/serial0",
-    "baud": 921600,
+    "connection": "udpin:0.0.0.0:14551",
+    "baud": null,
     "heartbeat_timeout_s": 8.0
   },
   "camera": {
@@ -28,19 +39,19 @@
   "vision": {
     "backend": "strict_shape",
     "process_width": 960,
-    "search_min_area_px": 180.0,
-    "tracking_min_area_px": 100.0,
-    "required_hits": 4,
-    "confirmation_window_s": 1.8,
-    "max_lock_jump_px": 180.0,
+    "search_min_area_px": 220.0,
+    "tracking_min_area_px": 120.0,
+    "required_hits": 3,
+    "confirmation_window_s": 1.5,
+    "max_lock_jump_px": 160.0,
     "debug_rejects": false
   },
   "control": {
     "command_rate_hz": 10.0,
     "center_kp": 0.55,
     "center_max_speed_m_s": 0.35,
-    "center_tolerance_px": 22.0,
-    "center_hold_s": 1.2,
+    "center_tolerance_px": 12.0,
+    "center_hold_s": 1.4,
     "target_lost_timeout_s": 4.0,
     "reacquire_after_lost_s": 0.25,
     "altitude_control": "off",

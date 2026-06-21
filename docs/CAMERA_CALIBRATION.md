@@ -48,3 +48,15 @@ or:
 ```
 
 Change only one axis at a time and test at low speed.
+
+## Centering Precision
+
+The target is considered centered when the pixel error is inside:
+
+```json
+"center_tolerance_px": 12.0
+```
+
+Smaller values are more precise in Gazebo but can oscillate with GPS noise,
+wind, camera vibration, and real lens distortion. For real flights, start
+conservative and reduce the value only after stable low-speed tests.

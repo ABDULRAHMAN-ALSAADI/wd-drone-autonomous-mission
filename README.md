@@ -30,7 +30,7 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission/target_mission_v2
 The default operator-facing config is:
 
 ```text
-target_mission_v2/operator_config.json
+target_mission_v2/parameter_config.json
 ```
 
 Use an explicit profile when needed:
@@ -38,6 +38,7 @@ Use an explicit profile when needed:
 ```bash
 ./run.sh configs/sim_gazebo.json
 ./run.sh configs/real_pi_camera_module_3.json
+./run.sh operator_config.json
 ```
 
 Useful mission docs:

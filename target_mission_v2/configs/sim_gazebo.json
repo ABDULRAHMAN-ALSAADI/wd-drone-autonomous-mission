@@ -37,11 +37,12 @@
   },
   "control": {
     "command_rate_hz": 10.0,
-    "center_kp": 0.65,
-    "center_max_speed_m_s": 0.45,
-    "center_tolerance_px": 18.0,
-    "center_hold_s": 1.2,
-    "target_lost_timeout_s": 2.0,
+    "center_kp": 0.55,
+    "center_max_speed_m_s": 0.35,
+    "center_tolerance_px": 12.0,
+    "center_hold_s": 1.4,
+    "target_lost_timeout_s": 4.0,
+    "reacquire_after_lost_s": 0.25,
     "altitude_control": "off",
     "altitude_tolerance_m": 0.2,
     "altitude_kp": 0.45,
@@ -58,16 +59,18 @@
     "total_action_time_s": 1.5
   },
   "safety": {
-    "max_center_time_s": 25.0,
-    "max_guided_speed_m_s": 0.45,
-    "guided_auto_bounce_grace_s": 2.0,
+    "max_center_time_s": 30.0,
+    "max_guided_speed_m_s": 0.35,
+    "guided_auto_bounce_grace_s": 8.0,
     "payload_requires_guided": true,
     "payload_min_altitude_m": null,
     "payload_max_altitude_m": null
   },
   "display": {
     "show_main_window": true,
-    "show_masks": false
+    "show_masks": false,
+    "overlay_font_scale": 0.46,
+    "overlay_background_alpha": 0.42
   },
   "logging": {
     "directory": "logs/mission_v2",

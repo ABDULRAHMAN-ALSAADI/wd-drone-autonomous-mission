@@ -6,7 +6,7 @@ Use this before moving from SITL to Cube Orange Plus and Raspberry Pi 5.
 
 - QGC mission altitude and speed are set correctly.
 - Real profile MAVLink is `/dev/serial0` with `921600` baud.
-- `operator_config.json` uses `navigation.search_speed_source: "qgc_mission"`
+- `parameter_config.json` uses `navigation.search_speed_source: "qgc_mission"`
   unless companion-owned AUTO speed is intentionally required.
 - ArduPilot failsafes, RTL altitude, geofence, and battery failsafe are verified.
 - Companion parameter enforcement remains disabled unless intentionally enabled.
