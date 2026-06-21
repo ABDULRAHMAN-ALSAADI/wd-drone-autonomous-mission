@@ -107,6 +107,13 @@ git push
 
 ## Safe MAVLink Bench Order
 
+Before the Pixhawk is connected:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./scripts/pi_uart_preflight.sh
+```
+
 When the Pixhawk is connected and propellers are removed:
 
 ```bash
