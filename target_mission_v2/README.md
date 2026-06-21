@@ -85,7 +85,8 @@ Common values:
   "reacquire_after_lost_s": 0.25
 },
 "safety": {
-  "guided_auto_bounce_grace_s": 8.0
+  "guided_auto_bounce_grace_s": 8.0,
+  "mode_retry_interval_s": 0.5
 }
 ```
 
@@ -105,6 +106,10 @@ period it keeps the target lock and retries GUIDED.
 If the target is briefly lost during centering, the controller stays in GUIDED,
 stops horizontal movement, searches the full frame for the same target, and only
 returns to AUTO after `target_lost_timeout_s`.
+
+The overlay shows `Guided bounces`. A normal AUTO resume after completing one
+target does not increase this counter; only an unexpected AUTO report during
+active centering does.
 
 ## Vision correction
 

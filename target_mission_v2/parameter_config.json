@@ -7,6 +7,7 @@
     "control.target_lost_timeout_s": "How long the drone stays in GUIDED trying to reacquire the confirmed target before returning to AUTO.",
     "control.reacquire_after_lost_s": "Delay before doing a wider frame search when the locked target disappears.",
     "safety.guided_auto_bounce_grace_s": "How long to keep requesting GUIDED if ArduPilot briefly reports AUTO after a target is confirmed.",
+    "safety.mode_retry_interval_s": "How often the companion retries GUIDED/AUTO/RTL mode requests while waiting for the requested mode.",
     "display.overlay_font_scale": "Camera-window text size.",
     "parameters.enforce": "Keep false unless you intentionally want the companion computer to change ArduPilot parameters."
   },
@@ -73,6 +74,7 @@
     "max_center_time_s": 30.0,
     "max_guided_speed_m_s": 0.35,
     "guided_auto_bounce_grace_s": 8.0,
+    "mode_retry_interval_s": 0.5,
     "payload_requires_guided": true,
     "payload_min_altitude_m": null,
     "payload_max_altitude_m": null

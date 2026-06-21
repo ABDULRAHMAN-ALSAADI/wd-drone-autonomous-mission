@@ -221,6 +221,7 @@ class MissionConfigTests(unittest.TestCase):
                 "max_center_time_s": 25.0,
                 "max_guided_speed_m_s": 0.45,
                 "guided_auto_bounce_grace_s": 8.0,
+                "mode_retry_interval_s": 0.5,
                 "payload_requires_guided": True,
                 "payload_min_altitude_m": None,
                 "payload_max_altitude_m": None,
@@ -483,6 +484,7 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(ctrl.state, State.CENTER)
         self.assertEqual(ctrl.current_target, "red_triangle")
         self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
+        self.assertEqual(ctrl.guided_bounce_count, 1)
 
     def test_center_holds_guided_while_target_is_temporarily_lost(self):
         vehicle = FakeVehicle()

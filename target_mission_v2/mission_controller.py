@@ -38,6 +38,7 @@ DEFAULT_SAFETY = {
     "max_center_time_s": 25.0,
     "max_guided_speed_m_s": 0.45,
     "guided_auto_bounce_grace_s": 8.0,
+    "mode_retry_interval_s": 0.5,
     "payload_requires_guided": True,
     "payload_min_altitude_m": None,
     "payload_max_altitude_m": None,
@@ -144,6 +145,9 @@ def validate_config(config: dict[str, Any]) -> None:
     guided_auto_bounce_grace_s = safety.get("guided_auto_bounce_grace_s")
     if guided_auto_bounce_grace_s is not None and float(guided_auto_bounce_grace_s) < 0:
         raise ValueError("safety.guided_auto_bounce_grace_s must be zero, positive, or null")
+    mode_retry_interval_s = safety.get("mode_retry_interval_s")
+    if mode_retry_interval_s is not None and float(mode_retry_interval_s) <= 0:
+        raise ValueError("safety.mode_retry_interval_s must be positive or null")
     min_alt = safety.get("payload_min_altitude_m")
     max_alt = safety.get("payload_max_altitude_m")
     if min_alt is not None and max_alt is not None and float(min_alt) > float(max_alt):
@@ -410,6 +414,8 @@ class Controller:
         self.centered_since: Optional[float] = None
         self.center_started_at: Optional[float] = None
         self.guided_mode_lost_since: Optional[float] = None
+        self.guided_bounce_count = 0
+        self.last_guided_bounce_print_at = 0.0
         self.last_center_error_px: Optional[float] = None
         self.last_center_forward: Optional[float] = None
         self.last_center_right: Optional[float] = None
@@ -478,7 +484,9 @@ class Controller:
 
     def request_mode_repeated(self, mode: str) -> None:
         now = time.monotonic()
-        if now - self.last_mode_request_at >= 1.0:
+        interval = self.safety.get("mode_retry_interval_s")
+        retry_interval_s = 1.0 if interval is None else float(interval)
+        if now - self.last_mode_request_at >= retry_interval_s:
             self.vehicle.set_mode(mode)
             self.last_mode_request_at = now
 
@@ -630,10 +638,17 @@ class Controller:
                 if self.vehicle.mode == "AUTO":
                     if self.guided_mode_lost_since is None:
                         self.guided_mode_lost_since = now
+                        self.guided_bounce_count += 1
                     elapsed = now - self.guided_mode_lost_since
                     grace_s = self.safety.get("guided_auto_bounce_grace_s")
                     if grace_s is not None and elapsed <= float(grace_s):
                         self.status_message = f"GUIDED bounce guard: mode=AUTO for {elapsed:.1f}/{float(grace_s):.1f}s"
+                        if now - self.last_guided_bounce_print_at >= 1.0:
+                            print(
+                                f"[GUIDED BOUNCE] target={self.current_target} "
+                                f"auto_for={elapsed:.1f}/{float(grace_s):.1f}s count={self.guided_bounce_count}; retrying GUIDED"
+                            )
+                            self.last_guided_bounce_print_at = now
                         self.request_mode_repeated("GUIDED")
                         return detections, masks
                 self.abandon_target_and_resume_auto(now, f"left GUIDED: {self.vehicle.mode}")
@@ -769,7 +784,8 @@ class Controller:
             f"Action: {self.status_message}",
             f"Target: {self.current_target or 'none'} | Err {center_error} | Hold {centered_for:.1f}s",
             f"Hits: triangle {hits['red_triangle']}/{self.config['vision']['required_hits']} | hexagon {hits['blue_hexagon']}/{self.config['vision']['required_hits']}",
-            f"Done: {done} | Runs {self.mission_done_count} | Search speed {self.search_speed_label()}",
+            f"Done: {done} | Runs {self.mission_done_count} | Guided bounces {self.guided_bounce_count}",
+            f"Search speed {self.search_speed_label()} | Retry {float(self.safety.get('mode_retry_interval_s') or 1.0):.1f}s",
             f"Alt {alt} | Hspd {fmt(self.vehicle.horizontal_speed_m_s, 'm/s')} | Vspd {fmt(None if self.vehicle.velocity_down_m_s is None else -self.vehicle.velocity_down_m_s, 'm/s')} | Acc {fmt(self.vehicle.acceleration_m_s2, 'm/s2')}",
         ]]
         line_height = max(16, int(38 * font_scale))
