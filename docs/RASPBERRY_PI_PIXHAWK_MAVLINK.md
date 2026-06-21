@@ -68,8 +68,11 @@ First test only the link:
 Expected result:
 
 ```text
-[HEARTBEAT] system=1 component=1 mode=...
+[HEARTBEAT] system=1 component=0 mode=...
 ```
+
+The component can also appear as `1` on some setups; the important part is that
+heartbeats arrive and the mode/armed state are readable.
 
 If heartbeat times out, do not try mode, servo, or motor commands yet. Check:
 
@@ -93,14 +96,17 @@ Request GUIDED:
 ./scripts/mavlink_bench.sh set-mode GUIDED --connection /dev/serial0 --baud 921600
 ```
 
-Request AUTO:
+Return to STABILIZE:
 
 ```bash
-./scripts/mavlink_bench.sh set-mode AUTO --connection /dev/serial0 --baud 921600
+./scripts/mavlink_bench.sh set-mode STABILIZE --connection /dev/serial0 --baud 921600
 ```
 
-Use QGC as the authority for whether the mode request was accepted. Some modes
-require GPS, EKF readiness, arming state, or a valid mission.
+The script watches heartbeat after the request. If it says the requested mode
+was `STABILIZE` but the actual mode became `ALT_HOLD`, the Pi link is working
+but another mode authority is winning. Check the RC/transmitter flight-mode
+switch first, then Mission Planner/QGC mode controls and Pixhawk failsafe or
+mode conditions. AUTO also requires a valid uploaded mission.
 
 ## Payload Servo Bench Test
 

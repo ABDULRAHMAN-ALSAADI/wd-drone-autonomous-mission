@@ -91,12 +91,32 @@ def set_mode(master, mode: str) -> None:
     )
 
 
+def observe_mode(master, seconds: float) -> tuple[str, bool]:
+    end = time.monotonic() + seconds
+    actual = mode_name(master)
+    armed = False
+    while time.monotonic() < end:
+        msg = master.recv_match(type="HEARTBEAT", blocking=True, timeout=0.5)
+        if msg is None:
+            continue
+        actual = mavutil.mode_string_v10(msg)
+        armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+        print(f"[MODE OBSERVED] mode={actual} armed={armed}")
+    return actual, armed
+
+
 def command_set_mode(args) -> int:
     master = connect(args.connection, args.baud, args.timeout)
     set_mode(master, args.mode)
-    time.sleep(args.wait)
-    master.recv_match(type="HEARTBEAT", blocking=True, timeout=1.0)
-    print(f"[DONE] requested mode={args.mode}")
+    actual, _armed = observe_mode(master, args.observe)
+    if actual == args.mode:
+        print(f"[CONFIRMED] requested mode={args.mode} actual={actual}")
+    else:
+        print(
+            f"[WARNING] requested mode={args.mode} actual={actual}. "
+            "If this snaps to another mode, check RC flight-mode switch, "
+            "Mission Planner/QGC mode controls, and Pixhawk mode failsafe conditions."
+        )
     return 0
 
 
@@ -214,7 +234,7 @@ def build_parser() -> argparse.ArgumentParser:
     set_mode_cmd = subparsers.add_parser("set-mode", help="request a flight mode")
     add_connection_args(set_mode_cmd)
     set_mode_cmd.add_argument("mode", choices=["STABILIZE", "ALT_HOLD", "LOITER", "GUIDED", "AUTO", "RTL", "LAND"])
-    set_mode_cmd.add_argument("--wait", type=float, default=1.0)
+    set_mode_cmd.add_argument("--observe", type=float, default=3.0, help="seconds to watch heartbeat mode after the request")
     set_mode_cmd.set_defaults(func=command_set_mode)
 
     servo = subparsers.add_parser("servo", help="send DO_SET_SERVO for payload bench testing")
