@@ -87,6 +87,12 @@ If heartbeat times out, do not try mode, servo, or motor commands yet. Check:
 
 ## Modes
 
+Read-only health summary:
+
+```bash
+./scripts/mavlink_bench.sh health --connection /dev/serial0 --baud 921600 --seconds 10
+```
+
 List modes:
 
 ```bash

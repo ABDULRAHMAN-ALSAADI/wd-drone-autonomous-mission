@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Bench-safe MAVLink tools for Cube/Pixhawk and Raspberry Pi tests.
+
+This file is for controlled hardware checks before running the mission
+controller. Most commands only listen or request a flight mode. Motor and servo
+commands are deliberately guarded by explicit safety flags.
+"""
 from __future__ import annotations
 
 import argparse
@@ -100,6 +106,92 @@ def command_status(args) -> int:
             print(f"ALT rel={msg.relative_alt / 1000.0:.2f}m vx={msg.vx / 100.0:.2f} vy={msg.vy / 100.0:.2f}")
         elif kind == "VFR_HUD":
             print(f"VFR mode={mode_name(master)} alt={msg.alt:.1f}m groundspeed={msg.groundspeed:.2f}m/s heading={msg.heading}")
+    return 0
+
+
+def command_health(args) -> int:
+    master = connect(args.connection, args.baud, args.timeout)
+    summary: dict[str, Any] = {
+        "mode": mode_name(master),
+        "armed": None,
+        "voltage_v": None,
+        "battery_pct": None,
+        "gps_fix": None,
+        "gps_sats": None,
+        "relative_alt_m": None,
+        "groundspeed_m_s": None,
+        "heading_deg": None,
+        "ekf_flags": None,
+        "vibration": None,
+        "power": None,
+        "last_vehicle_heartbeat_s": time.monotonic(),
+    }
+
+    end = time.monotonic() + args.seconds
+    while time.monotonic() < end:
+        msg = master.recv_match(blocking=True, timeout=0.5)
+        if msg is None:
+            continue
+        kind = msg.get_type()
+        if kind == "HEARTBEAT" and heartbeat_is_target_vehicle(msg, master.target_system):
+            summary["mode"] = mavutil.mode_string_v10(msg)
+            summary["armed"] = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+            summary["last_vehicle_heartbeat_s"] = time.monotonic()
+        elif kind == "SYS_STATUS":
+            voltage_mv = getattr(msg, "voltage_battery", 0)
+            if voltage_mv not in (0, 65535):
+                summary["voltage_v"] = voltage_mv / 1000.0
+            remaining = getattr(msg, "battery_remaining", -1)
+            if remaining >= 0:
+                summary["battery_pct"] = int(remaining)
+        elif kind == "GPS_RAW_INT":
+            summary["gps_fix"] = int(msg.fix_type)
+            summary["gps_sats"] = int(msg.satellites_visible)
+        elif kind == "GLOBAL_POSITION_INT":
+            summary["relative_alt_m"] = msg.relative_alt / 1000.0
+        elif kind == "VFR_HUD":
+            summary["groundspeed_m_s"] = float(msg.groundspeed)
+            summary["heading_deg"] = int(msg.heading)
+        elif kind == "EKF_STATUS_REPORT":
+            summary["ekf_flags"] = int(msg.flags)
+        elif kind == "VIBRATION":
+            summary["vibration"] = (
+                float(msg.vibration_x),
+                float(msg.vibration_y),
+                float(msg.vibration_z),
+            )
+        elif kind == "POWER_STATUS":
+            summary["power"] = {
+                "vcc_v": msg.Vcc / 1000.0,
+                "servo_v": msg.Vservo / 1000.0,
+                "flags": int(msg.flags),
+            }
+
+    heartbeat_age = time.monotonic() - float(summary["last_vehicle_heartbeat_s"])
+    print("[HEALTH]")
+    print(f"mode={summary['mode']} armed={summary['armed']} heartbeat_age={heartbeat_age:.1f}s")
+    print(f"battery={summary['voltage_v'] or '-'}V/{summary['battery_pct'] if summary['battery_pct'] is not None else '-'}%")
+    print(f"gps_fix={summary['gps_fix'] if summary['gps_fix'] is not None else '-'} sats={summary['gps_sats'] if summary['gps_sats'] is not None else '-'}")
+    print(f"alt={summary['relative_alt_m'] if summary['relative_alt_m'] is not None else '-'}m speed={summary['groundspeed_m_s'] if summary['groundspeed_m_s'] is not None else '-'}m/s heading={summary['heading_deg'] if summary['heading_deg'] is not None else '-'}deg")
+    print(f"ekf_flags={summary['ekf_flags'] if summary['ekf_flags'] is not None else '-'}")
+    print(f"vibration={summary['vibration'] if summary['vibration'] is not None else '-'}")
+    print(f"power={summary['power'] if summary['power'] is not None else '-'}")
+
+    warnings: list[str] = []
+    if heartbeat_age > 2.0:
+        warnings.append("vehicle heartbeat is stale")
+    if summary["gps_fix"] is not None and int(summary["gps_fix"]) < 3:
+        warnings.append("GPS fix is below 3D")
+    if summary["gps_sats"] is not None and int(summary["gps_sats"]) < args.min_sats:
+        warnings.append(f"GPS satellites below {args.min_sats}")
+    if summary["voltage_v"] is None:
+        warnings.append("battery voltage not reported")
+
+    if warnings:
+        for item in warnings:
+            print(f"[WARN] {item}")
+    else:
+        print("[OK] health telemetry received")
     return 0
 
 
@@ -264,6 +356,12 @@ def build_parser() -> argparse.ArgumentParser:
     add_connection_args(status)
     status.add_argument("--seconds", type=float, default=10.0)
     status.set_defaults(func=command_status)
+
+    health = subparsers.add_parser("health", help="read-only Cube/Pixhawk health summary")
+    add_connection_args(health)
+    health.add_argument("--seconds", type=float, default=8.0)
+    health.add_argument("--min-sats", type=int, default=10)
+    health.set_defaults(func=command_health)
 
     modes = subparsers.add_parser("modes", help="print available flight modes")
     add_connection_args(modes)

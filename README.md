@@ -2,6 +2,12 @@
 
 Autonomous rotary-wing UAV mission software for the 2026 TÜBİTAK/TEKNOFEST UAV competition.
 
+New team members should start with:
+
+```text
+START_HERE.md
+```
+
 The flight stack is divided into two systems:
 
 - **Cube Orange Plus / ArduPilot:** flight control, navigation, failsafes and payload outputs.
@@ -43,6 +49,11 @@ Use an explicit profile when needed:
 
 Useful mission docs:
 
+- `START_HERE.md`
+- `docs/PROJECT_STRUCTURE.md`
+- `docs/COMPETITION_REQUIREMENTS.md`
+- `docs/SAFETY_AND_FAILSAFES.md`
+- `docs/MONITORING.md`
 - `docs/TARGET_MISSION_OPERATIONS.md`
 - `docs/CAMERA_CALIBRATION.md`
 - `docs/SITL_TEST_PLAN.md`

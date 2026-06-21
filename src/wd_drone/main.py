@@ -1,3 +1,8 @@
+"""Read-only mission observer entry point.
+
+This package is for monitoring telemetry and mission state. It does not send
+flight commands, arm, change mode, move servos, or run computer vision.
+"""
 from __future__ import annotations
 
 import argparse

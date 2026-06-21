@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+"""Active target mission controller.
+
+This is the main program for the rotary-wing second mission. It connects to
+ArduPilot, reads the camera, confirms red-triangle/blue-hexagon targets, requests
+GUIDED for centering, simulates or triggers the correct payload, resumes AUTO,
+and requests RTL after both targets are done.
+
+Normal tuning belongs in JSON config files, especially `parameter_config.json`
+and `configs/real_pi_camera_module_3.json`.
+"""
 from __future__ import annotations
 
 import argparse

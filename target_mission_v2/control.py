@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Small control math helpers for mission centering.
+
+The mission controller owns the state machine. This file only contains
+side-effect-free math functions that are easy to test.
+"""
 from __future__ import annotations
 
 from typing import Optional

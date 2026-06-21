@@ -22,6 +22,7 @@ Run from the Pi when the Cube is connected:
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
 ./scripts/mavlink_bench.sh status --connection /dev/serial0 --baud 921600 --seconds 10
+./scripts/mavlink_bench.sh health --connection /dev/serial0 --baud 921600 --seconds 10
 ./scripts/mavlink_bench.sh set-mode GUIDED --connection /dev/serial0 --baud 921600 --observe 5
 ./scripts/mavlink_bench.sh set-mode AUTO --connection /dev/serial0 --baud 921600 --observe 5
 ./scripts/mavlink_bench.sh set-mode STABILIZE --connection /dev/serial0 --baud 921600 --observe 5
@@ -58,6 +59,7 @@ vcgencmd get_throttled
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
 ./scripts/mavlink_bench.sh status --connection /dev/serial0 --baud 921600 --seconds 10
+./scripts/mavlink_bench.sh health --connection /dev/serial0 --baud 921600 --seconds 10
 ```
 
 10. Confirm modes:

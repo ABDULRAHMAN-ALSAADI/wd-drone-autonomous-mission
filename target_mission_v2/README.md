@@ -1,5 +1,15 @@
 # WD DRONE Target Mission V2
 
+This is the active mission folder. If you only remember one thing:
+
+```text
+mission_controller.py = mission state machine and MAVLink control
+vision.py             = target detection
+control.py            = small tested math helpers
+parameter_config.json = normal SITL/operator tuning
+configs/real_pi_camera_module_3.json = starting real Pi/Cube profile
+```
+
 ## Correct mission behavior
 
 This controller targets the 2026 International UAV Competition Rotary Wing

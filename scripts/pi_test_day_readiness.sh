@@ -73,7 +73,8 @@ echo
 echo "[READY] Tomorrow bench order:"
 echo "1. PROPS OFF. Connect Cube TELEM TX/RX/GND to Pi GPIO15/GPIO14/GND."
 echo "2. ./scripts/mavlink_bench.sh status --connection /dev/serial0 --baud 921600 --seconds 10"
-echo "3. Test STABILIZE, GUIDED, AUTO, then back to STABILIZE."
-echo "4. Servo/output tests only after channel is verified and payload is safe."
-echo "5. Motor-test only with props removed and explicit safety flags."
+echo "3. ./scripts/mavlink_bench.sh health --connection /dev/serial0 --baud 921600 --seconds 10"
+echo "4. Test STABILIZE, GUIDED, AUTO, then back to STABILIZE."
+echo "5. Servo/output tests only after channel is verified and payload is safe."
+echo "6. Motor-test only with props removed and explicit safety flags."
 REMOTE_SCRIPT

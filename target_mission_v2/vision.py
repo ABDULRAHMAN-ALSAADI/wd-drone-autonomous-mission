@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""Target detection for the active mission.
+
+The current backend is intentionally strict classical computer vision. It looks
+for the competition shapes and rejects fixed-wing rectangle/square targets. A
+future YOLO/AI-HAT backend should be added beside this code, not by removing the
+shape-safety checks.
+"""
 from __future__ import annotations
 
 import math
