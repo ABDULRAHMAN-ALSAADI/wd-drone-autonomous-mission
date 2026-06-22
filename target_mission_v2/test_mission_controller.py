@@ -10,6 +10,7 @@ import numpy as np
 
 from vision import Detection, HitTracker, StrictShapeDetector
 from control import altitude_velocity_down
+from camera_sources import build_rpicam_mjpeg_command
 from mission_controller import (
     Controller,
     State,
@@ -267,6 +268,47 @@ class MissionConfigTests(unittest.TestCase):
         config["camera"]["source"] = "magic_camera"
         with self.assertRaises(ValueError):
             validate_config(config)
+
+    def test_validate_config_accepts_rpicam_mjpeg_source(self):
+        config = self.config()
+        config["camera"] = {
+            "source": "rpicam_mjpeg",
+            "camera_index": 0,
+            "width": 1280,
+            "height": 720,
+            "framerate": 15,
+            "quality": 85,
+            "read_timeout_s": 2.0,
+        }
+        validate_config(config)
+
+    def test_validate_config_rejects_bad_rpicam_dimensions(self):
+        config = self.config()
+        config["camera"] = {
+            "source": "rpicam_mjpeg",
+            "width": 0,
+            "height": 720,
+            "framerate": 15,
+            "quality": 85,
+        }
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_rpicam_mjpeg_command_outputs_to_stdout(self):
+        cmd = build_rpicam_mjpeg_command({
+            "source": "rpicam_mjpeg",
+            "camera_index": 0,
+            "width": 1280,
+            "height": 720,
+            "framerate": 15,
+            "quality": 85,
+            "autofocus_mode": "manual",
+            "lens_position": 0.0,
+        })
+        self.assertEqual(cmd[0], "rpicam-vid")
+        self.assertIn("mjpeg", cmd)
+        self.assertEqual(cmd[-2:], ["-o", "-"])
+        self.assertIn("--flush", cmd)
 
     def test_validate_config_rejects_unknown_missing_action(self):
         config = self.config()

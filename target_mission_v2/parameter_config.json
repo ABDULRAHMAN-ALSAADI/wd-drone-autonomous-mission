@@ -8,6 +8,7 @@
     "control.reacquire_after_lost_s": "Delay before doing a wider frame search when the locked target disappears.",
     "safety.guided_auto_bounce_grace_s": "How long to keep requesting GUIDED if ArduPilot briefly reports AUTO after a target is confirmed.",
     "safety.mode_retry_interval_s": "How often the companion retries mode requests while waiting. Unexpected AUTO during centering always forces GUIDED immediately.",
+    "camera.source": "SITL uses udp_h264. The Raspberry Pi Camera Module 3 profile uses rpicam_mjpeg because it does not depend on H.264 encoding.",
     "display.overlay_font_scale": "Camera-window text size.",
     "parameters.enforce": "Keep false unless you intentionally want the companion computer to change ArduPilot parameters."
   },

@@ -24,6 +24,7 @@ from typing import Any, Optional
 import cv2
 from pymavlink import mavutil
 
+from camera_sources import CameraLike, SUPPORTED_CAMERA_SOURCES, open_camera
 from vision import Detection, HitTracker, SUPPORTED_VISION_BACKENDS, create_detector
 from control import altitude_velocity_down, clamp
 
@@ -58,9 +59,6 @@ DEFAULT_NAVIGATION = {
     "search_speed_source": "qgc_mission",
     "search_speed_m_s": None,
 }
-
-SUPPORTED_CAMERA_SOURCES = {"udp_h264", "gstreamer_pipeline", "device"}
-
 
 def payload_colour_for_target(target: str) -> str:
     try:
@@ -117,6 +115,14 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("camera.pipeline is required for gstreamer_pipeline")
     if camera_source == "device" and int(config["camera"].get("device_index", 0)) < 0:
         raise ValueError("camera.device_index must be zero or positive")
+    if camera_source == "rpicam_mjpeg":
+        for key in ("width", "height", "quality"):
+            if int(config["camera"].get(key, 1)) <= 0:
+                raise ValueError(f"camera.{key} must be positive for rpicam_mjpeg")
+        if float(config["camera"].get("framerate", 1.0)) <= 0:
+            raise ValueError("camera.framerate must be positive for rpicam_mjpeg")
+        if float(config["camera"].get("read_timeout_s", 2.0)) <= 0:
+            raise ValueError("camera.read_timeout_s must be positive for rpicam_mjpeg")
     if float(config["mission"].get("max_flight_time_s", 600.0)) <= 0:
         raise ValueError("mission.max_flight_time_s must be positive")
     if int(config["mission"].get("search_start_wp", 0)) < 0:
@@ -348,35 +354,6 @@ class Vehicle:
         raise RuntimeError(f"ArduPilot did not confirm {name}={value}")
 
 
-def udp_h264_pipeline(port: int) -> str:
-    return (
-        f'udpsrc address=0.0.0.0 port={port} '
-        'caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! '
-        'rtpjitterbuffer latency=70 drop-on-latency=true ! '
-        'rtph264depay ! h264parse ! avdec_h264 ! '
-        'videoconvert ! video/x-raw,format=BGR ! '
-        'appsink drop=true max-buffers=1 sync=false'
-    )
-
-
-def open_camera(camera_config: dict[str, Any]) -> cv2.VideoCapture:
-    source = camera_config.get("source", "udp_h264")
-    if source == "udp_h264":
-        description = f"UDP H264 port {int(camera_config['udp_port'])}"
-        cap = cv2.VideoCapture(udp_h264_pipeline(int(camera_config["udp_port"])), cv2.CAP_GSTREAMER)
-    elif source == "gstreamer_pipeline":
-        description = "custom GStreamer pipeline"
-        cap = cv2.VideoCapture(str(camera_config["pipeline"]), cv2.CAP_GSTREAMER)
-    elif source == "device":
-        description = f"camera device {int(camera_config.get('device_index', 0))}"
-        cap = cv2.VideoCapture(int(camera_config.get("device_index", 0)))
-    else:
-        raise RuntimeError(f"Unsupported camera source: {source}")
-    if not cap.isOpened():
-        raise RuntimeError(f"Camera source did not open: {description}")
-    return cap
-
-
 def enforce_parameters(vehicle: Vehicle, config: dict[str, Any]) -> None:
     params = config["parameters"]
     if not bool(params.get("enforce", True)):
@@ -400,7 +377,7 @@ def enforce_parameters(vehicle: Vehicle, config: dict[str, Any]) -> None:
 
 
 class Controller:
-    def __init__(self, config: dict[str, Any], vehicle: Vehicle, camera: cv2.VideoCapture) -> None:
+    def __init__(self, config: dict[str, Any], vehicle: Vehicle, camera: CameraLike) -> None:
         self.config = config
         self.vehicle = vehicle
         self.camera = camera

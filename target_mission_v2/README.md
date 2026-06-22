@@ -55,9 +55,10 @@ The real Raspberry Pi/Cube profile uses:
 921600 baud
 ```
 
-Camera input is selected with `camera.source`. SITL currently uses `udp_h264`
-from `enable_camera`; custom GStreamer or direct camera-device sources are
-reserved for real-camera setup after cooling is installed.
+Camera input is selected with `camera.source`. SITL uses `udp_h264` from
+`enable_camera`. The Raspberry Pi Camera Module 3 profile uses `rpicam_mjpeg`,
+which reads frames directly from `rpicam-vid --codec mjpeg` and avoids depending
+on H.264 encoder support.
 
 ## Parameter policy
 
@@ -211,6 +212,19 @@ Starting profile for Raspberry Pi Camera Module 3:
 
 That real profile is for the Pi-to-Cube UART path. Use the SITL profile when
 running only Gazebo on the Ubuntu laptop.
+
+Before a real bench test, check the camera alone:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./scripts/pi_camera_check.sh --seconds 15
+```
+
+On Pi OS Lite this saves the latest annotated preview to:
+
+```text
+~/camera_tests/module3_live_latest.jpg
+```
 
 Start the mission from MAVProxy:
 

@@ -5,8 +5,16 @@
     "heartbeat_timeout_s": 8.0
   },
   "camera": {
-    "source": "udp_h264",
-    "udp_port": 5600
+    "source": "rpicam_mjpeg",
+    "camera_index": 0,
+    "width": 1280,
+    "height": 720,
+    "framerate": 15,
+    "quality": 85,
+    "read_timeout_s": 2.0,
+    "autofocus_mode": "manual",
+    "lens_position": 0.0,
+    "denoise": "cdn_fast"
   },
   "mission": {
     "search_start_wp": 2,
