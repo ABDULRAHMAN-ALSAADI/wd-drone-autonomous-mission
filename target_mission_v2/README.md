@@ -226,6 +226,17 @@ On Pi OS Lite this saves the latest annotated preview to:
 ~/camera_tests/module3_live_latest.jpg
 ```
 
+For the real live competition-style camera window, run this on the Ubuntu
+laptop while the Pi is powered and reachable as `pi5`:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./scripts/pi_camera_live.sh
+```
+
+That window shows the live Camera Module 3 feed, FPS, resolution, red/blue mask
+pixel counts, and the same OpenCV target detections used by the mission.
+
 Start the mission from MAVProxy:
 
 ```text

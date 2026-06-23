@@ -71,11 +71,12 @@ First test only the link:
 Expected result:
 
 ```text
-[HEARTBEAT] system=1 component=0 mode=...
+[HEARTBEAT] src=1:1 mode=... armed=...
 ```
 
-The component can also appear as `1` on some setups; the important part is that
-heartbeats arrive and the mode/armed state are readable.
+The important part is that the Cube vehicle heartbeat arrives and the mode/armed
+state are readable. Ignored heartbeats from a GCS or bridge are normal when
+Mission Planner/QGC is also connected.
 
 If heartbeat times out, do not try mode, servo, or motor commands yet. Check:
 
@@ -116,6 +117,30 @@ was `STABILIZE` but the actual mode became `ALT_HOLD`, the Pi link is working
 but another mode authority is winning. Check the RC/transmitter flight-mode
 switch first, then Mission Planner/QGC mode controls and Pixhawk failsafe or
 mode conditions. AUTO also requires a valid uploaded mission.
+
+## Guarded Mode/Arm Sequence
+
+Use this when you want one command that tests command authority in the same
+order we care about for the mission:
+
+```bash
+./scripts/pi_mavlink_bench_sequence.sh --dry-run
+```
+
+Real run, propellers removed only:
+
+```bash
+./scripts/pi_mavlink_bench_sequence.sh --i-understand-props-off --i-accept-arming
+```
+
+Sequence:
+
+```text
+STABILIZE -> GUIDED -> ARM -> AUTO -> RTL -> STABILIZE -> DISARM
+```
+
+The tool refuses to arm unless both safety flags are present. It does not force
+arming or bypass ArduPilot pre-arm checks.
 
 ## Payload Servo Bench Test
 

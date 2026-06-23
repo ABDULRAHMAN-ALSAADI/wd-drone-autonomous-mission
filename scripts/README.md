@@ -17,6 +17,8 @@ These are terminal commands for humans.
   MAVLink.
 - `pi_camera_check.sh`: open the Pi Camera Module 3 stream, print FPS/health,
   and save a live preview image.
+- `pi_camera_live.sh`: run on the Ubuntu laptop; opens a live Pi camera window
+  and runs the mission OpenCV detector on that stream.
 - `pi_test_day_readiness.sh`: full safe readiness report for hardware test day.
 - `pi_cache_wheels.sh`: cache Python wheels on the Pi for poor internet.
 
@@ -24,6 +26,8 @@ These are terminal commands for humans.
 
 - `mavlink_bench.sh`: heartbeat, health, mode, servo, speed, and guarded motor
   tests.
+- `pi_mavlink_bench_sequence.sh`: guarded mode/arm bench sequence for Cube/Pi
+  testing. It refuses to arm unless explicit safety flags are passed.
 
 Useful read-only health command:
 
@@ -32,6 +36,13 @@ Useful read-only health command:
 ```
 
 Motor tests require explicit safety flags and propellers removed.
+
+Guarded mode/arm bench sequence:
+
+```bash
+./scripts/pi_mavlink_bench_sequence.sh --dry-run
+./scripts/pi_mavlink_bench_sequence.sh --i-understand-props-off --i-accept-arming
+```
 
 ## Pi Camera Dependency
 
@@ -43,6 +54,14 @@ python3 -m venv --system-site-packages .venv
 ```
 
 This keeps the project from building a large OpenCV wheel on the Pi.
+
+Live camera window from the laptop:
+
+```bash
+./scripts/pi_camera_live.sh
+```
+
+Keys: `q`/Esc quit, `s` saves a snapshot, `m` toggles red/blue masks.
 
 ## Monitors
 

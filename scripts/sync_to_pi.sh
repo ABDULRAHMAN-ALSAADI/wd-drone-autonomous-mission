@@ -13,6 +13,7 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 
 EXCLUDES=(
+    --exclude=".git/"
     --exclude=".venv/"
     --exclude=".wheelhouse/"
     --exclude="venv/"

@@ -26,6 +26,7 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission
 ./scripts/mavlink_bench.sh set-mode GUIDED --connection /dev/serial0 --baud 921600 --observe 5
 ./scripts/mavlink_bench.sh set-mode AUTO --connection /dev/serial0 --baud 921600 --observe 5
 ./scripts/mavlink_bench.sh set-mode STABILIZE --connection /dev/serial0 --baud 921600 --observe 5
+./scripts/pi_mavlink_bench_sequence.sh --dry-run
 ```
 
 Good result:
@@ -70,6 +71,43 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission
 ./scripts/mavlink_bench.sh set-mode AUTO --connection /dev/serial0 --baud 921600 --observe 5
 ./scripts/mavlink_bench.sh set-mode STABILIZE --connection /dev/serial0 --baud 921600 --observe 5
 ```
+
+11. Confirm the guarded full command sequence in dry-run mode:
+
+```bash
+./scripts/pi_mavlink_bench_sequence.sh --dry-run
+```
+
+12. Only with propellers removed and the aircraft secured, run the guarded
+mode/arm sequence:
+
+```bash
+./scripts/pi_mavlink_bench_sequence.sh --i-understand-props-off --i-accept-arming
+```
+
+The sequence requests:
+
+```text
+STABILIZE -> GUIDED -> ARM -> AUTO -> RTL -> STABILIZE -> DISARM
+```
+
+It does not force arming. If pre-arm checks, GPS, EKF, RC mode switch, or AUTO
+mission requirements are not satisfied, ArduPilot should reject the step. Treat
+that as useful bench information, not as a reason to bypass safety.
+
+## Camera Live Vision
+
+Run this from the Ubuntu laptop, not from the Pi Lite terminal:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./scripts/pi_camera_live.sh
+```
+
+The Pi streams Camera Module 3 frames over SSH. The laptop opens the OpenCV
+window, draws the mission detector results, and shows FPS, resolution, red/blue
+mask pixel counts, and target errors. Press `q` or Esc to quit, `s` to save a
+snapshot, and `m` to toggle mask windows.
 
 ## Servo Or Payload Output Test
 

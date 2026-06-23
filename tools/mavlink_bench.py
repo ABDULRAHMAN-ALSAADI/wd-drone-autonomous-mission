@@ -87,6 +87,10 @@ def wait_ack(master, command: int, timeout_s: float = 5.0) -> Optional[str]:
     return None
 
 
+def heartbeat_state(msg) -> tuple[str, bool]:
+    return mavutil.mode_string_v10(msg), bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+
+
 def command_status(args) -> int:
     master = connect(args.connection, args.baud, args.timeout)
     end = time.monotonic() + args.seconds
@@ -235,6 +239,38 @@ def observe_mode(master, seconds: float) -> tuple[str, bool]:
     return actual, armed
 
 
+def wait_for_mode(master, expected_mode: str, timeout_s: float) -> tuple[bool, str, bool]:
+    deadline = time.monotonic() + timeout_s
+    actual = "UNKNOWN"
+    armed = False
+    while time.monotonic() < deadline:
+        msg = master.recv_match(type="HEARTBEAT", blocking=True, timeout=0.5)
+        if msg is None:
+            continue
+        if not heartbeat_is_target_vehicle(msg, master.target_system):
+            continue
+        actual, armed = heartbeat_state(msg)
+        print(f"[MODE OBSERVED] mode={actual} armed={armed}")
+        if actual == expected_mode:
+            return True, actual, armed
+    return False, actual, armed
+
+
+def wait_for_armed(master, expected_armed: bool, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        msg = master.recv_match(type="HEARTBEAT", blocking=True, timeout=0.5)
+        if msg is None:
+            continue
+        if not heartbeat_is_target_vehicle(msg, master.target_system):
+            continue
+        actual, armed = heartbeat_state(msg)
+        print(f"[ARM OBSERVED] mode={actual} armed={armed}")
+        if armed == expected_armed:
+            return True
+    return False
+
+
 def command_set_mode(args) -> int:
     master = connect(args.connection, args.baud, args.timeout)
     set_mode(master, args.mode)
@@ -247,6 +283,97 @@ def command_set_mode(args) -> int:
             "If this snaps to another mode, check RC flight-mode switch, "
             "Mission Planner/QGC mode controls, and Pixhawk mode failsafe conditions."
         )
+    return 0
+
+
+def send_arm_command(master, arm: bool) -> None:
+    action = "ARM" if arm else "DISARM"
+    print(f"[{action} REQUEST]")
+    master.mav.command_long_send(
+        master.target_system,
+        master.target_component,
+        mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+        0,
+        1.0 if arm else 0.0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
+
+
+def command_arm(args) -> int:
+    if not args.i_understand_props_off or not args.i_accept_arming:
+        raise SystemExit("Refusing to arm without --i-understand-props-off and --i-accept-arming")
+    master = connect(args.connection, args.baud, args.timeout)
+    send_arm_command(master, True)
+    ack = wait_ack(master, mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, timeout_s=args.observe)
+    print(f"[ACK] {ack or 'timeout'}")
+    if wait_for_armed(master, True, args.observe):
+        print("[CONFIRMED] vehicle is armed")
+        return 0
+    print("[WARNING] arm was not observed. Check pre-arm failures in Mission Planner/QGC.")
+    return 1
+
+
+def command_disarm(args) -> int:
+    master = connect(args.connection, args.baud, args.timeout)
+    send_arm_command(master, False)
+    ack = wait_ack(master, mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, timeout_s=args.observe)
+    print(f"[ACK] {ack or 'timeout'}")
+    if wait_for_armed(master, False, args.observe):
+        print("[CONFIRMED] vehicle is disarmed")
+        return 0
+    print("[WARNING] disarm was not observed")
+    return 1
+
+
+def request_and_confirm_mode(master, mode: str, observe_s: float, stop_on_failure: bool = True) -> bool:
+    set_mode(master, mode)
+    ok, actual, armed = wait_for_mode(master, mode, observe_s)
+    if ok:
+        print(f"[CONFIRMED] mode={mode} armed={armed}")
+        return True
+    print(f"[WARNING] requested mode={mode} actual={actual} armed={armed}")
+    if stop_on_failure:
+        raise RuntimeError(f"Mode {mode} was not confirmed")
+    return False
+
+
+def command_bench_sequence(args) -> int:
+    if args.dry_run:
+        print("[DRY RUN] Sequence: STABILIZE -> GUIDED -> ARM -> AUTO -> RTL -> STABILIZE -> DISARM")
+        return 0
+    if not args.i_understand_props_off or not args.i_accept_arming:
+        raise SystemExit("Refusing armed sequence without --i-understand-props-off and --i-accept-arming")
+    master = connect(args.connection, args.baud, args.timeout)
+    print("[BENCH SEQUENCE] PROPS OFF. This requests modes and arms through MAVLink.")
+    failed = False
+    try:
+        request_and_confirm_mode(master, "STABILIZE", args.observe)
+        request_and_confirm_mode(master, "GUIDED", args.observe)
+        send_arm_command(master, True)
+        ack = wait_ack(master, mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, timeout_s=args.observe)
+        print(f"[ARM ACK] {ack or 'timeout'}")
+        if not wait_for_armed(master, True, args.observe):
+            raise RuntimeError("Vehicle did not report armed. Check pre-arm failures.")
+        request_and_confirm_mode(master, "AUTO", args.observe, stop_on_failure=not args.continue_on_mode_failure)
+        request_and_confirm_mode(master, "RTL", args.observe, stop_on_failure=not args.continue_on_mode_failure)
+        request_and_confirm_mode(master, "STABILIZE", args.observe, stop_on_failure=not args.continue_on_mode_failure)
+    except RuntimeError as exc:
+        failed = True
+        print(f"[BENCH SEQUENCE FAILED] {exc}")
+    finally:
+        if not args.keep_armed_at_end:
+            send_arm_command(master, False)
+            ack = wait_ack(master, mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, timeout_s=args.observe)
+            print(f"[DISARM ACK] {ack or 'timeout'}")
+            wait_for_armed(master, False, args.observe)
+    if failed:
+        return 1
+    print("[BENCH SEQUENCE DONE]")
     return 0
 
 
@@ -372,6 +499,31 @@ def build_parser() -> argparse.ArgumentParser:
     set_mode_cmd.add_argument("mode", choices=["STABILIZE", "ALT_HOLD", "LOITER", "GUIDED", "AUTO", "RTL", "LAND"])
     set_mode_cmd.add_argument("--observe", type=float, default=3.0, help="seconds to watch heartbeat mode after the request")
     set_mode_cmd.set_defaults(func=command_set_mode)
+
+    arm = subparsers.add_parser("arm", help="guarded arm command. PROPS OFF ONLY.")
+    add_connection_args(arm)
+    arm.add_argument("--observe", type=float, default=5.0)
+    arm.add_argument("--i-understand-props-off", action="store_true")
+    arm.add_argument("--i-accept-arming", action="store_true")
+    arm.set_defaults(func=command_arm)
+
+    disarm = subparsers.add_parser("disarm", help="disarm command")
+    add_connection_args(disarm)
+    disarm.add_argument("--observe", type=float, default=5.0)
+    disarm.set_defaults(func=command_disarm)
+
+    bench_sequence = subparsers.add_parser(
+        "bench-sequence",
+        help="guarded mode/arm sequence: STABILIZE -> GUIDED -> ARM -> AUTO -> RTL -> STABILIZE -> DISARM",
+    )
+    add_connection_args(bench_sequence)
+    bench_sequence.add_argument("--observe", type=float, default=5.0)
+    bench_sequence.add_argument("--dry-run", action="store_true")
+    bench_sequence.add_argument("--continue-on-mode-failure", action="store_true")
+    bench_sequence.add_argument("--keep-armed-at-end", action="store_true")
+    bench_sequence.add_argument("--i-understand-props-off", action="store_true")
+    bench_sequence.add_argument("--i-accept-arming", action="store_true")
+    bench_sequence.set_defaults(func=command_bench_sequence)
 
     servo = subparsers.add_parser("servo", help="send DO_SET_SERVO for payload bench testing")
     add_connection_args(servo)
