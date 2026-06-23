@@ -91,6 +91,12 @@ def heartbeat_state(msg) -> tuple[str, bool]:
     return mavutil.mode_string_v10(msg), bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
 
 
+def format_heartbeat(msg, label: str = "HEARTBEAT") -> str:
+    src = f"{msg.get_srcSystem()}:{msg.get_srcComponent()}"
+    mode, armed = heartbeat_state(msg)
+    return f"{label} src={src} mode={mode} armed={armed}"
+
+
 def command_status(args) -> int:
     master = connect(args.connection, args.baud, args.timeout)
     end = time.monotonic() + args.seconds
@@ -100,8 +106,10 @@ def command_status(args) -> int:
             continue
         kind = msg.get_type()
         if kind == "HEARTBEAT":
-            src = f"{msg.get_srcSystem()}:{msg.get_srcComponent()}"
-            print(f"HEARTBEAT src={src} mode={mavutil.mode_string_v10(msg)} armed={bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)}")
+            if heartbeat_is_target_vehicle(msg, master.target_system):
+                print(format_heartbeat(msg, "VEHICLE_HEARTBEAT"))
+            elif args.all_heartbeats:
+                print(format_heartbeat(msg, "OTHER_HEARTBEAT"))
         elif kind == "SYS_STATUS":
             print(f"SYS_STATUS voltage={msg.voltage_battery / 1000.0:.2f}V battery={msg.battery_remaining}%")
         elif kind == "GPS_RAW_INT":
@@ -482,6 +490,11 @@ def build_parser() -> argparse.ArgumentParser:
     status = subparsers.add_parser("status", help="connect and print telemetry")
     add_connection_args(status)
     status.add_argument("--seconds", type=float, default=10.0)
+    status.add_argument(
+        "--all-heartbeats",
+        action="store_true",
+        help="also print GCS and non-autopilot heartbeats for debugging",
+    )
     status.set_defaults(func=command_status)
 
     health = subparsers.add_parser("health", help="read-only Cube/Pixhawk health summary")

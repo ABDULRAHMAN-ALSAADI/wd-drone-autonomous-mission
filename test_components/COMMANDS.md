@@ -79,9 +79,19 @@ This proves the Pi can read the Cube through `/dev/serial0` at `921600`.
 Good result:
 
 ```text
-[HEARTBEAT] src=1:1 mode=... armed=...
+VEHICLE_HEARTBEAT src=1:1 mode=... armed=...
 [HEALTH]
 ```
+
+The Cube/Pixhawk autopilot heartbeat is `src=1:1`. If you need to debug every
+MAVLink participant on the wire, run:
+
+```bash
+./scripts/mavlink_bench.sh status --connection /dev/serial0 --baud 921600 --seconds 10 --all-heartbeats
+```
+
+Extra heartbeats such as `src=255:190` are usually Mission Planner/GCS, and
+`src=1:0` is not the autopilot component used for mode/arm confirmation.
 
 ## 6. Mode Authority Checks
 
@@ -138,6 +148,12 @@ wrong output moves, stop and fix Mission Planner servo mapping.
 ## 9. Motor Test
 
 Run only with propellers removed, the airframe restrained, and everyone warned.
+
+If a command spins the wrong physical motor, stop and read:
+
+```text
+test_components/mavlink/MOTOR_MAPPING.md
+```
 
 ```bash
 ./test_components/mavlink/motor_test.sh --motor 1 --throttle-percent 5 --duration 1
