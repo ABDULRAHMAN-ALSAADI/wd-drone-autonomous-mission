@@ -191,10 +191,17 @@ def main() -> int:
     parser.add_argument("--seconds", type=float, default=0.0, help="0 means run until q/esc")
     parser.add_argument("--raw-only", action="store_true", help="show camera only, without detector work")
     parser.add_argument("--show-masks", action="store_true")
+    parser.add_argument(
+        "--read-timeout",
+        type=float,
+        default=0.25,
+        help="maximum seconds to wait for a frame before refreshing the GUI",
+    )
     parser.add_argument("--snapshot-dir", type=Path, default=ROOT / "data/camera_snapshots")
     args = parser.parse_args()
 
     config = load_config(args.config)
+    read_timeout_s = max(0.02, args.read_timeout)
     camera = RemoteMjpegCamera(args.ssh_alias, config["camera"], args.remote_dir)
     detector = None if args.raw_only else create_detector(config["vision"])
     started_at = time.monotonic()
@@ -206,13 +213,16 @@ def main() -> int:
 
     try:
         while args.seconds <= 0 or time.monotonic() - started_at < args.seconds:
-            ok, frame = camera.read(timeout_s=float(config["camera"].get("read_timeout_s", 2.0)))
+            ok, frame = camera.read(timeout_s=read_timeout_s)
             now = time.monotonic()
             if not ok or frame is None:
                 returncode = camera.returncode()
                 if returncode is not None:
                     print(f"[LIVE CAMERA ERROR] camera stream process exited with code {returncode}")
                     return 2
+                key = cv2.waitKey(1) & 0xFF
+                if key in (ord("q"), 27):
+                    break
                 time.sleep(0.02)
                 continue
             frames += 1
