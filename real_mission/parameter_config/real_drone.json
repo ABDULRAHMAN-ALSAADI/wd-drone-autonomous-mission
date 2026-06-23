@@ -7,6 +7,7 @@
     "control.target_lost_timeout_s": "How long to stay in GUIDED trying to reacquire a confirmed target before returning to AUTO.",
     "vision.search_min_area_px": "Lower this carefully if real targets are too small at higher altitude.",
     "payload.simulate_only": "Keep true until servo and payload bench tests pass. Set false only for physical payload output.",
+    "payload.servo_channel": "Pixhawk output channel for payload. Use 5 when the payload servo signal wire is on MAIN OUT / signal 5.",
     "display.show_main_window": "Keep false on Raspberry Pi OS Lite. Use real_mission/open_laptop_camera_window.sh on the Ubuntu laptop for live viewing."
   },
   "mavlink": {
@@ -70,7 +71,7 @@
   },
   "payload": {
     "simulate_only": true,
-    "servo_channel": 9,
+    "servo_channel": 5,
     "release_pwm": 1900,
     "reset_pwm": 1100,
     "release_hold_s": 1.0,

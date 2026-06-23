@@ -132,7 +132,8 @@ channel is uncertain.
 ```
 
 This sends `release_pwm`, waits, then sends `reset_pwm` on the configured servo
-channel. If the wrong output moves, stop and fix Mission Planner servo mapping.
+channel. Your real config currently targets Pixhawk MAIN OUT / signal 5. If the
+wrong output moves, stop and fix Mission Planner servo mapping.
 
 ## 9. Motor Test
 

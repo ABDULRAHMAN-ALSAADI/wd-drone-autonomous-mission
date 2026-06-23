@@ -16,7 +16,7 @@ Do not edit Python code for normal tuning. Start here first.
 | `vision.required_hits` | Number of stable detections before target lock. | Higher is safer but slower. |
 | `vision.search_min_area_px` | Smallest target area accepted during search. | Lower for higher altitude, higher to reject noise. |
 | `payload.simulate_only` | If `true`, no servo command is sent. | Keep `true` until servo bench passes. |
-| `payload.servo_channel` | Pixhawk output channel for payload. | Must match Mission Planner servo setup. |
+| `payload.servo_channel` | Pixhawk output channel for payload. | `5` when the servo signal is on MAIN OUT / signal 5. |
 | `payload.release_pwm` | PWM sent to release payload. | Test on bench before flight. |
 | `payload.reset_pwm` | PWM sent after release hold time. | Test on bench before flight. |
 | `display.show_main_window` | Opens local OpenCV window on the Pi. | Keep `false` on Pi OS Lite. |
@@ -50,3 +50,17 @@ Physical servo output only happens when:
 
 Leave it `true` until the payload mechanism and channel mapping are tested with
 propellers removed.
+
+## Pixhawk Output Number Warning
+
+The payload command sends `MAV_CMD_DO_SET_SERVO` to the configured ArduPilot
+servo output number.
+
+For the wiring you showed:
+
+```json
+"servo_channel": 5
+```
+
+is correct only if the payload servo signal wire is on MAIN OUT / signal 5.
+If your wire is on AUX OUT 5 instead, stop and remap the channel before testing.
