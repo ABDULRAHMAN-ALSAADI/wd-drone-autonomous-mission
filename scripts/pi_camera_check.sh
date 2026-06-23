@@ -19,7 +19,7 @@ PY
 }
 
 PYTHON_BIN="$(pick_python)" || {
-    echo "No Python with cv2/numpy found. Run target_mission_v2/setup.sh on Ubuntu, or install python3-opencv/python3-numpy on the Pi." >&2
+    echo "No Python with cv2/numpy found. Run ./scripts/setup.sh on Ubuntu, or install python3-opencv/python3-numpy on the Pi." >&2
     exit 1
 }
 

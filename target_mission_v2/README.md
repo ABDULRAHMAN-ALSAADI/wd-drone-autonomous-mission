@@ -1,13 +1,20 @@
 # WD DRONE Target Mission V2
 
-This is the active mission folder. If you only remember one thing:
+This is the tested mission engine. For normal real-drone operation, start in:
+
+```text
+real_mission/
+```
+
+If you are changing mission logic, this folder is where the implementation
+lives. If you only remember one thing:
 
 ```text
 mission_controller.py = mission state machine and MAVLink control
 vision.py             = target detection
 control.py            = small tested math helpers
 parameter_config.json = normal SITL/operator tuning
-configs/real_pi_camera_module_3.json = starting real Pi/Cube profile
+real_mission/parameter_config/real_drone.json = real Pi/Cube profile
 ```
 
 ## Correct mission behavior
@@ -207,7 +214,7 @@ Equivalent explicit profile:
 Starting profile for Raspberry Pi Camera Module 3:
 
 ```bash
-./run.sh configs/real_pi_camera_module_3.json
+./run.sh ../real_mission/parameter_config/real_drone.json
 ```
 
 That real profile is for the Pi-to-Cube UART path. Use the SITL profile when
@@ -231,7 +238,7 @@ laptop while the Pi is powered and reachable as `pi5`:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
-./scripts/pi_camera_live.sh
+./real_mission/open_laptop_camera_window.sh
 ```
 
 That window shows the live Camera Module 3 feed, FPS, resolution, red/blue mask

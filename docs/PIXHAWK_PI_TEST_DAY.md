@@ -21,12 +21,12 @@ Run from the Pi when the Cube is connected:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
-./scripts/mavlink_bench.sh status --connection /dev/serial0 --baud 921600 --seconds 10
-./scripts/mavlink_bench.sh health --connection /dev/serial0 --baud 921600 --seconds 10
+./test_components/mavlink/status.sh
+./test_components/mavlink/health.sh
 ./scripts/mavlink_bench.sh set-mode GUIDED --connection /dev/serial0 --baud 921600 --observe 5
 ./scripts/mavlink_bench.sh set-mode AUTO --connection /dev/serial0 --baud 921600 --observe 5
 ./scripts/mavlink_bench.sh set-mode STABILIZE --connection /dev/serial0 --baud 921600 --observe 5
-./scripts/pi_mavlink_bench_sequence.sh --dry-run
+./test_components/mavlink/bench_sequence.sh --dry-run
 ```
 
 Good result:
@@ -75,14 +75,14 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission
 11. Confirm the guarded full command sequence in dry-run mode:
 
 ```bash
-./scripts/pi_mavlink_bench_sequence.sh --dry-run
+./test_components/mavlink/bench_sequence.sh --dry-run
 ```
 
 12. Only with propellers removed and the aircraft secured, run the guarded
 mode/arm sequence:
 
 ```bash
-./scripts/pi_mavlink_bench_sequence.sh --i-understand-props-off --i-accept-arming
+./test_components/mavlink/bench_sequence.sh --i-understand-props-off --i-accept-arming
 ```
 
 The sequence requests:
@@ -101,7 +101,7 @@ Run this from the Ubuntu laptop, not from the Pi Lite terminal:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
-./scripts/pi_camera_live.sh
+./real_mission/open_laptop_camera_window.sh
 ```
 
 The Pi streams Camera Module 3 frames over SSH. The laptop opens the OpenCV
@@ -158,7 +158,7 @@ the first round. The script refuses values above 15 percent.
 For the first full-system test, keep:
 
 ```text
-target_mission_v2/configs/real_pi_camera_module_3.json
+real_mission/parameter_config/real_drone.json
 payload.simulate_only = true
 control.altitude_control = "off"
 navigation.search_speed_source = "qgc_mission"

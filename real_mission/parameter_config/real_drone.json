@@ -1,0 +1,98 @@
+{
+  "_help": {
+    "mission.search_start_wp": "First AUTO mission item where the Pi is allowed to search for targets.",
+    "navigation.search_speed_source": "qgc_mission means Mission Planner/QGC/ArduPilot owns AUTO speed. companion_do_change_speed makes the Pi send MAV_CMD_DO_CHANGE_SPEED.",
+    "control.center_max_speed_m_s": "Maximum horizontal speed during GUIDED centering.",
+    "control.center_tolerance_px": "Pixel error accepted as centered. Bigger is safer; smaller is more precise.",
+    "control.target_lost_timeout_s": "How long to stay in GUIDED trying to reacquire a confirmed target before returning to AUTO.",
+    "vision.search_min_area_px": "Lower this carefully if real targets are too small at higher altitude.",
+    "payload.simulate_only": "Keep true until servo and payload bench tests pass. Set false only for physical payload output.",
+    "display.show_main_window": "Keep false on Raspberry Pi OS Lite. Use real_mission/open_laptop_camera_window.sh on the Ubuntu laptop for live viewing."
+  },
+  "mavlink": {
+    "connection": "/dev/serial0",
+    "baud": 921600,
+    "heartbeat_timeout_s": 8.0
+  },
+  "camera": {
+    "source": "rpicam_mjpeg",
+    "camera_index": 0,
+    "width": 1280,
+    "height": 720,
+    "framerate": 15,
+    "quality": 85,
+    "read_timeout_s": 2.0,
+    "autofocus_mode": "manual",
+    "lens_position": 0.0,
+    "denoise": "cdn_fast"
+  },
+  "mission": {
+    "search_start_wp": 2,
+    "mode_change_timeout_s": 5.0,
+    "max_flight_time_s": 600.0
+  },
+  "navigation": {
+    "search_speed_source": "qgc_mission",
+    "search_speed_m_s": 3.0
+  },
+  "parameters": {
+    "enforce": false,
+    "rtl_alt_cm": 500.0,
+    "rtl_climb_min_cm": 0.0,
+    "mis_restart": 0,
+    "read_timeout_s": 2.0,
+    "missing_action": "warn"
+  },
+  "vision": {
+    "backend": "strict_shape",
+    "process_width": 960,
+    "search_min_area_px": 180.0,
+    "tracking_min_area_px": 100.0,
+    "required_hits": 4,
+    "confirmation_window_s": 1.8,
+    "max_lock_jump_px": 180.0,
+    "debug_rejects": false
+  },
+  "control": {
+    "command_rate_hz": 10.0,
+    "center_kp": 0.55,
+    "center_max_speed_m_s": 0.35,
+    "center_tolerance_px": 22.0,
+    "center_hold_s": 1.2,
+    "target_lost_timeout_s": 4.0,
+    "reacquire_after_lost_s": 0.25,
+    "altitude_control": "off",
+    "altitude_tolerance_m": 0.2,
+    "altitude_kp": 0.45,
+    "altitude_max_speed_m_s": 0.3,
+    "image_y_to_forward_sign": -1.0,
+    "image_x_to_right_sign": 1.0
+  },
+  "payload": {
+    "simulate_only": true,
+    "servo_channel": 9,
+    "release_pwm": 1900,
+    "reset_pwm": 1100,
+    "release_hold_s": 1.0,
+    "total_action_time_s": 1.5
+  },
+  "safety": {
+    "max_center_time_s": 30.0,
+    "max_guided_speed_m_s": 0.35,
+    "guided_auto_bounce_grace_s": 8.0,
+    "mode_retry_interval_s": 0.2,
+    "payload_requires_guided": true,
+    "payload_min_altitude_m": null,
+    "payload_max_altitude_m": null
+  },
+  "display": {
+    "show_main_window": false,
+    "show_masks": false,
+    "overlay_font_scale": 0.46,
+    "overlay_background_alpha": 0.42
+  },
+  "logging": {
+    "directory": "logs/real_mission",
+    "flush_interval_s": 0.5
+  }
+}

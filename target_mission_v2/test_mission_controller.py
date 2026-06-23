@@ -356,6 +356,7 @@ class MissionConfigTests(unittest.TestCase):
     def test_profile_configs_are_valid(self):
         paths = [Path(__file__).with_name("operator_config.json"), Path(__file__).with_name("parameter_config.json")]
         paths.extend(sorted(Path(__file__).with_name("configs").glob("*.json")))
+        paths.extend(sorted((Path(__file__).resolve().parents[1] / "real_mission" / "parameter_config").glob("*.json")))
         for path in paths:
             with self.subTest(path=path.name):
                 validate_config(json.loads(path.read_text(encoding="utf-8")))

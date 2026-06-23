@@ -12,7 +12,10 @@ import numpy
 import pymavlink
 PY
         then
-            realpath "$path"
+            case "$path" in
+                /*) printf '%s\n' "$path" ;;
+                *) printf '%s/%s\n' "$PWD" "$path" ;;
+            esac
             return 0
         fi
     done

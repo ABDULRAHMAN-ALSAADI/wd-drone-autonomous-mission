@@ -2,46 +2,67 @@
 
 This file explains the repository in plain language.
 
-## Active Mission Code
+## The Two Folders To Use First
 
-`target_mission_v2/` is the main mission software.
+### `real_mission/`
 
-- `mission_controller.py` is the state machine and MAVLink control loop.
-- `vision.py` detects red triangles and blue hexagons.
-- `control.py` contains small math helpers.
-- `parameter_config.json` is the default operator tuning file.
-- `configs/sim_gazebo.json` is for SITL/Gazebo.
-- `configs/real_pi_camera_module_3.json` is the starting real Cube/Pi profile.
-- `run.sh` starts the controller.
+This is the real-drone operator folder.
 
-This is the folder to open when you want to understand or change the mission.
+- `run_real_mission.sh`: run this on the Raspberry Pi to start the mission.
+- `open_laptop_camera_window.sh`: run this on the Ubuntu laptop to watch the Pi
+  Camera Module 3 feed.
+- `parameter_config/real_drone.json`: edit this for real-drone tuning.
+- `parameter_config/README.md`: explains the important tuning fields.
 
-## Bench And Pi Commands
+### `test_components/`
 
-`scripts/` contains commands humans run:
+This is the bench-test folder.
+
+- `COMMANDS.md`: step-by-step component test commands.
+- `camera/`: Pi camera and laptop live-view tests.
+- `mavlink/`: Cube/Pi heartbeat, health, mode, arm, servo, and motor tests.
+- `software/`: local code and config checks.
+
+Use this folder before trusting the real mission.
+
+## Mission Engine
+
+`target_mission_v2/` is the tested mission engine used by `real_mission/`.
+
+- `mission_controller.py`: mission state machine and MAVLink control loop.
+- `vision.py`: red triangle and blue hexagon detector.
+- `camera_sources.py`: SITL camera and Pi Camera Module 3 input.
+- `control.py`: small centering and altitude math helpers.
+- `test_mission_controller.py`: mission and vision unit tests.
+- `parameter_config.json`: SITL/operator tuning file.
+- `configs/sim_gazebo.json`: SITL/Gazebo profile.
+- `configs/real_pi_camera_module_3.json`: older real profile kept for
+  compatibility. Prefer `real_mission/parameter_config/real_drone.json`.
+
+Open this folder when you need to change code behavior, not just tune values.
+
+## Low-Level Commands
+
+`scripts/` contains the lower-level shell toolbox used by the clean wrappers.
+
+Examples:
 
 - `sync_to_pi.sh`: copy laptop source to the Pi.
-- `pi_validate.sh`: install/check Pi Python dependencies and tests.
-- `pi_test_day_readiness.sh`: check tomorrow hardware test readiness.
-- `pi_uart_preflight.sh`: check the Pi UART mapping.
-- `mavlink_bench.sh`: safe Cube/Pixhawk bench commands.
+- `pi_validate.sh`: check Pi Python dependencies and tests.
+- `pi_uart_preflight.sh`: check Pi UART mapping.
+- `mavlink_bench.sh`: safe Cube/Pixhawk bench command wrapper.
 - `check_project.sh`: run local tests.
 
-## Bench Tool Internals
+Normal operators should start from `test_components/COMMANDS.md` instead.
 
-`tools/mavlink_bench.py` is used by `scripts/mavlink_bench.sh`.
+## Tool Internals
 
-It can:
+`tools/` contains Python helper programs behind the scripts.
 
-- listen to heartbeat/status;
-- print a health summary;
-- list flight modes;
-- request safe mode changes;
-- send guarded servo commands;
-- send guarded motor-test commands.
-
-Motor tests require explicit safety flags and should only be used with
-propellers removed.
+- `mavlink_bench.py`: heartbeat, health, modes, guarded arm, servo, speed, and
+  motor-test commands.
+- `pi_camera_check.py`: Pi-side camera FPS and preview check.
+- `pi_camera_live_view.py`: laptop live camera window and detector overlay.
 
 ## Read-Only Observer
 
@@ -50,19 +71,16 @@ propellers removed.
 It observes telemetry and mission state. It does not arm, change mode, move the
 drone, move servos, or upload missions.
 
-Use it for monitoring and logging, not for active target centering.
-
 ## Tests
 
-`tests/` covers the read-only observer.
-
-`target_mission_v2/test_mission_controller.py` covers the active mission
-controller and strict vision rules.
+- `tests/`: read-only observer tests.
+- `target_mission_v2/test_mission_controller.py`: active mission, config, and
+  vision tests.
 
 ## Documents
 
-`docs/` holds the operating knowledge. When the team learns a wiring detail,
-Mission Planner setting, or field-test result, write it there.
+`docs/` holds longer operating knowledge: safety, wiring, test day, monitoring,
+camera calibration, and model plans.
 
 ## Generated Or Local-Only Folders
 

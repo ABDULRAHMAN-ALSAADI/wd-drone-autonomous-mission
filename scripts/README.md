@@ -2,6 +2,15 @@
 
 These are terminal commands for humans.
 
+For normal drone work, start with the cleaner folders:
+
+```text
+real_mission/
+test_components/
+```
+
+This `scripts/` folder is the lower-level toolbox behind those wrappers.
+
 ## Daily Development
 
 - `setup.sh`: create/update local Python environment.
@@ -40,8 +49,8 @@ Motor tests require explicit safety flags and propellers removed.
 Guarded mode/arm bench sequence:
 
 ```bash
-./scripts/pi_mavlink_bench_sequence.sh --dry-run
-./scripts/pi_mavlink_bench_sequence.sh --i-understand-props-off --i-accept-arming
+./test_components/mavlink/bench_sequence.sh --dry-run
+./test_components/mavlink/bench_sequence.sh --i-understand-props-off --i-accept-arming
 ```
 
 ## Pi Camera Dependency
@@ -58,7 +67,7 @@ This keeps the project from building a large OpenCV wheel on the Pi.
 Live camera window from the laptop:
 
 ```bash
-./scripts/pi_camera_live.sh
+./real_mission/open_laptop_camera_window.sh
 ```
 
 Keys: `q`/Esc quit, `s` saves a snapshot, `m` toggles red/blue masks.

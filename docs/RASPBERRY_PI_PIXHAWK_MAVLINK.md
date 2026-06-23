@@ -3,7 +3,7 @@
 Use this to verify communication before running the autonomous mission.
 
 For the full bench order, including servo and motor-test sequence, see
-`docs/PIXHAWK_PI_TEST_DAY.md`.
+`test_components/COMMANDS.md`.
 
 ## Wiring
 
@@ -124,13 +124,13 @@ Use this when you want one command that tests command authority in the same
 order we care about for the mission:
 
 ```bash
-./scripts/pi_mavlink_bench_sequence.sh --dry-run
+./test_components/mavlink/bench_sequence.sh --dry-run
 ```
 
 Real run, propellers removed only:
 
 ```bash
-./scripts/pi_mavlink_bench_sequence.sh --i-understand-props-off --i-accept-arming
+./test_components/mavlink/bench_sequence.sh --i-understand-props-off --i-accept-arming
 ```
 
 Sequence:

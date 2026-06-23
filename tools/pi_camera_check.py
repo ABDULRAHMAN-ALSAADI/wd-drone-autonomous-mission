@@ -63,7 +63,7 @@ def load_camera_config(path: Path) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check Raspberry Pi camera frame stream, FPS, and health.")
-    parser.add_argument("--config", type=Path, default=ROOT / "target_mission_v2/configs/real_pi_camera_module_3.json")
+    parser.add_argument("--config", type=Path, default=ROOT / "real_mission/parameter_config/real_drone.json")
     parser.add_argument("--seconds", type=float, default=15.0)
     parser.add_argument("--output", type=Path, default=Path("~/camera_tests/module3_live_latest.jpg"))
     parser.add_argument("--print-every-s", type=float, default=1.0)

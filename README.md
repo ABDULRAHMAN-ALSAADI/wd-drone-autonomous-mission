@@ -1,202 +1,112 @@
-# WD DRONE Autonomous Mission
+# WD Drone Autonomous Mission
 
-Autonomous rotary-wing UAV mission software for the 2026 TÜBİTAK/TEKNOFEST UAV competition.
+Autonomous rotary-wing UAV mission software for the 2026 UAV competition.
 
-New team members should start with:
+Start here:
 
 ```text
 START_HERE.md
 ```
 
-The flight stack is divided into two systems:
+## Simple Folder Map
 
-- **Cube Orange Plus / ArduPilot:** flight control, navigation, failsafes and payload outputs.
-- **Raspberry Pi 5:** mission supervision, computer vision, target centering and payload decisions.
+| Folder | Purpose |
+| --- | --- |
+| `real_mission/` | Real Pi 5 + Cube Orange mission and real-drone parameter config. |
+| `test_components/` | Bench commands for camera, MAVLink, servo, motor, and software checks. |
+| `target_mission_v2/` | Internal tested mission engine used by `real_mission/`. |
+| `scripts/` and `tools/` | Internal helpers used by the test wrappers. |
+| `docs/` | Safety notes, wiring notes, and longer explanations. |
 
-## Active target mission
+## Run The Real Mission
 
-The active SITL/Gazebo controller for the rotary-wing second mission is in:
-
-```text
-target_mission_v2/
-```
-
-It performs target detection, GUIDED centering, simulated payload release, AUTO
-resume, repeat-run reset, and RTL after both targets. QGC/ArduPilot owns AUTO
-altitude and AUTO speed by default; the companion controller only controls
-horizontal centering velocity after target lock.
-
-Run it with:
-
-```bash
-cd ~/FOR_COMP/wd-drone-autonomous-mission/target_mission_v2
-./run.sh
-```
-
-The default operator-facing config is:
-
-```text
-target_mission_v2/parameter_config.json
-```
-
-Use an explicit profile when needed:
-
-```bash
-./run.sh configs/sim_gazebo.json
-./run.sh configs/real_pi_camera_module_3.json
-./run.sh operator_config.json
-```
-
-Useful mission docs:
-
-- `START_HERE.md`
-- `docs/PROJECT_STRUCTURE.md`
-- `docs/COMPETITION_REQUIREMENTS.md`
-- `docs/SAFETY_AND_FAILSAFES.md`
-- `docs/MONITORING.md`
-- `docs/TARGET_MISSION_OPERATIONS.md`
-- `docs/CAMERA_CALIBRATION.md`
-- `docs/SITL_TEST_PLAN.md`
-- `docs/REAL_DRONE_CHECKLIST.md`
-- `docs/RASPBERRY_PI_PIXHAWK_MAVLINK.md`
-- `docs/PIXHAWK_PI_TEST_DAY.md`
-- `docs/TEAM_PI_WORKFLOW.md`
-- `docs/VISION_MODEL_PLAN.md`
-
-## Phase 2 observer
-
-Phase 2 is read-only. It:
-
-- Connects to SITL or the future Cube UART profile
-- Reads vehicle telemetry
-- Reads the current AUTO mission waypoint
-- Detects when the configured search waypoint is reached
-- Runs a deterministic mission-state observer
-- Logs state transitions and waypoint events to JSON Lines
-- Sends no flight commands
-
-## Install
+On the Raspberry Pi:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
-chmod +x scripts/*.sh
-./scripts/setup.sh
+./real_mission/run_real_mission.sh
 ```
 
-## Raspberry Pi Team Workflow
-
-Sync the Ubuntu laptop source tree to the Pi without deleting Pi files:
-
-```bash
-DRY_RUN=1 ./scripts/sync_to_pi.sh
-./scripts/sync_to_pi.sh
-```
-
-Prepare and validate the Pi copy without running hardware commands:
-
-```bash
-./scripts/pi_validate.sh
-```
-
-See `docs/TEAM_PI_WORKFLOW.md` for teammate access, editing, sync, and safe
-MAVLink bench-test rules.
-
-## Configure the search waypoint
-
-Edit:
+Edit the real-drone tuning file:
 
 ```text
-config/settings.json
+real_mission/parameter_config/real_drone.json
 ```
 
-The important fields are:
+## Test Before Flight
+
+Read:
+
+```text
+test_components/COMMANDS.md
+```
+
+Run all local software checks:
+
+```bash
+./test_components/software/run_all_checks.sh
+```
+
+Run the live laptop camera window:
+
+```bash
+./real_mission/open_laptop_camera_window.sh
+```
+
+Run MAVLink health on the Pi:
+
+```bash
+./test_components/mavlink/status.sh
+./test_components/mavlink/health.sh
+```
+
+Run the guarded avionics sequence dry-run:
+
+```bash
+./test_components/mavlink/bench_sequence.sh --dry-run
+```
+
+Real armed bench sequence, propellers removed only:
+
+```bash
+./test_components/mavlink/bench_sequence.sh --i-understand-props-off --i-accept-arming
+```
+
+## Mission Behavior
+
+The Pi waits for ArduPilot to be armed, in `AUTO`, and at or after the configured
+search waypoint. Then it:
+
+1. searches for the blue hexagon and red triangle;
+2. requests `GUIDED`;
+3. centers over the confirmed target;
+4. drops the correct payload when physical payload is enabled;
+5. resumes `AUTO` for the next target;
+6. requests `RTL` after both targets are complete.
+
+By default, QGC/Mission Planner and ArduPilot own AUTO altitude and AUTO speed.
+The Pi only controls low-speed horizontal centering in GUIDED after a confirmed
+target.
+
+## Camera Monitoring
+
+The laptop camera window needs Wi-Fi or hotspot access to the Pi:
+
+```bash
+./real_mission/open_laptop_camera_window.sh
+```
+
+RFD900x is MAVLink telemetry, not video. The mission can continue without the
+laptop window.
+
+## Safety
+
+Keep this default until bench tests pass:
 
 ```json
-{
-  "search_start_waypoint": 2,
-  "mission_complete_waypoint": 999
+"payload": {
+  "simulate_only": true
 }
 ```
 
-`search_start_waypoint` is the first mission item at which computer-vision search is considered active.
-
-`mission_complete_waypoint` is a temporary upper threshold. It remains `999` until the final mission item numbering is fixed.
-
-## Start the simulation
-
-Terminal 1:
-
-```bash
-drone
-```
-
-Terminal 2:
-
-```bash
-sitl
-```
-
-Terminal 3:
-
-```bash
-cd ~/FOR_COMP/wd-drone-autonomous-mission
-./scripts/run_sitl_observer.sh
-```
-
-Expected initial output:
-
-```text
-MISSION_STATE STARTUP -> WAITING_FOR_ARM: vehicle is disarmed
-mission=WAITING_FOR_ARM link=OK sys=1 mode=STABILIZE state=DISARMED wp=0 ...
-```
-
-During an AUTO mission, the observer changes through states such as:
-
-```text
-WAITING_FOR_ARM
-WAITING_FOR_AUTO
-AUTO_TRANSIT
-SEARCH_ACTIVE
-MISSION_COMPLETE
-```
-
-## Event log
-
-Mission events are stored at:
-
-```text
-logs/mission_events.jsonl
-```
-
-View the latest events:
-
-```bash
-tail -n 20 logs/mission_events.jsonl
-```
-
-Each line is valid JSON and contains a UTC timestamp, event type, mission state, mode, arm status and waypoint data.
-
-## Tests
-
-```bash
-cd ~/FOR_COMP/wd-drone-autonomous-mission
-./scripts/check_project.sh
-```
-
-GitHub Actions runs these tests on every push.
-
-Clean local ignored caches and optional runtime logs:
-
-```bash
-./scripts/clean_workspace.sh
-./scripts/clean_workspace.sh --logs
-```
-
-## Safety boundary
-
-The Phase 2 observer does not arm, disarm, change flight mode, move the
-aircraft, alter the mission or actuate payload outputs.
-
-The active target mission controller can request GUIDED/AUTO/RTL and can send
-low-speed horizontal centering velocity only after target confirmation. AUTO
-altitude and AUTO speed stay under QGC/ArduPilot control by default.
+Do not run arm, servo, or motor tests with propellers installed.

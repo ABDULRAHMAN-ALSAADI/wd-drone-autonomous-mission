@@ -33,7 +33,7 @@ from pathlib import Path
 import pymavlink  # noqa: F401
 import serial  # noqa: F401
 
-cfg = json.loads(Path("target_mission_v2/configs/real_pi_camera_module_3.json").read_text())
+cfg = json.loads(Path("real_mission/parameter_config/real_drone.json").read_text())
 assert cfg["mavlink"]["connection"] == "/dev/serial0", cfg["mavlink"]
 assert int(cfg["mavlink"]["baud"]) == 921600, cfg["mavlink"]
 assert cfg["navigation"]["search_speed_source"] == "qgc_mission", cfg["navigation"]

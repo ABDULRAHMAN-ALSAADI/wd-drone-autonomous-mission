@@ -1,6 +1,7 @@
 # Target Mission Operations
 
-This is the active operating guide for `target_mission_v2`.
+This is the active operating guide for the real mission wrapper in
+`real_mission/` and the tested engine in `target_mission_v2/`.
 
 ## Control Ownership
 
@@ -26,7 +27,14 @@ The default config keeps vertical velocity disabled:
 
 ## Run Profiles
 
-Default SITL profile:
+Real Raspberry Pi Camera Module 3 profile:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./real_mission/run_real_mission.sh
+```
+
+SITL profile:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission/target_mission_v2
@@ -39,14 +47,15 @@ Explicit Gazebo profile:
 ./run.sh configs/sim_gazebo.json
 ```
 
-Real Raspberry Pi Camera Module 3 starting profile:
+Real profile through the engine directly:
 
 ```bash
-./run.sh configs/real_pi_camera_module_3.json
+./run.sh ../real_mission/parameter_config/real_drone.json
 ```
 
-This profile uses `/dev/serial0` at `921600` baud for the Cube UART link. Use
-`operator_config.json` or `configs/sim_gazebo.json` for Ubuntu SITL.
+The real profile uses `/dev/serial0` at `921600` baud for the Cube UART link.
+Use `parameter_config.json`, `operator_config.json`, or `configs/sim_gazebo.json`
+for Ubuntu SITL.
 
 The real profile is a starting point, not a final calibration. Validate it with
 recorded frames at the exact camera mount angle, lens, exposure, target size, and
@@ -66,8 +75,10 @@ passes the safety gates in `docs/VISION_MODEL_PLAN.md`.
 
 ## Operator Config
 
-`./run.sh` uses `parameter_config.json` by default. This is the file to edit for
-normal SITL testing; it includes `_help` notes for the important tuning values.
+`./real_mission/run_real_mission.sh` uses
+`real_mission/parameter_config/real_drone.json` by default. This is the file to
+edit for real-drone tuning. `target_mission_v2/parameter_config.json` remains
+the normal SITL tuning file.
 
 AUTO search speed is controlled by:
 

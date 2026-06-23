@@ -1,13 +1,18 @@
 # Mission Profiles
 
-These JSON files choose how the active mission controller connects to vehicle
-and camera hardware.
+These JSON files are compatibility/SITL profiles for the tested mission engine.
+
+For the real drone, use:
+
+```text
+real_mission/parameter_config/real_drone.json
+```
 
 ## Files
 
 - `sim_gazebo.json`: SITL/Gazebo profile on the Ubuntu laptop.
-- `real_pi_camera_module_3.json`: starting real Raspberry Pi 5 + Cube Orange
-  profile.
+- `real_pi_camera_module_3.json`: older Raspberry Pi 5 + Cube Orange profile
+  kept for compatibility. Prefer `real_mission/parameter_config/real_drone.json`.
 
 ## Real Profile Safety Defaults
 

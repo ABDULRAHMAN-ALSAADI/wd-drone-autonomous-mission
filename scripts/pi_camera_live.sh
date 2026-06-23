@@ -19,7 +19,7 @@ Do this:
 
   2. On the Ubuntu laptop terminal:
        cd ~/FOR_COMP/wd-drone-autonomous-mission
-       ./scripts/pi_camera_live.sh
+       ./real_mission/open_laptop_camera_window.sh
 
 For a no-window Pi-side camera health check only:
        ./scripts/pi_camera_check.sh --seconds 10

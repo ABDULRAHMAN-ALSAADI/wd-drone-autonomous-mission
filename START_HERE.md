@@ -1,87 +1,104 @@
 # Start Here
 
-This project has three jobs:
+This repo has two folders you should care about first:
 
-1. Run the rotary-wing second mission in simulation and later on the real drone.
-2. Test the Raspberry Pi 5 to Cube Orange MAVLink link safely on the bench.
-3. Give the team clear checklists for wiring, safety, monitoring, and tuning.
+| Folder | Use it for |
+| --- | --- |
+| `real_mission/` | The real Raspberry Pi 5 + Cube Orange mission. Run this on the aircraft. |
+| `test_components/` | Camera, MAVLink, servo, motor, Pi, and software checks before flight. |
 
-## The Important Folders
+Everything else is support code, tests, or documentation behind those two
+folders.
 
-| Folder | Purpose | Edit Often? |
-| --- | --- | --- |
-| `target_mission_v2/` | The active mission controller: camera, vision, GUIDED centering, payload decision, AUTO resume, RTL. | Yes, for mission behavior and tuning. |
-| `target_mission_v2/configs/` | Real and simulation mission profiles. | Yes, carefully. |
-| `scripts/` | Commands you run from the terminal: setup, sync, Pi checks, bench tests. | Sometimes. |
-| `tools/` | Developer/bench helper programs used by scripts. | Rarely. |
-| `src/wd_drone/` | Read-only telemetry observer/monitor package. It sends no flight commands. | Rarely. |
-| `tests/` | Unit tests for the package monitor/config logic. | Only when behavior changes. |
-| `docs/` | Operating guides, safety checklists, mission notes, and test-day plans. | Yes, whenever the team learns something. |
-| `config/` | Settings for the read-only observer, not the active target mission. | Rarely. |
+## Real Mission
 
-## What To Run
-
-Simulation mission:
-
-```bash
-cd ~/FOR_COMP/wd-drone-autonomous-mission/target_mission_v2
-./run.sh
-```
-
-Pi/Cube bench readiness:
+Run on the Raspberry Pi:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
-./scripts/pi_test_day_readiness.sh
+./real_mission/run_real_mission.sh
 ```
 
-Pi/Cube health monitor:
-
-```bash
-ssh pi5
-cd ~/FOR_COMP/wd-drone-autonomous-mission
-./scripts/mavlink_bench.sh health --connection /dev/serial0 --baud 921600 --seconds 10
-```
-
-Full local tests:
-
-```bash
-cd ~/FOR_COMP/wd-drone-autonomous-mission
-./scripts/check_project.sh
-```
-
-## What To Edit For Normal Mission Tuning
-
-Use this first:
+Tune the real drone here:
 
 ```text
-target_mission_v2/parameter_config.json
+real_mission/parameter_config/real_drone.json
 ```
 
-Real Pi/Cube starting profile:
+Read the tuning notes here:
 
 ```text
-target_mission_v2/configs/real_pi_camera_module_3.json
+real_mission/parameter_config/README.md
 ```
 
-Do not change source code just to adjust waypoint start, centering speed,
-target hit count, display font size, or payload simulation. Those belong in the
-JSON config files.
+The Pi mission waits until ArduPilot is armed, in `AUTO`, and at or after
+`mission.search_start_wp`. Then it starts target search, switches to `GUIDED`
+for centering, triggers payload when enabled, resumes `AUTO`, and requests `RTL`
+after both targets are complete.
 
-## What Not To Touch Before Asking
+## Test Components
 
-- `.venv/`
-- `.wheelhouse/`
-- `__pycache__/`
-- `.git/`
-- ArduPilot parameters on the real Cube
-- Motor or servo commands with propellers installed
-- `payload.simulate_only: false`
+Start here:
+
+```text
+test_components/COMMANDS.md
+```
+
+Useful examples:
+
+```bash
+./test_components/software/run_all_checks.sh
+./test_components/camera/check_on_pi.sh --seconds 10
+./test_components/mavlink/status.sh
+./test_components/mavlink/health.sh
+./test_components/mavlink/bench_sequence.sh --dry-run
+```
+
+The avionics bench sequence requested for testing is:
+
+```text
+STABILIZE -> GUIDED -> ARM -> AUTO -> RTL -> STABILIZE -> DISARM
+```
+
+Run it only with propellers removed:
+
+```bash
+./test_components/mavlink/bench_sequence.sh --i-understand-props-off --i-accept-arming
+```
+
+## Laptop Camera Window
+
+The live camera window opens on the Ubuntu laptop, not on the Pi:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./real_mission/open_laptop_camera_window.sh
+```
+
+The laptop and Pi must be on the same Wi-Fi/hotspot network. RFD900x carries
+MAVLink telemetry, not video.
+
+The mission does not depend on this window. It is only for you to watch what the
+camera sees.
+
+## What The Other Folders Are
+
+| Folder | Why it exists |
+| --- | --- |
+| `target_mission_v2/` | Tested mission engine used by `real_mission/run_real_mission.sh`. |
+| `scripts/` | Low-level shell helpers used by the clean test wrappers. |
+| `tools/` | Python bench tools behind the shell commands. |
+| `src/wd_drone/` | Read-only telemetry observer package. It sends no flight commands. |
+| `tests/` | Unit tests for monitor/config code. |
+| `docs/` | Longer explanations and checklists. |
+| `config/` | Config for the read-only observer, not the active mission. |
+
+Do not edit `.venv/`, `.git/`, `__pycache__/`, or logs.
 
 ## Best Reading Order
 
-1. `docs/PROJECT_STRUCTURE.md`
-2. `docs/COMPETITION_REQUIREMENTS.md`
-3. `docs/SAFETY_AND_FAILSAFES.md`
-4. `docs/PIXHAWK_PI_TEST_DAY.md`
-5. `target_mission_v2/README.md`
+1. `real_mission/README.md`
+2. `real_mission/parameter_config/README.md`
+3. `test_components/COMMANDS.md`
+4. `docs/SAFETY_AND_FAILSAFES.md`
+5. `docs/PIXHAWK_PI_TEST_DAY.md`
