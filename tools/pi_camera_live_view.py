@@ -64,6 +64,9 @@ class RemoteMjpegCamera:
                 pass
             self.process.wait(timeout=2.0)
 
+    def returncode(self) -> Optional[int]:
+        return self.process.poll()
+
     def _pop_latest_jpeg(self) -> Optional[bytes]:
         latest = None
         while True:
@@ -206,6 +209,10 @@ def main() -> int:
             ok, frame = camera.read(timeout_s=float(config["camera"].get("read_timeout_s", 2.0)))
             now = time.monotonic()
             if not ok or frame is None:
+                returncode = camera.returncode()
+                if returncode is not None:
+                    print(f"[LIVE CAMERA ERROR] camera stream process exited with code {returncode}")
+                    return 2
                 time.sleep(0.02)
                 continue
             frames += 1
