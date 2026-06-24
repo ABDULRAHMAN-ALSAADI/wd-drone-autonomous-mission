@@ -168,7 +168,11 @@ class MissionConfigTests(unittest.TestCase):
             "mavlink": {"connection": "udpin:0.0.0.0:14551", "baud": None},
             "camera": {"source": "udp_h264", "udp_port": 5600},
             "mission": {
+                "name": "test_mission_2",
+                "search_enabled": True,
                 "search_start_wp": 2,
+                "search_enable_rc_channel": None,
+                "search_enable_pwm_min": 1700,
                 "survey_altitude_m": 5.0,
                 "mode_change_timeout_s": 5.0,
                 "max_flight_time_s": 600.0,
@@ -346,6 +350,12 @@ class MissionConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_config(config)
 
+    def test_validate_config_rejects_bad_search_enable_rc_channel(self):
+        config = self.config()
+        config["mission"]["search_enable_rc_channel"] = 19
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
     def test_validate_config_requires_companion_search_speed(self):
         config = self.config()
         config["navigation"]["search_speed_source"] = "companion_do_change_speed"
@@ -434,6 +444,7 @@ class FakeVehicle:
         self.velocities = []
         self.servos = []
         self.ground_speeds = []
+        self.rc_channels = {}
 
     def send_body_velocity(self, forward, right, down):
         self.velocities.append((forward, right, down))
@@ -513,6 +524,35 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl = self.controller(config, vehicle)
         ctrl.transition(State.SEARCH, "test search")
         self.assertEqual(vehicle.ground_speeds, [3.2])
+
+    def test_search_does_not_start_when_mission_profile_disables_it(self):
+        vehicle = FakeVehicle()
+        vehicle.mode = "AUTO"
+        vehicle.mission_seq = 9
+        config = self.config()
+        config["mission"]["search_enabled"] = False
+        ctrl = self.controller(config, vehicle)
+        ctrl.state = State.WAITING_FOR_AUTO
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO)
+        self.assertIn("search blocked", ctrl.status_message)
+
+    def test_search_does_not_start_until_rc_enable_switch_is_high(self):
+        vehicle = FakeVehicle()
+        vehicle.mode = "AUTO"
+        vehicle.mission_seq = 9
+        vehicle.rc_channels[7] = 1200
+        config = self.config()
+        config["mission"]["search_enable_rc_channel"] = 7
+        config["mission"]["search_enable_pwm_min"] = 1700
+        ctrl = self.controller(config, vehicle)
+        ctrl.state = State.WAITING_FOR_AUTO
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO)
+        self.assertIn("RC7=1200", ctrl.status_message)
+        vehicle.rc_channels[7] = 1800
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+        self.assertEqual(ctrl.state, State.SEARCH)
 
     def test_auto_bounce_in_center_retries_guided_without_losing_target(self):
         vehicle = FakeVehicle()

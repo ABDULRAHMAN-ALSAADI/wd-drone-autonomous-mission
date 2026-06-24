@@ -25,13 +25,13 @@ On the Raspberry Pi:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
-./real_mission/run_real_mission.sh
+./real_mission/run_mission2_target_payload.sh
 ```
 
 Edit the real-drone tuning file:
 
 ```text
-real_mission/parameter_config/real_drone.json
+real_mission/parameter_config/mission2_target_payload.json
 ```
 
 ## Test Before Flight
@@ -81,8 +81,8 @@ Real armed bench sequence, propellers removed only:
 
 ## Mission Behavior
 
-The Pi waits for ArduPilot to be armed, in `AUTO`, and at or after the configured
-search waypoint. Then it:
+The Pi waits for ArduPilot to be armed, in `AUTO`, at or after the configured
+search waypoint, and running a search-enabled Mission 2 profile. Then it:
 
 1. searches for the blue hexagon and red triangle;
 2. requests `GUIDED`;

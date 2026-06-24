@@ -4,12 +4,13 @@ This is the recommended operator flow for the two competition tasks.
 
 ## Important Principle
 
-Do not make the Raspberry Pi choose between Mission 1 and Mission 2 yet.
+Do not make the Raspberry Pi upload or choose between Mission 1 and Mission 2
+in the air yet.
 
 For the first real flights, keep mission selection simple:
 
 1. Load the correct mission in Mission Planner or QGroundControl on the ground.
-2. Start the Pi mission software only when Mission 2 needs vision/payload logic.
+2. Start the matching Pi profile, or no target controller for Mission 1.
 3. Use the RC flight-mode switch to start AUTO.
 
 This avoids a risky situation where the companion computer uploads, swaps, or
@@ -31,6 +32,22 @@ Recommended flow:
 The Raspberry Pi is not required to control Mission 1. It may run read-only
 monitoring, but it should not send GUIDED or payload commands.
 
+Normal Mission 1 command:
+
+```text
+do not run the target payload controller
+```
+
+Optional no-search Pi profile:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./real_mission/run_mission1_no_search.sh
+```
+
+This profile keeps `mission.search_enabled` false, so the Pi cannot enter
+SEARCH even if the waypoint number matches.
+
 ## Mission 2: Pole, Search Area, Target Payload
 
 Mission 2 is an ArduPilot AUTO mission plus the Pi vision controller.
@@ -40,11 +57,11 @@ Recommended flow:
 1. Upload the Mission 2 waypoint file from Mission Planner/QGroundControl.
 2. The AUTO mission should handle takeoff, pole 2 outside pass, and travel to
    the search area.
-3. Start the Pi mission before arming:
+3. Start the Mission 2 Pi profile before arming:
 
    ```bash
    cd ~/FOR_COMP/wd-drone-autonomous-mission
-   ./real_mission/run_real_mission.sh
+   ./real_mission/run_mission2_target_payload.sh
    ```
 
 4. Start the laptop camera window if Wi-Fi/hotspot is available:
@@ -60,6 +77,7 @@ Recommended flow:
    armed == true
    mode == AUTO
    current waypoint >= mission.search_start_wp
+   mission.search_enabled == true
    ```
 
 7. After a target is confirmed, the Pi requests GUIDED, centers over the target,
@@ -69,7 +87,7 @@ Recommended flow:
 Tune the search start waypoint here:
 
 ```text
-real_mission/parameter_config/real_drone.json
+real_mission/parameter_config/mission2_target_payload.json
 ```
 
 ```json
@@ -90,6 +108,19 @@ Position 3: AUTO
 
 Use a separate RC option or switch for RTL only after the pilot and avionics
 lead agree on the transmitter layout.
+
+For an extra Mission 2 safety lock, you may assign one RC channel as search
+enable. Example:
+
+```json
+"mission": {
+  "search_enable_rc_channel": 7,
+  "search_enable_pwm_min": 1700
+}
+```
+
+That switch does not choose Mission 1 or Mission 2. It only allows Mission 2
+search after the correct mission profile is already running.
 
 ## Why Not Two RC Buttons Yet?
 
@@ -151,4 +182,3 @@ Before trusting it for payload release:
 
 YOLO/AI HAT+ can be added later as an optional backend, but the simple detector
 should remain as a fallback until the trained model passes real-world tests.
-

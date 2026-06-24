@@ -8,11 +8,11 @@ for the aircraft.
 
 ## What Runs On The Drone
 
-Run this on the Raspberry Pi 5:
+For Mission 2, run this on the Raspberry Pi 5:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
-./real_mission/run_real_mission.sh
+./real_mission/run_mission2_target_payload.sh
 ```
 
 The Pi connects to the Cube on `/dev/serial0`, reads the Pi Camera Module 3,
@@ -21,27 +21,100 @@ the blue hexagon and red triangle, centers in GUIDED, triggers the payload servo
 when enabled, resumes AUTO after the first target, and requests RTL after both
 targets are complete.
 
-## RC Trigger Reality
+## Mission 1 vs Mission 2
+
+This is the important safety rule:
+
+```text
+Mission 1 = ArduPilot AUTO only, no Pi search/payload logic.
+Mission 2 = ArduPilot AUTO + Pi vision/search/payload logic.
+```
+
+For Mission 1, normally do not run the target payload controller at all. Upload
+the Figure 8 mission from Mission Planner/QGC and start AUTO from the RC.
+
+If you want the Pi process open during Mission 1 for bench monitoring practice,
+use the no-search profile:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./real_mission/run_mission1_no_search.sh
+```
+
+That profile has:
+
+```json
+"mission": {
+  "name": "mission1_figure8_no_search",
+  "search_enabled": false
+}
+```
+
+Even if the AUTO mission reaches waypoint `5`, `7`, or any search-like number,
+the Pi will not enter SEARCH.
+
+For Mission 2, use:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./real_mission/run_mission2_target_payload.sh
+```
+
+That profile has:
+
+```json
+"mission": {
+  "name": "mission2_target_payload",
+  "search_enabled": true
+}
+```
 
 The RC should control ArduPilot modes or mission start. The companion computer
-does not need a special RC button to begin searching.
+does not upload or choose between the two missions in the air.
 
 Real sequence:
 
 1. Upload the correct AUTO mission from Mission Planner/QGC.
-2. Start `./real_mission/run_real_mission.sh` on the Pi before takeoff.
+2. Start the matching Pi profile, or no Pi target controller for Mission 1.
 3. Use RC/Mission Planner to arm and start AUTO.
 4. The Pi waits quietly until:
    - the vehicle is armed;
    - mode is `AUTO`;
    - mission item is at or after `mission.search_start_wp`.
-5. Then the Pi starts the second-mission vision/search/centering/payload logic.
+   - search is enabled by the selected mission profile.
+5. Then, only for Mission 2, the Pi starts vision/search/centering/payload.
 
 The Cube normally has one uploaded AUTO mission at a time. If you want one RC
 button for mission one and another RC button for mission two, that is an
-ArduPilot/Mission Planner/Lua mission-management design, not just a Python
-vision setting. The clean first version is: upload the mission you want, then
-use RC to start AUTO.
+ArduPilot/Mission Planner/Lua mission-management design. The clean first
+version is: upload the mission you want on the ground, start the matching Pi
+profile, then use RC to start AUTO.
+
+## Optional Mission 2 RC Enable Switch
+
+You can add one extra safety lock for Mission 2: an RC channel that must be high
+before search can start.
+
+Example for RC channel 7:
+
+```json
+"mission": {
+  "search_enable_rc_channel": 7,
+  "search_enable_pwm_min": 1700
+}
+```
+
+Then the Pi will require all of this before search:
+
+```text
+armed == true
+mode == AUTO
+waypoint >= search_start_wp
+RC7 >= 1700
+```
+
+If the switch is low, the overlay/logs say search is blocked. This is a safety
+enable, not a mission selector.
 
 ## Laptop Camera Window
 
@@ -65,12 +138,16 @@ continue the mission.
 Edit:
 
 ```text
-real_mission/parameter_config/real_drone.json
+real_mission/parameter_config/mission2_target_payload.json
 ```
 
 Important values:
 
+- `mission.name`: tells the operator which mission profile is running.
+- `mission.search_enabled`: false means the Pi will never enter target search.
 - `mission.search_start_wp`: first AUTO waypoint where search starts.
+- `mission.search_enable_rc_channel`: optional extra RC switch gate for Mission
+  2 search.
 - `payload.simulate_only`: keep `true` until servo tests pass; set `false` only
   when the payload mechanism is physically ready.
 - `payload.servo_channel`, `payload.release_pwm`, `payload.reset_pwm`: payload

@@ -17,13 +17,13 @@ Run on the Raspberry Pi:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
-./real_mission/run_real_mission.sh
+./real_mission/run_mission2_target_payload.sh
 ```
 
 Tune the real drone here:
 
 ```text
-real_mission/parameter_config/real_drone.json
+real_mission/parameter_config/mission2_target_payload.json
 ```
 
 Read the tuning notes here:
@@ -33,9 +33,9 @@ real_mission/parameter_config/README.md
 ```
 
 The Pi mission waits until ArduPilot is armed, in `AUTO`, and at or after
-`mission.search_start_wp`. Then it starts target search, switches to `GUIDED`
-for centering, triggers payload when enabled, resumes `AUTO`, and requests `RTL`
-after both targets are complete.
+`mission.search_start_wp`, and the mission profile has search enabled. Then it
+starts target search, switches to `GUIDED` for centering, triggers payload when
+enabled, resumes `AUTO`, and requests `RTL` after both targets are complete.
 
 ## Test Components
 

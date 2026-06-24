@@ -129,6 +129,12 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("mission.search_start_wp must be zero or positive")
     if float(config["mission"].get("mode_change_timeout_s", 5.0)) <= 0:
         raise ValueError("mission.mode_change_timeout_s must be positive")
+    rc_channel = config["mission"].get("search_enable_rc_channel")
+    if rc_channel is not None and not 1 <= int(rc_channel) <= 18:
+        raise ValueError("mission.search_enable_rc_channel must be null or 1..18")
+    search_enable_pwm_min = int(config["mission"].get("search_enable_pwm_min", 1700))
+    if not 900 <= search_enable_pwm_min <= 2200:
+        raise ValueError("mission.search_enable_pwm_min must be a valid RC PWM value")
     if int(config["vision"]["required_hits"]) < 1:
         raise ValueError("vision.required_hits must be at least 1")
     vision_backend = config["vision"].get("backend", "strict_shape")
@@ -207,9 +213,11 @@ class Vehicle:
         self.total_speed_m_s: Optional[float] = None
         self.acceleration_m_s2: Optional[float] = None
         self._last_velocity_sample: Optional[tuple[float, float, float, float]] = None
+        self.rc_channels: dict[int, int] = {}
         self.last_heartbeat = time.monotonic()
         self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT, 10.0)
         self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_MISSION_CURRENT, 4.0)
+        self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_RC_CHANNELS, 4.0)
         print(f"[MAVLINK] Connected system={self.target_system} component={self.target_component}")
 
     def _request_interval(self, message_id: int, hz: float) -> None:
@@ -251,6 +259,11 @@ class Vehicle:
             self._last_velocity_sample = (now, vn, ve, vd)
         elif kind == "MISSION_CURRENT":
             self.mission_seq = int(msg.seq)
+        elif kind == "RC_CHANNELS":
+            for channel in range(1, 19):
+                value = int(getattr(msg, f"chan{channel}_raw", 0))
+                if value > 0:
+                    self.rc_channels[channel] = value
         elif kind == "STATUSTEXT":
             text = msg.text.decode(errors="replace") if isinstance(msg.text, bytes) else msg.text
             if int(msg.severity) <= mavutil.mavlink.MAV_SEVERITY_WARNING:
@@ -507,6 +520,37 @@ class Controller:
             return f"companion {float(self.navigation['search_speed_m_s']):.1f}m/s"
         return "QGC mission"
 
+    def search_gate_status(self) -> tuple[bool, str]:
+        mission = self.config["mission"]
+        if not bool(mission.get("search_enabled", True)):
+            return False, "search disabled by mission profile"
+        rc_channel = mission.get("search_enable_rc_channel")
+        if rc_channel is not None:
+            channel = int(rc_channel)
+            value = self.vehicle.rc_channels.get(channel)
+            threshold = int(mission.get("search_enable_pwm_min", 1700))
+            if value is None:
+                return False, f"waiting for RC{channel} mission-enable PWM"
+            if value < threshold:
+                return False, f"RC{channel}={value} below enable threshold {threshold}"
+            return True, f"RC{channel}={value} enabled"
+        return True, "enabled by config"
+
+    def auto_search_start_ready(self) -> tuple[bool, str]:
+        m = self.config["mission"]
+        if not self.vehicle.armed:
+            return False, "waiting for arm"
+        if self.vehicle.mode != "AUTO":
+            return False, f"waiting for AUTO, current mode {self.vehicle.mode}"
+        if self.vehicle.mission_seq is None:
+            return False, "waiting for mission waypoint"
+        if self.vehicle.mission_seq < int(m["search_start_wp"]):
+            return False, f"waiting for search waypoint {m['search_start_wp']}, current {self.vehicle.mission_seq}"
+        enabled, reason = self.search_gate_status()
+        if not enabled:
+            return False, f"search blocked: {reason}"
+        return True, f"AUTO item {self.vehicle.mission_seq}; {reason}"
+
     def payload_safety_error(self) -> Optional[str]:
         if bool(self.safety.get("payload_requires_guided", True)) and self.vehicle.mode != "GUIDED":
             return f"vehicle mode is {self.vehicle.mode}, not GUIDED"
@@ -590,11 +634,17 @@ class Controller:
             return detections, masks
 
         if self.state == State.WAITING_FOR_AUTO:
-            if self.vehicle.armed and self.vehicle.mode == "AUTO" and self.vehicle.mission_seq is not None and self.vehicle.mission_seq >= int(m["search_start_wp"]):
-                self.transition(State.SEARCH, f"AUTO item {self.vehicle.mission_seq}")
+            ready, reason = self.auto_search_start_ready()
+            self.status_message = reason
+            if ready:
+                self.transition(State.SEARCH, reason)
 
         elif self.state == State.SEARCH:
-            if self.vehicle.mode != "AUTO":
+            enabled, reason = self.search_gate_status()
+            if not enabled:
+                self.tracker.reset()
+                self.transition(State.WAITING_FOR_AUTO, reason)
+            elif self.vehicle.mode != "AUTO":
                 self.transition(State.WAITING_FOR_AUTO, f"left AUTO: {self.vehicle.mode}")
             else:
                 confirmed = self.tracker.update(detections, self.incomplete_targets(), now)
@@ -609,6 +659,15 @@ class Controller:
                     self.transition(State.WAITING_FOR_GUIDED, "target confirmed")
 
         elif self.state == State.WAITING_FOR_GUIDED:
+            enabled, reason = self.search_gate_status()
+            if not enabled:
+                self.current_target = None
+                self.last_detection = None
+                self.tracker.reset()
+                self.vehicle.set_mode("AUTO")
+                self.last_mode_request_at = now
+                self.transition(State.WAITING_FOR_AUTO, reason)
+                return detections, masks
             if self.vehicle.mode == "GUIDED":
                 self.send_velocity(0.0, 0.0, self.altitude_down())
                 self.transition(State.CENTER, "GUIDED confirmed; centering target")
@@ -621,6 +680,10 @@ class Controller:
                 self.request_mode_repeated("GUIDED")
 
         elif self.state == State.CENTER:
+            enabled, reason = self.search_gate_status()
+            if not enabled:
+                self.abandon_target_and_resume_auto(now, reason)
+                return detections, masks
             if self.vehicle.mode != "GUIDED":
                 if self.vehicle.mode == "AUTO":
                     if self.guided_mode_lost_since is None:
@@ -710,6 +773,10 @@ class Controller:
             self.send_velocity(forward, right, self.altitude_down())
 
         elif self.state == State.PAYLOAD:
+            enabled, reason = self.search_gate_status()
+            if not enabled:
+                self.abandon_target_and_resume_auto(now, reason)
+                return detections, masks
             self.payload_action(now)
 
         elif self.state == State.WAITING_FOR_AUTO_RESUME:
@@ -726,8 +793,9 @@ class Controller:
                 self.request_mode_repeated("RTL")
 
         elif self.state == State.COMPLETE:
-            if self.vehicle.armed and self.vehicle.mode == "AUTO" and self.vehicle.mission_seq is not None and self.vehicle.mission_seq >= int(m["search_start_wp"]):
-                self.reset_for_next_mission(f"new AUTO run at waypoint {self.vehicle.mission_seq}")
+            ready, reason = self.auto_search_start_ready()
+            if ready:
+                self.reset_for_next_mission(f"new AUTO run at waypoint {self.vehicle.mission_seq}; {reason}")
 
         return detections, masks
 
@@ -755,6 +823,8 @@ class Controller:
             return "n/a" if value is None else f"{value:.2f}{unit}"
 
         done = ",".join(sorted(self.completed_targets)) if self.completed_targets else "none"
+        gate_enabled, gate_reason = self.search_gate_status()
+        gate = "enabled" if gate_enabled else f"blocked: {gate_reason}"
         font_scale = float(self.config["display"].get("overlay_font_scale", 0.46))
         max_text_width = max(120, w - 42)
 
@@ -770,6 +840,7 @@ class Controller:
             f"Mission {self.state.value} | Mode {self.vehicle.mode} | WP {self.vehicle.mission_seq}",
             f"Action: {self.status_message}",
             f"Target: {self.current_target or 'none'} | Err {center_error} | Hold {centered_for:.1f}s",
+            f"Search gate: {gate}",
             f"Hits: triangle {hits['red_triangle']}/{self.config['vision']['required_hits']} | hexagon {hits['blue_hexagon']}/{self.config['vision']['required_hits']}",
             f"Done: {done} | Runs {self.mission_done_count} | Guided bounces {self.guided_bounce_count}",
             f"Search speed {self.search_speed_label()} | Retry {float(self.safety.get('mode_retry_interval_s') or 1.0):.1f}s",
@@ -792,7 +863,10 @@ class Controller:
         print("=" * 72)
         print("WD DRONE TARGET MISSION V2")
         print("QGC/ARDUPILOT OWNS AUTO ALTITUDE/SPEED. COMPANION CENTERS TARGETS IN GUIDED.")
+        gate_enabled, gate_reason = self.search_gate_status()
+        print(f"MISSION PROFILE: {self.config['mission'].get('name', 'unnamed')}")
         print(f"SEARCH START WP: {self.config['mission']['search_start_wp']} | SEARCH SPEED OWNER: {self.search_speed_label()}")
+        print(f"SEARCH GATE: {'enabled' if gate_enabled else 'blocked'} ({gate_reason})")
         print(f"GUIDED HOLD: {float(self.safety.get('guided_auto_bounce_grace_s', 0.0)):.1f}s | TARGET LOST TIMEOUT: {float(self.config['control']['target_lost_timeout_s']):.1f}s")
         print("=" * 72)
         try:
@@ -816,6 +890,8 @@ class Controller:
                     "altitude_m": self.vehicle.relative_alt_m, "waypoint": self.vehicle.mission_seq,
                     "current_target": self.current_target, "completed_targets": sorted(self.completed_targets),
                     "mission_done_count": self.mission_done_count,
+                    "mission_profile": self.config["mission"].get("name"),
+                    "search_gate": self.search_gate_status()[1],
                     "payload_colour": payload_colour_for_target(self.current_target) if self.current_target else None,
                     "detections": [asdict(x) for x in detections],
                 }, sort_keys=True) + "\n")

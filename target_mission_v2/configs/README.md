@@ -5,14 +5,15 @@ These JSON files are compatibility/SITL profiles for the tested mission engine.
 For the real drone, use:
 
 ```text
-real_mission/parameter_config/real_drone.json
+real_mission/parameter_config/mission2_target_payload.json
 ```
 
 ## Files
 
 - `sim_gazebo.json`: SITL/Gazebo profile on the Ubuntu laptop.
 - `real_pi_camera_module_3.json`: older Raspberry Pi 5 + Cube Orange profile
-  kept for compatibility. Prefer `real_mission/parameter_config/real_drone.json`.
+  kept for compatibility. Prefer the named profiles in
+  `real_mission/parameter_config/`.
 
 ## Real Profile Safety Defaults
 

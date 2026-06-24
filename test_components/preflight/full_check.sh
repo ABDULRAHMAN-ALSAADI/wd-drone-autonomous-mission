@@ -46,10 +46,14 @@ python3 - <<'PY'
 import json
 from pathlib import Path
 
-path = Path("real_mission/parameter_config/real_drone.json")
+path = Path("real_mission/parameter_config/mission2_target_payload.json")
 cfg = json.loads(path.read_text(encoding="utf-8"))
+mission1 = json.loads(Path("real_mission/parameter_config/mission1_no_search.json").read_text(encoding="utf-8"))
 
 checks = [
+    ("mission2.name", cfg["mission"]["name"] == "mission2_target_payload"),
+    ("mission2.search_enabled", cfg["mission"]["search_enabled"] is True),
+    ("mission1.search_enabled", mission1["mission"]["search_enabled"] is False),
     ("mavlink.connection", cfg["mavlink"]["connection"] == "/dev/serial0"),
     ("mavlink.baud", int(cfg["mavlink"]["baud"]) == 921600),
     ("payload.servo_channel", int(cfg["payload"]["servo_channel"]) == 5),
@@ -69,4 +73,3 @@ PY
 
 echo
 echo "[PREFLIGHT OK] read-only checks completed"
-

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CONFIG="$ROOT/real_mission/parameter_config/real_drone.json"
+CONFIG="$ROOT/real_mission/parameter_config/mission2_target_payload.json"
 cd "$ROOT"
 
 python_bin="$ROOT/.venv/bin/python"

@@ -188,8 +188,10 @@ Then run on the Raspberry Pi:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
-./real_mission/run_real_mission.sh
+./real_mission/run_mission2_target_payload.sh
 ```
 
-The script waits for AUTO and `mission.search_start_wp`. It should not start
-searching while the Cube is disarmed or before the configured waypoint.
+The script waits for AUTO, `mission.search_enabled=true`, and
+`mission.search_start_wp`. It should not start searching while the Cube is
+disarmed, while the Mission 1 no-search profile is running, or before the
+configured waypoint.

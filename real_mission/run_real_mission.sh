@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONFIG_PATH="${1:-$ROOT/real_mission/parameter_config/real_drone.json}"
+CONFIG_PATH="${1:-$ROOT/real_mission/parameter_config/mission2_target_payload.json}"
 
 pick_python() {
     for candidate in "$ROOT/.venv/bin/python" python3; do

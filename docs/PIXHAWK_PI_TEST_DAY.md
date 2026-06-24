@@ -158,7 +158,7 @@ the first round. The script refuses values above 15 percent.
 For the first full-system test, keep:
 
 ```text
-real_mission/parameter_config/real_drone.json
+real_mission/parameter_config/mission2_target_payload.json
 payload.simulate_only = true
 control.altitude_control = "off"
 navigation.search_speed_source = "qgc_mission"

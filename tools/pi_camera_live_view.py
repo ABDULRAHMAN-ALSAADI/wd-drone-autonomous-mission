@@ -185,7 +185,7 @@ def write_snapshot(directory: Path, frame: np.ndarray) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Open a live laptop window for the Pi Camera Module 3 and mission vision detector.")
-    parser.add_argument("--config", type=Path, default=ROOT / "real_mission/parameter_config/real_drone.json")
+    parser.add_argument("--config", type=Path, default=ROOT / "real_mission/parameter_config/mission2_target_payload.json")
     parser.add_argument("--ssh-alias", default="pi5")
     parser.add_argument("--remote-dir", default="~/FOR_COMP/wd-drone-autonomous-mission")
     parser.add_argument("--seconds", type=float, default=0.0, help="0 means run until q/esc")

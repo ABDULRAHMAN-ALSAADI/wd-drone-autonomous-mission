@@ -14,7 +14,7 @@ mission_controller.py = mission state machine and MAVLink control
 vision.py             = target detection
 control.py            = small tested math helpers
 parameter_config.json = normal SITL/operator tuning
-real_mission/parameter_config/real_drone.json = real Pi/Cube profile
+real_mission/parameter_config/mission2_target_payload.json = real Mission 2 profile
 ```
 
 ## Correct mission behavior
@@ -214,7 +214,7 @@ Equivalent explicit profile:
 Starting profile for Raspberry Pi Camera Module 3:
 
 ```bash
-./run.sh ../real_mission/parameter_config/real_drone.json
+./run.sh ../real_mission/parameter_config/mission2_target_payload.json
 ```
 
 That real profile is for the Pi-to-Cube UART path. Use the SITL profile when

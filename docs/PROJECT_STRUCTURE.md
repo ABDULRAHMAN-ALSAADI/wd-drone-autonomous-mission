@@ -8,10 +8,16 @@ This file explains the repository in plain language.
 
 This is the real-drone operator folder.
 
-- `run_real_mission.sh`: run this on the Raspberry Pi to start the mission.
+- `run_mission2_target_payload.sh`: run this on the Raspberry Pi for Mission 2.
+- `run_mission1_no_search.sh`: optional Pi process for Mission 1 with search
+  disabled.
+- `run_real_mission.sh`: lower-level wrapper used by the mission-specific
+  scripts.
 - `open_laptop_camera_window.sh`: run this on the Ubuntu laptop to watch the Pi
   Camera Module 3 feed.
-- `parameter_config/real_drone.json`: edit this for real-drone tuning.
+- `parameter_config/mission2_target_payload.json`: edit this for Mission 2
+  real-drone tuning.
+- `parameter_config/mission1_no_search.json`: no-search Mission 1 profile.
 - `parameter_config/README.md`: explains the important tuning fields.
 
 ### `test_components/`
@@ -53,7 +59,7 @@ Use this folder when a teammate wants to reproduce the simulation.
 - `parameter_config.json`: SITL/operator tuning file.
 - `configs/sim_gazebo.json`: SITL/Gazebo profile.
 - `configs/real_pi_camera_module_3.json`: older real profile kept for
-  compatibility. Prefer `real_mission/parameter_config/real_drone.json`.
+  compatibility. Prefer the named profiles in `real_mission/parameter_config/`.
 
 Open this folder when you need to change code behavior, not just tune values.
 

@@ -9,7 +9,11 @@
     "udp_port": 5600
   },
   "mission": {
+    "name": "sitl_gazebo_target_payload",
+    "search_enabled": true,
     "search_start_wp": 2,
+    "search_enable_rc_channel": null,
+    "search_enable_pwm_min": 1700,
     "mode_change_timeout_s": 5.0,
     "max_flight_time_s": 600.0
   },

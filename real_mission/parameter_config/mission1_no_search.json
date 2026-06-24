@@ -1,4 +1,17 @@
 {
+  "_help": {
+    "mission.search_start_wp": "First AUTO mission item where the Pi is allowed to search for targets.",
+    "mission.search_enabled": "Set false for Mission 1/no-search profiles. Mission 2 must be true.",
+    "mission.search_enable_rc_channel": "Optional extra RC switch gate. Null disables the RC gate. Example: 7 means RC channel 7 must be high before search can start.",
+    "navigation.search_speed_source": "qgc_mission means Mission Planner/QGC/ArduPilot owns AUTO speed. companion_do_change_speed makes the Pi send MAV_CMD_DO_CHANGE_SPEED.",
+    "control.center_max_speed_m_s": "Maximum horizontal speed during GUIDED centering.",
+    "control.center_tolerance_px": "Pixel error accepted as centered. Bigger is safer; smaller is more precise.",
+    "control.target_lost_timeout_s": "How long to stay in GUIDED trying to reacquire a confirmed target before returning to AUTO.",
+    "vision.search_min_area_px": "Lower this carefully if real targets are too small at higher altitude.",
+    "payload.simulate_only": "Keep true until servo and payload bench tests pass. Set false only for physical payload output.",
+    "payload.servo_channel": "Pixhawk output channel for payload. Use 5 when the payload servo signal wire is on MAIN OUT / signal 5.",
+    "display.show_main_window": "Keep false on Raspberry Pi OS Lite. Use real_mission/open_laptop_camera_window.sh on the Ubuntu laptop for live viewing."
+  },
   "mavlink": {
     "connection": "/dev/serial0",
     "baud": 921600,
@@ -17,8 +30,8 @@
     "denoise": "cdn_fast"
   },
   "mission": {
-    "name": "legacy_real_pi_camera_target_payload",
-    "search_enabled": true,
+    "name": "mission1_figure8_no_search",
+    "search_enabled": false,
     "search_start_wp": 2,
     "search_enable_rc_channel": null,
     "search_enable_pwm_min": 1700,
@@ -64,7 +77,7 @@
   },
   "payload": {
     "simulate_only": true,
-    "servo_channel": 9,
+    "servo_channel": 5,
     "release_pwm": 1900,
     "reset_pwm": 1100,
     "release_hold_s": 1.0,
@@ -80,13 +93,13 @@
     "payload_max_altitude_m": null
   },
   "display": {
-    "show_main_window": true,
+    "show_main_window": false,
     "show_masks": false,
     "overlay_font_scale": 0.46,
     "overlay_background_alpha": 0.42
   },
   "logging": {
-    "directory": "logs/mission_v2",
+    "directory": "logs/real_mission",
     "flush_interval_s": 0.5
   }
 }

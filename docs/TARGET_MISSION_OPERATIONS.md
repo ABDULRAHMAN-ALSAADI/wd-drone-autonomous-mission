@@ -31,7 +31,7 @@ Real Raspberry Pi Camera Module 3 profile:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
-./real_mission/run_real_mission.sh
+./real_mission/run_mission2_target_payload.sh
 ```
 
 SITL profile:
@@ -50,7 +50,7 @@ Explicit Gazebo profile:
 Real profile through the engine directly:
 
 ```bash
-./run.sh ../real_mission/parameter_config/real_drone.json
+./run.sh ../real_mission/parameter_config/mission2_target_payload.json
 ```
 
 The real profile uses `/dev/serial0` at `921600` baud for the Cube UART link.
@@ -75,10 +75,19 @@ passes the safety gates in `docs/VISION_MODEL_PLAN.md`.
 
 ## Operator Config
 
-`./real_mission/run_real_mission.sh` uses
-`real_mission/parameter_config/real_drone.json` by default. This is the file to
-edit for real-drone tuning. `target_mission_v2/parameter_config.json` remains
-the normal SITL tuning file.
+Mission 2 uses:
+
+```text
+real_mission/parameter_config/mission2_target_payload.json
+```
+
+Mission 1 no-search monitoring uses:
+
+```text
+real_mission/parameter_config/mission1_no_search.json
+```
+
+`target_mission_v2/parameter_config.json` remains the normal SITL tuning file.
 
 AUTO search speed is controlled by:
 

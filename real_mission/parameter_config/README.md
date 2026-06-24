@@ -1,6 +1,11 @@
 # Real Mission Parameter Config
 
-Edit `real_drone.json` for the real Raspberry Pi 5 + Cube Orange mission.
+Edit the named mission profile for the real Raspberry Pi 5 + Cube Orange mission:
+
+```text
+mission1_no_search.json
+mission2_target_payload.json
+```
 
 Do not edit Python code for normal tuning. Start here first.
 
@@ -8,7 +13,11 @@ Do not edit Python code for normal tuning. Start here first.
 
 | Field | What it controls | Safe starting idea |
 | --- | --- | --- |
+| `mission.name` | Human-readable mission profile name. | Use `mission1_figure8_no_search` or `mission2_target_payload`. |
+| `mission.search_enabled` | Whether the Pi may enter target search. | `false` for Mission 1, `true` for Mission 2. |
 | `mission.search_start_wp` | AUTO mission item where vision search starts. | Set to the waypoint after your survey enters the target area. |
+| `mission.search_enable_rc_channel` | Optional RC switch that must be high before search. | Use `null` first, or channel `7`/`8` after RC testing. |
+| `mission.search_enable_pwm_min` | PWM threshold for the optional search-enable RC channel. | Usually `1700`. |
 | `navigation.search_speed_source` | Who controls AUTO search speed. | Keep `qgc_mission` so QGC/Mission Planner owns AUTO speed. |
 | `control.center_max_speed_m_s` | Max GUIDED centering speed. | Start low, around `0.25` to `0.35`. |
 | `control.center_tolerance_px` | How close the target must be to camera center. | Larger is safer, smaller is more precise. |
