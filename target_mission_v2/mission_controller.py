@@ -81,6 +81,12 @@ def navigation_config(config: dict[str, Any]) -> dict[str, Any]:
     return navigation
 
 
+def optional_seconds_label(value: Any) -> str:
+    if value is None:
+        return "inf"
+    return f"{float(value):.1f}s"
+
+
 def required_ardupilot_parameters(config: dict[str, Any]) -> dict[str, float]:
     params = config["parameters"]
     rtl_alt_cm = params.get("rtl_alt_cm")
@@ -726,15 +732,15 @@ class Controller:
                         self.guided_bounce_count_for_target += 1
                     elapsed = now - self.guided_mode_lost_since
                     grace_s = self.safety.get("guided_auto_bounce_grace_s")
-                    grace_label = "inf" if grace_s is None else f"{float(grace_s):.1f}"
+                    grace_label = optional_seconds_label(grace_s)
                     self.status_message = (
-                        f"GUIDED lock: AUTO {elapsed:.1f}/{grace_label}s "
+                        f"GUIDED lock: AUTO {elapsed:.1f}s/{grace_label} "
                         f"bounce {self.guided_bounce_count_for_target}; forcing GUIDED"
                     )
                     if now - self.last_guided_bounce_print_at >= 1.0:
                         print(
                             f"[GUIDED BOUNCE] target={self.current_target} "
-                            f"auto_for={elapsed:.1f}/{grace_label}s "
+                            f"auto_for={elapsed:.1f}s/{grace_label} "
                             f"target_count={self.guided_bounce_count_for_target} "
                             f"total_count={self.guided_bounce_count}; forcing GUIDED"
                         )
@@ -924,7 +930,7 @@ class Controller:
         print(f"SEARCH START WP: {self.config['mission']['search_start_wp']} | SEARCH SPEED OWNER: {self.search_speed_label()}")
         print(f"SEARCH GATE: {'enabled' if gate_enabled else 'blocked'} ({gate_reason})")
         print(
-            f"GUIDED HOLD: {float(self.safety.get('guided_auto_bounce_grace_s', 0.0)):.1f}s | "
+            f"GUIDED HOLD: {optional_seconds_label(self.safety.get('guided_auto_bounce_grace_s'))} | "
             f"MAX AUTO BOUNCES/TARGET: {self.safety.get('max_guided_auto_bounces_per_target')} | "
             f"ACTIVE TARGET ABORT: {self.active_target_abort_mode()} | "
             f"TARGET LOST TIMEOUT: {float(self.config['control']['target_lost_timeout_s']):.1f}s"

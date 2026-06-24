@@ -15,6 +15,7 @@ from mission_controller import (
     Controller,
     State,
     enforce_parameters,
+    optional_seconds_label,
     payload_colour_for_target,
     required_ardupilot_parameters,
     validate_config,
@@ -164,6 +165,10 @@ class VisionTests(unittest.TestCase):
 
 
 class AltitudeTests(unittest.TestCase):
+    def test_optional_seconds_label_accepts_null_for_unlimited(self):
+        self.assertEqual(optional_seconds_label(None), "inf")
+        self.assertEqual(optional_seconds_label(0.25), "0.2s")
+
     def test_holds_five_metres(self):
         self.assertEqual(altitude_velocity_down(5.0, 5.0, 0.2, 0.45, 0.3), 0.0)
 

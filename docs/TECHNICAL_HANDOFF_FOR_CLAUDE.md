@@ -1,10 +1,10 @@
 # Technical Handoff For External Review: Teknofest 2026 Rotary-Wing UAV
 
-Generated: 2026-06-25T00:21:48 local time
+Generated: 2026-06-25T00:40:56 local time
 
 Repository: `git@github.com:ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission.git`
 Branch: `main`
-Commit at generation time: `5f2483c` plus current uncommitted worktree changes
+Commit at generation time: `ae66507` plus current uncommitted worktree changes
 Workspace: `/home/kambe/FOR_COMP/wd-drone-autonomous-mission`
 
 Audience: another AI/code reviewer. This document is intentionally exhaustive and includes full tracked source/config/docs content in the appendix, except this generated handoff file itself to avoid recursive self-embedding.
@@ -6183,6 +6183,12 @@ def navigation_config(config: dict[str, Any]) -> dict[str, Any]:
     return navigation
 
 
+def optional_seconds_label(value: Any) -> str:
+    if value is None:
+        return "inf"
+    return f"{float(value):.1f}s"
+
+
 def required_ardupilot_parameters(config: dict[str, Any]) -> dict[str, float]:
     params = config["parameters"]
     rtl_alt_cm = params.get("rtl_alt_cm")
@@ -6828,15 +6834,15 @@ class Controller:
                         self.guided_bounce_count_for_target += 1
                     elapsed = now - self.guided_mode_lost_since
                     grace_s = self.safety.get("guided_auto_bounce_grace_s")
-                    grace_label = "inf" if grace_s is None else f"{float(grace_s):.1f}"
+                    grace_label = optional_seconds_label(grace_s)
                     self.status_message = (
-                        f"GUIDED lock: AUTO {elapsed:.1f}/{grace_label}s "
+                        f"GUIDED lock: AUTO {elapsed:.1f}s/{grace_label} "
                         f"bounce {self.guided_bounce_count_for_target}; forcing GUIDED"
                     )
                     if now - self.last_guided_bounce_print_at >= 1.0:
                         print(
                             f"[GUIDED BOUNCE] target={self.current_target} "
-                            f"auto_for={elapsed:.1f}/{grace_label}s "
+                            f"auto_for={elapsed:.1f}s/{grace_label} "
                             f"target_count={self.guided_bounce_count_for_target} "
                             f"total_count={self.guided_bounce_count}; forcing GUIDED"
                         )
@@ -7026,7 +7032,7 @@ class Controller:
         print(f"SEARCH START WP: {self.config['mission']['search_start_wp']} | SEARCH SPEED OWNER: {self.search_speed_label()}")
         print(f"SEARCH GATE: {'enabled' if gate_enabled else 'blocked'} ({gate_reason})")
         print(
-            f"GUIDED HOLD: {float(self.safety.get('guided_auto_bounce_grace_s', 0.0)):.1f}s | "
+            f"GUIDED HOLD: {optional_seconds_label(self.safety.get('guided_auto_bounce_grace_s'))} | "
             f"MAX AUTO BOUNCES/TARGET: {self.safety.get('max_guided_auto_bounces_per_target')} | "
             f"ACTIVE TARGET ABORT: {self.active_target_abort_mode()} | "
             f"TARGET LOST TIMEOUT: {float(self.config['control']['target_lost_timeout_s']):.1f}s"
@@ -7371,6 +7377,7 @@ from mission_controller import (
     Controller,
     State,
     enforce_parameters,
+    optional_seconds_label,
     payload_colour_for_target,
     required_ardupilot_parameters,
     validate_config,
@@ -7520,6 +7527,10 @@ class VisionTests(unittest.TestCase):
 
 
 class AltitudeTests(unittest.TestCase):
+    def test_optional_seconds_label_accepts_null_for_unlimited(self):
+        self.assertEqual(optional_seconds_label(None), "inf")
+        self.assertEqual(optional_seconds_label(0.25), "0.2s")
+
     def test_holds_five_metres(self):
         self.assertEqual(altitude_velocity_down(5.0, 5.0, 0.2, 0.45, 0.3), 0.0)
 
