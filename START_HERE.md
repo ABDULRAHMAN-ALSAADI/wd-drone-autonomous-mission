@@ -1,13 +1,14 @@
 # Start Here
 
-This repo has two folders you should care about first:
+This repo has three folders you should care about first:
 
 | Folder | Use it for |
 | --- | --- |
 | `real_mission/` | The real Raspberry Pi 5 + Cube Orange mission. Run this on the aircraft. |
 | `test_components/` | Camera, MAVLink, servo, motor, Pi, and software checks before flight. |
+| `simulation/` | Gazebo + ArduPilot SITL startup scripts for mission testing. |
 
-Everything else is support code, tests, or documentation behind those two
+Everything else is support code, tests, or documentation behind those three
 folders.
 
 ## Real Mission
@@ -48,6 +49,7 @@ Useful examples:
 
 ```bash
 ./test_components/software/run_all_checks.sh
+./test_components/preflight/full_check.sh
 ./test_components/camera/check_on_pi.sh --seconds 10
 ./test_components/mavlink/status.sh
 ./test_components/mavlink/health.sh
@@ -81,6 +83,23 @@ MAVLink telemetry, not video.
 The mission does not depend on this window. It is only for you to watch what the
 camera sees.
 
+## Simulation
+
+Start here:
+
+```text
+simulation/README.md
+```
+
+Typical startup order:
+
+```bash
+./simulation/start_gazebo.sh
+./simulation/start_sitl.sh
+./simulation/enable_gazebo_camera.sh
+./simulation/run_target_mission.sh
+```
+
 ## What The Other Folders Are
 
 | Folder | Why it exists |
@@ -98,7 +117,9 @@ Do not edit `.venv/`, `.git/`, `__pycache__/`, or logs.
 ## Best Reading Order
 
 1. `real_mission/README.md`
-2. `real_mission/parameter_config/README.md`
-3. `test_components/COMMANDS.md`
-4. `docs/SAFETY_AND_FAILSAFES.md`
-5. `docs/PIXHAWK_PI_TEST_DAY.md`
+2. `docs/REAL_MISSION_FLOW.md`
+3. `real_mission/parameter_config/README.md`
+4. `test_components/COMMANDS.md`
+5. `simulation/README.md`
+6. `docs/SAFETY_AND_FAILSAFES.md`
+7. `docs/PIXHAWK_PI_TEST_DAY.md`

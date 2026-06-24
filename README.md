@@ -14,6 +14,7 @@ START_HERE.md
 | --- | --- |
 | `real_mission/` | Real Pi 5 + Cube Orange mission and real-drone parameter config. |
 | `test_components/` | Bench commands for camera, MAVLink, servo, motor, and software checks. |
+| `simulation/` | Gazebo + ArduPilot SITL scripts for testing the mission on Ubuntu. |
 | `target_mission_v2/` | Internal tested mission engine used by `real_mission/`. |
 | `scripts/` and `tools/` | Internal helpers used by the test wrappers. |
 | `docs/` | Safety notes, wiring notes, and longer explanations. |
@@ -45,6 +46,12 @@ Run all local software checks:
 
 ```bash
 ./test_components/software/run_all_checks.sh
+```
+
+Run the full read-only preflight check on the Pi:
+
+```bash
+./test_components/preflight/full_check.sh
 ```
 
 Run the live laptop camera window:
@@ -87,6 +94,23 @@ search waypoint. Then it:
 By default, QGC/Mission Planner and ArduPilot own AUTO altitude and AUTO speed.
 The Pi only controls low-speed horizontal centering in GUIDED after a confirmed
 target.
+
+Read the operator flow for Mission 1 and Mission 2:
+
+```text
+docs/REAL_MISSION_FLOW.md
+```
+
+## Simulation
+
+Read:
+
+```text
+simulation/README.md
+```
+
+The normal startup order is Gazebo, SITL, camera stream, then mission
+controller.
 
 ## Camera Monitoring
 

@@ -14,6 +14,18 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission
 This tests Python syntax, configs, vision rejection rules, centering state logic,
 and the read-only observer tests.
 
+For the full read-only Pi preflight check:
+
+```bash
+./test_components/preflight/full_check.sh
+```
+
+Use skips when hardware is not connected:
+
+```bash
+SKIP_CAMERA=1 SKIP_MAVLINK=1 ./test_components/preflight/full_check.sh
+```
+
 ## 2. Sync Laptop Code To Pi
 
 Run on the Ubuntu laptop:

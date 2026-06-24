@@ -2,7 +2,7 @@
 
 This file explains the repository in plain language.
 
-## The Two Folders To Use First
+## The Three Folders To Use First
 
 ### `real_mission/`
 
@@ -22,8 +22,24 @@ This is the bench-test folder.
 - `camera/`: Pi camera and laptop live-view tests.
 - `mavlink/`: Cube/Pi heartbeat, health, mode, arm, servo, and motor tests.
 - `software/`: local code and config checks.
+- `preflight/`: read-only Pi preflight check that combines software, camera,
+  MAVLink status, and first-flight-safe config checks.
 
 Use this folder before trusting the real mission.
+
+### `simulation/`
+
+This is the Ubuntu SITL/Gazebo entry point.
+
+- `start_gazebo.sh`: launches the `iris_runway.sdf` Gazebo world.
+- `start_sitl.sh`: launches ArduPilot SITL with MAVLink on `14550` and `14551`.
+- `enable_gazebo_camera.sh`: enables the simulated camera stream.
+- `run_target_mission.sh`: runs the target mission controller with the Gazebo
+  config.
+- `example_square_mission.waypoints`: legacy example MAVProxy mission file.
+- `legacy_shortcuts.md`: records the old personal laptop shortcuts.
+
+Use this folder when a teammate wants to reproduce the simulation.
 
 ## Mission Engine
 
