@@ -203,6 +203,47 @@ class StrictShapeDetector:
             bbox_x=x, bbox_y=y, bbox_w=w, bbox_h=h,
         )
 
+    @staticmethod
+    def _make_colour_lock(contour: np.ndarray, target: str, area: float) -> Optional[Detection]:
+        """Build a detection from a confirmed target's colour blob.
+
+        Search mode must stay strict. During active centering, though, the
+        triangle can blur, clip, or shimmer enough that strict polygon votes
+        disappear for a few frames. This fallback keeps the already-confirmed
+        red triangle locked without allowing red rectangles/squares.
+        """
+        perimeter = float(cv2.arcLength(contour, True))
+        if perimeter <= 0:
+            return None
+        solidity, extent, circularity = StrictShapeDetector._metrics(contour, area, perimeter)
+        if target == "red_triangle":
+            if extent > 0.82 or solidity < 0.70 or not 0.22 <= circularity <= 0.80:
+                return None
+        else:
+            return None
+        m = cv2.moments(contour)
+        if abs(m["m00"]) < 1e-9:
+            return None
+        x, y, w, h = cv2.boundingRect(contour)
+        return Detection(
+            target=target,
+            center_x=int(m["m10"] / m["m00"]),
+            center_y=int(m["m01"] / m["m00"]),
+            area_px=round(area, 1),
+            confidence=0.60,
+            vertices=0,
+            triangle_votes=0,
+            four_corner_votes=0,
+            hexagon_votes=0,
+            extent=round(extent, 3),
+            circularity=round(circularity, 3),
+            solidity=round(solidity, 3),
+            bbox_x=x,
+            bbox_y=y,
+            bbox_w=w,
+            bbox_h=h,
+        )
+
     def _triangle(self, contour: np.ndarray, area: float, perimeter: float) -> Optional[Detection]:
         approximations = self._approximations(contour, perimeter)
         counts = [len(x) for x in approximations]
@@ -325,6 +366,7 @@ class StrictShapeDetector:
         colour = "red" if target == "red_triangle" else "blue"
         contours, _ = cv2.findContours(masks[colour], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         options: list[tuple[float, Detection]] = []
+        fallback_options: list[tuple[float, Detection]] = []
         for contour in contours:
             area = float(cv2.contourArea(contour))
             if area < self.tracking_min_area_px:
@@ -334,9 +376,15 @@ class StrictShapeDetector:
                 continue
             item = self._triangle(contour, area, perimeter) if target == "red_triangle" else self._hexagon(contour, area, perimeter)
             if item is None:
+                fallback = self._make_colour_lock(contour, target, area)
+                if fallback is not None:
+                    distance = math.hypot(fallback.center_x - previous_center[0], fallback.center_y - previous_center[1])
+                    fallback_options.append((distance, fallback))
                 continue
             distance = math.hypot(item.center_x - previous_center[0], item.center_y - previous_center[1])
             options.append((distance, item))
+        if not options and fallback_options:
+            options = fallback_options
         if not options:
             return None, masks
         distance, item = min(options, key=lambda x: x[0])

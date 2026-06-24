@@ -43,7 +43,11 @@
     "command_rate_hz": 10.0,
     "center_kp": 0.55,
     "center_max_speed_m_s": 0.35,
-    "center_tolerance_px": 12.0,
+    "center_tolerance_px": 16.0,
+    "center_tolerance_px_by_target": {
+      "red_triangle": 26.0,
+      "blue_hexagon": 16.0
+    },
     "center_hold_s": 1.4,
     "target_lost_timeout_s": 4.0,
     "reacquire_after_lost_s": 0.25,
@@ -63,9 +67,9 @@
     "total_action_time_s": 1.5
   },
   "safety": {
-    "max_center_time_s": 30.0,
+    "max_center_time_s": null,
     "max_guided_speed_m_s": 0.35,
-    "guided_auto_bounce_grace_s": 8.0,
+    "guided_auto_bounce_grace_s": null,
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,

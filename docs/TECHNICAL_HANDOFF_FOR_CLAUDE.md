@@ -1,31 +1,30 @@
 # Technical Handoff For External Review: Teknofest 2026 Rotary-Wing UAV
 
-Generated: 2026-06-24T23:38:59 local time
+Generated: 2026-06-25T00:21:48 local time
 
 Repository: `git@github.com:ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission.git`
 Branch: `main`
-Commit: `1f11df1`
+Commit at generation time: `5f2483c` plus current uncommitted worktree changes
 Workspace: `/home/kambe/FOR_COMP/wd-drone-autonomous-mission`
 
-Audience: another AI/code reviewer. This document is intentionally exhaustive and includes full tracked source/config/docs content in the appendix.
+Audience: another AI/code reviewer. This document is intentionally exhaustive and includes full tracked source/config/docs content in the appendix, except this generated handoff file itself to avoid recursive self-embedding.
 
 ## Executive Summary
 
 This repository implements and documents a companion-computer mission stack for a Teknofest 2026 rotary-wing UAV project. The active mission is Mission 2: ArduPilot flies the normal AUTO waypoint mission, while a Raspberry Pi 5 companion watches the camera, detects a blue hexagon and red triangle, requests GUIDED for target centering, simulates or commands the payload servo, resumes AUTO after the first target, and requests RTL after both targets are complete.
 
-A separate Mission 1 profile exists with search disabled so the figure-8 task remains ArduPilot AUTO-only and cannot accidentally trigger target/payload logic.
-
-Current important behavior:
+Current important behavior after the latest triangle-centering fix:
 
 - AUTO altitude and waypoint speed are owned by Mission Planner/QGC/ArduPilot by default.
 - The Pi does not upload or choose waypoint missions in flight.
 - Mission 2 search starts only when armed, in AUTO, at/after `mission.search_start_wp`, with `mission.search_enabled=true`, and optionally when an RC channel gate is high.
 - During active target centering/payload, temporary `GUIDED -> AUTO` mode bounces keep the target lock and force GUIDED again. They do **not** cause RTL.
+- Active target lost/center timeout no longer returns AUTO immediately; it holds GUIDED and keeps searching/forcing GUIDED so triangle centering can finish.
+- Red triangle tracking has a post-confirmation color-centroid fallback for broken/blurred triangle frames while still rejecting round red blobs.
+- `center_tolerance_px_by_target` allows a larger red-triangle tolerance than blue-hexagon tolerance.
 - Payload output is simulated by default. Real servo output requires setting `payload.simulate_only=false`.
 
 ## User-Provided Hardware Context
-
-The intended full stack from the user:
 
 - Flight controller: Cube Orange running ArduPilot.
 - Companion link: TELEM2 UART at 57600 baud to Raspberry Pi 5 GPIO 14/15.
@@ -85,6 +84,7 @@ docs/SAFETY_AND_FAILSAFES.md
 docs/SITL_TEST_PLAN.md
 docs/TARGET_MISSION_OPERATIONS.md
 docs/TEAM_PI_WORKFLOW.md
+docs/TECHNICAL_HANDOFF_FOR_CLAUDE.md
 docs/VISION_MODEL_PLAN.md
 real_mission/README.md
 real_mission/open_laptop_camera_window.sh
@@ -164,301 +164,46 @@ tools/pi_camera_check.py
 tools/pi_camera_live_view.py
 ```
 
-## Runtime Artifacts Present But Not Tracked
-
-The workspace currently contains runtime mission logs under:
-
-```text
-target_mission_v2/logs/mission_v2/
-```
-
-These are generated JSONL mission logs and are intentionally not part of the tracked source appendix.
-
-## Folder-Level Structure
-
-- `.github/workflows/`: CI workflow.
-- `config/`: legacy monitoring config.
-- `docs/`: architecture, operation, safety, test-day, workflow, and roadmap documentation.
-- `real_mission/`: operator-facing wrappers and real-drone parameter configs.
-- `scripts/`: setup, sync, validation, MAVLink wrappers, Pi helpers.
-- `simulation/`: Gazebo/SITL launch helpers and simulation docs.
-- `src/wd_drone/`: legacy/read-only monitoring package and typed telemetry observer utilities.
-- `target_mission_v2/`: active mission controller, camera abstraction, vision detector, control math, configs, tests.
-- `test_components/`: bench-safe component tests for camera, MAVLink, RC, motor, servo, and preflight.
-- `tests/`: repo-level unit tests for legacy config/state and MAVLink bench formatting.
-- `tools/`: standalone Python tools for MAVLink bench testing and Pi camera testing/live view.
-
 ## Architecture Decisions
 
 ### Mission Separation
 
-Mission 1 and Mission 2 are separated by profile, not by companion-controlled mission upload:
-
-- Mission 1: ArduPilot AUTO-only figure-8. The Pi target controller should normally not run. If it runs, use `mission1_no_search.json`, where `search_enabled=false`.
-- Mission 2: ArduPilot AUTO waypoint route plus Pi vision/centering/payload controller using `mission2_target_payload.json`.
-
-Reason: ArduPilot normally has one uploaded AUTO mission at a time. Having the Pi choose/upload missions in the air adds risk before first real flight. The safer design is upload the correct mission on the ground, run the matching Pi profile, then start AUTO from RC/Mission Planner.
+Mission 1 and Mission 2 are separated by profile, not by companion-controlled mission upload. Mission 1 remains ArduPilot AUTO-only with `search_enabled=false`; Mission 2 uses the Pi vision/centering/payload controller. This avoids an early risky design where the Pi chooses/uploads missions in the air.
 
 ### Control Ownership
 
-ArduPilot/QGC owns:
+ArduPilot/QGC owns takeoff/landing mission items, waypoint navigation, AUTO altitude, AUTO speed by default, RTL behavior, arming, failsafes, geofence, RC failsafe, and battery failsafe. The Pi owns camera acquisition, target detection/confirmation, GUIDED request, low-speed body-frame centering velocity, simulated/physical payload command, AUTO resume after first target, and RTL after both targets.
 
-- takeoff/landing mission items;
-- waypoint navigation;
-- AUTO altitude;
-- AUTO speed by default;
-- RTL behavior;
-- arming/failsafes/geofence/RC failsafe/battery failsafe.
+### State Machine
 
-The Pi owns only:
-
-- camera acquisition;
-- target detection/confirmation;
-- requesting GUIDED after a confirmed target;
-- body-frame low-speed centering velocity while in GUIDED;
-- simulated or physical payload command;
-- requesting AUTO after first target or RTL after both targets.
-
-Reason: avoid companion computer fighting ArduPilot over altitude/speed/mission items.
-
-### Simple State Machine
-
-The active controller is a single explicit state machine:
-
-`WAITING_FOR_AUTO -> SEARCH -> WAITING_FOR_GUIDED -> CENTER -> PAYLOAD -> WAITING_FOR_AUTO_RESUME / WAITING_FOR_RTL -> COMPLETE`
-
-Reason: understandable, testable, and visible in overlay/logs.
-
-### Vision Strategy
-
-Current active detector is OpenCV strict color/shape logic, not YOLO/Hailo. It was made conservative to reject rectangles/runway bars and confirm targets with multiple hits.
-
-Reason: the trained YOLOv8/Hailo model was not available yet. The strict detector is simple, testable, and can remain a fallback after AI integration.
-
-### What Was Explicitly NOT Implemented
-
-- Companion-controlled mission upload/mission selection in flight.
-- Takeoff command from companion for the real mission.
-- Full autonomous RC button-to-mission orchestration.
-- Hailo AI HAT pipeline/IPC.
-- GPS-denied navigation or precision landing.
-- Multi-threaded active mission controller.
-- Real battery/failsafe enforcement from companion.
-- Real payload enable by default.
-
-These are intentionally deferred for safety/simplicity.
+The active controller is a single explicit state machine: `WAITING_FOR_AUTO -> SEARCH -> WAITING_FOR_GUIDED -> CENTER -> PAYLOAD -> WAITING_FOR_AUTO_RESUME / WAITING_FOR_RTL -> COMPLETE`. This is intentionally simple and testable.
 
 ## MAVLink / pymavlink Implementation
 
-### Active Mission Controller (`target_mission_v2/mission_controller.py`)
-
-Connection:
-
-- Uses `pymavlink.mavutil.mavlink_connection(connection, source_system=245, source_component=191, baud=...)`.
-- Waits up to 30s for a heartbeat.
-- Stores `target_system` and `target_component` from the heartbeat.
-- Initial mode and armed state parsed from heartbeat.
-
-Telemetry subscription:
-
-- Sends `MAV_CMD_SET_MESSAGE_INTERVAL` for:
-  - `GLOBAL_POSITION_INT` at 10 Hz;
-  - `MISSION_CURRENT` at 4 Hz;
-  - `RC_CHANNELS` at 4 Hz.
-
-Telemetry parsing:
-
-- `HEARTBEAT`: mode via `mavutil.mode_string_v10`, armed from `MAV_MODE_FLAG_SAFETY_ARMED`, heartbeat timestamp.
-- `GLOBAL_POSITION_INT`: relative altitude, N/E/D velocity, horizontal speed, total speed, estimated acceleration.
-- `MISSION_CURRENT`: current mission item sequence.
-- `RC_CHANNELS`: channel PWM map 1..18.
-- `STATUSTEXT`: prints warning/error severity messages.
-- `COMMAND_ACK`: prints command acknowledgments.
-
-Mode switching:
-
-- Uses `master.mode_mapping()` and `set_mode_send(target_system, MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, mapping[name])`.
-- Repeats mode requests according to `safety.mode_retry_interval_s`.
-- Active target behavior currently forces GUIDED through AUTO bounces; it does not RTL on bounce.
-
-Arming:
-
-- Active mission controller does **not** arm the aircraft.
-- Bench tool `tools/mavlink_bench.py` can arm/disarm only with explicit safety flags.
-
-Takeoff:
-
-- No companion takeoff command implemented.
-- Takeoff/altitude comes from ArduPilot AUTO mission created in Mission Planner/QGC.
-
-Waypoint navigation:
-
-- No companion waypoint upload or waypoint navigation commands implemented in active controller.
-- Controller only monitors `MISSION_CURRENT` and waits for `mission.search_start_wp`.
-
-Velocity centering:
-
-- Sends `SET_POSITION_TARGET_LOCAL_NED` in `MAV_FRAME_BODY_OFFSET_NED` with velocity-only type mask `3527`.
-- Forward/right are derived from image-center error and clamped by config/safety.
-- Down velocity is zero by default because `altitude_control=off` in real configs.
-
-Servo payload:
-
-- Uses `MAV_CMD_DO_SET_SERVO` with configured output channel/PWM.
-- Default real config: `simulate_only=true`, `servo_channel=5`.
-
-Speed control:
-
-- Default real behavior: no companion speed command (`navigation.search_speed_source=qgc_mission`).
-- Optional mode can send `MAV_CMD_DO_CHANGE_SPEED`, but this is disabled by default.
-
-Command acknowledgments:
-
-- Active controller prints `COMMAND_ACK` when received but does not block on ACK before continuing.
-- Bench tool blocks/waits for ACK in arm/servo/motor/speed commands where useful.
-
-### Bench MAVLink Tool (`tools/mavlink_bench.py`)
-
-Implements:
-
-- read-only `status`, `health`, `modes`, `rc-channels`;
-- guarded `set-mode`, `arm`, `disarm`, `bench-sequence`, `servo`, `speed`, `motor-test`.
-
-Heartbeat filtering:
-
-- Treats `src=1:1` autopilot component as vehicle heartbeat.
-- Ignores GCS/onboard-controller/non-autopilot heartbeats by default.
-- `--all-heartbeats` prints other participants for debugging.
-
-Safety flags:
-
-- Arm requires `--i-understand-props-off --i-accept-arming`.
-- Motor test requires `--i-understand-props-off --i-accept-motor-spin`.
-- Servo requires `--i-understand-props-off`.
+Active mission uses `pymavlink.mavutil.mavlink_connection`, waits for heartbeat, parses heartbeat/mode/armed, requests message intervals for `GLOBAL_POSITION_INT`, `MISSION_CURRENT`, and `RC_CHANNELS`, sends `set_mode_send`, sends `SET_POSITION_TARGET_LOCAL_NED` body velocity in GUIDED, sends `MAV_CMD_DO_SET_SERVO` for payload when enabled, and optionally sends `MAV_CMD_DO_CHANGE_SPEED` when companion speed mode is selected. The active mission does not arm or take off; bench tools can arm/motor-test only with explicit safety flags.
 
 ## Threading and Concurrency Model
 
-### Active mission controller
-
-The active target mission controller is **single-threaded**:
-
-1. Poll MAVLink messages non-blocking (`Vehicle.poll()`).
-2. Read one camera frame.
-3. Run detector/search/tracking.
-4. Advance mission state machine.
-5. Send any needed MAVLink command/velocity.
-6. Draw overlay/log frame data.
-7. Repeat.
-
-There is no separate receive thread and no command queue in the active mission controller. This is intentionally simple and avoids race conditions while the system is still being field-tested.
-
-### Legacy monitor package
-
-`src/wd_drone/mavlink_client.py` has a threaded receive loop for monitoring/observer usage. That is not the active payload mission controller.
+The active mission controller is single-threaded: poll MAVLink, read camera frame, run vision, advance state machine, send command/velocity, draw/log, repeat. The legacy monitor package has a threaded receive client, but it is not the active payload mission controller.
 
 ## Vision Integration
 
-Current status: Hailo AI HAT+ is **not integrated yet**.
-
-Current active vision path:
-
-- Camera frame enters through `camera_sources.py`.
-- `vision.py` uses OpenCV/NumPy HSV masks and contour geometry.
-- `mission_controller.py` calls `create_detector(vcfg)` and uses `StrictShapeDetector`.
-- The detector returns `Detection` dataclasses with target name, center, area, confidence, vertices, extent, circularity, solidity, and bounding box.
-- `HitTracker` requires repeated stable hits before confirming a target.
-
-No IPC exists yet for Hailo. No data format or refresh rate exists yet for AI HAT output. Proposed future integration:
-
-- Add a detector backend such as `hailo_yolo` behind the existing `create_detector()` factory.
-- Keep the same detector interface: `search(frame) -> (list[Detection], masks)` and `track_colour(...)` or equivalent target tracking method.
-- Prefer in-process Python inference if Hailo SDK supports it cleanly; otherwise a local Unix socket/shared-memory process can emit JSON detections:
-
-```json
-{
-  "timestamp": 123456.789,
-  "detections": [
-    {"target": "blue_hexagon", "cx": 512, "cy": 380, "w": 120, "h": 110, "confidence": 0.91},
-    {"target": "red_triangle", "cx": 240, "cy": 420, "w": 80, "h": 90, "confidence": 0.88}
-  ]
-}
-```
-
-Expected refresh rate should be at least camera FPS or a stable subset such as 10-15 Hz. Mission control can tolerate lower, but centering quality depends on fresh detections.
+Current active vision is OpenCV/NumPy strict color/shape detection. Hailo AI HAT+ is not integrated yet. Future Hailo/YOLO should be added as a detector backend behind the existing `create_detector()`/`search(frame)` interface. No IPC format, refresh rate, or Hailo process exists yet.
 
 ## Safety and Error Handling
 
-Covered in code/config:
+Covered: heartbeat timeout, mission/search gates, Mission 1 no-search profile, multi-hit target confirmation, active target GUIDED lock through AUTO bounces, lost triangle/center-timeout stays GUIDED and searches, payload waits for GUIDED, payload simulated by default, altitude/speed owned by ArduPilot by default, guarded bench commands, preflight config checks.
 
-- Heartbeat timeout returns fatal exit code in active controller.
-- Search does not start unless armed, AUTO, mission item at/after configured waypoint, search profile enabled, and optional RC gate high.
-- Mission 1 profile disables search entirely.
-- Target confirmation requires multiple stable hits.
-- Target lost timeout returns to configured active-target abort mode, default AUTO.
-- Center timeout returns to configured active-target abort mode, default AUTO.
-- During active target, AUTO bounces force GUIDED again and keep target lock.
-- Payload requires GUIDED by default; if mode bounces during payload, it waits and forces GUIDED.
-- Payload is simulated by default.
-- Real configs keep altitude control off and AUTO speed owned by QGC/ArduPilot.
-- Bench motor/arm/servo commands require explicit props-off safety flags.
-- Preflight checks verify first-flight-safe config values.
-
-Not covered in code:
-
-- GPS loss handling beyond whatever ArduPilot does.
-- RC override/failsafe handling beyond ArduPilot and optional RC search gate.
-- Low battery handling beyond ArduPilot/Mission Planner failsafes.
-- Geofence setup/enforcement from companion.
-- EKF/compass health gating before mission starts.
-- Real motor output safety; motor tests only send ArduPilot motor-test commands.
-- Autonomous kill switch handling in companion code.
-
-Watchdog:
-
-- Active mission has heartbeat watchdog only.
-- There is no independent process supervisor/systemd watchdog implemented yet.
-
-## What Is Not Done Yet / Gaps
-
-1. Hailo AI HAT+ integration is not implemented.
-2. AR0234 camera config is not implemented; current Pi camera config targets `rpicam_mjpeg` Camera Module style pipeline.
-3. Hardware baud mismatch needs review: repo real configs use 921600; user latest context says TELEM2 57600.
-4. Mission Planner/QGC waypoint files for official Mission 1/2 are not tracked except one tiny example mission.
-5. No companion-controlled mission selection/upload.
-6. No real payload enable; default remains simulated.
-7. No outdoor dataset/evaluation harness retained after user disliked vision_lab approach.
-8. No systemd autostart service on Pi.
-9. No real-time video over RFD900/SiK telemetry; camera viewing assumes Wi-Fi/hotspot/SSH stream.
-10. No formal RC channel mapping saved yet; tool exists but actual AT9S switch channel must be measured.
-11. No full pre-arm/health gate based on GPS/EKF/battery/RC; currently relies on pilot/ArduPilot checks.
-12. No MAVLink mission upload/mission item parser in active controller.
-13. No formal camera calibration matrix or ground-to-pixel conversion.
-14. No field-proven centering gains for wind/vibration.
+Not covered: companion GPS-loss logic, RC override/failsafe beyond ArduPilot, low-battery action beyond ArduPilot, geofence setup from companion, EKF/compass health gate before search, systemd watchdog, Hailo model pipeline, formal camera calibration, real flight validation.
 
 ## Known Issues / Uncertainties
 
-- The latest hardware says TELEM2 57600, while previous successful Pi tests used `/dev/serial0` baud 921600. This must be resolved before real testing.
-- The AR0234 global shutter camera may require a different libcamera/rpicam command than the current Camera Module 3 settings.
-- OpenCV strict detector may fail under sunlight, shadows, motion blur, real target material, altitude changes, or non-Gazebo colors.
-- The center of visual contour may not be the true physical center if the camera is tilted, lens distorted, or the target is perspective-warped.
-- `MAV_CMD_DO_SET_SERVO` channel number depends on ArduPilot servo output mapping; config assumes signal/output 5.
-- Motor mapping discovered earlier did not match expected layout; physical wiring/ArduPilot frame type must be verified props-off.
-- QGC/Mission Planner/RC mode switch can still take mode authority; current code fights AUTO bounces but cannot prevent all external mode changes.
-- No real flight has validated the complete closed-loop mission yet.
-
-## Recommended Next Steps
-
-1. Resolve TELEM2 baud: either configure SERIAL2 to 921600 or change repo configs/scripts to 57600.
-2. Pull latest repo on Pi and run read-only status/health.
-3. Run RC channel monitor and record the AT9S switch channel for Mission 2 search-enable.
-4. Test simulation after commit `1f11df1` and verify target lock survives AUTO bounces.
-5. Bench-test payload servo channel 5 with mechanism disconnected/props off.
-6. Validate motor mapping/direction props off.
-7. Update real camera config for AR0234 if needed.
-8. Capture real camera videos at 5m/7m/10m and test strict detector outdoors.
-9. Add Hailo/YOLO backend behind existing detector interface.
-10. Add pre-arm health gate if reviewer agrees.
-11. Only after bench + tethered/props-off tests: enable payload physical servo.
+- TELEM2 baud mismatch: repo 921600 vs latest hardware context 57600.
+- AR0234 camera may require different rpicam/libcamera settings than current Pi Camera Module style profile.
+- Strict OpenCV detector can still fail under real sunlight/shadows/motion blur.
+- Physical payload servo channel depends on ArduPilot output mapping.
+- Motor mapping must be verified props-off.
+- External mode authority from RC/GCS can still fight GUIDED; code now keeps forcing GUIDED during active target.
 
 ## File-by-File Index
 
@@ -500,529 +245,535 @@ Watchdog:
 
 ### `docs/ARCHITECTURE.md`
 
-- Purpose: System architecture description.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 43
 
 ### `docs/CAMERA_CALIBRATION.md`
 
-- Purpose: Camera calibration and field-test guidance.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 62
 
 ### `docs/COMPETITION_REQUIREMENTS.md`
 
-- Purpose: Competition requirement notes extracted/translated into engineering tasks.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 94
 
 ### `docs/MONITORING.md`
 
-- Purpose: Monitoring and telemetry notes.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 80
 
 ### `docs/PIXHAWK_PI_TEST_DAY.md`
 
-- Purpose: Step-by-step Pixhawk/Raspberry Pi test-day procedure.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 171
 
 ### `docs/PROJECT_STRUCTURE.md`
 
-- Purpose: Project folder organization guide.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 116
 
 ### `docs/RASPBERRY_PI_PIXHAWK_MAVLINK.md`
 
-- Purpose: MAVLink wiring and command notes for Pi to Cube.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 191
 
 ### `docs/REAL_DRONE_CHECKLIST.md`
 
-- Purpose: Real aircraft preflight and integration checklist.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 41
 
 ### `docs/REAL_MISSION_FLOW.md`
 
-- Purpose: Mission 1 vs Mission 2 operating flow and RC/profile separation.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 216
 
 ### `docs/ROADMAP.md`
 
-- Purpose: Implementation roadmap/status.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 72
 
 ### `docs/SAFETY_AND_FAILSAFES.md`
 
-- Purpose: Safety and failsafe checklist/documentation.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 126
 
 ### `docs/SITL_TEST_PLAN.md`
 
-- Purpose: Gazebo/SITL validation plan.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 48
 
 ### `docs/TARGET_MISSION_OPERATIONS.md`
 
-- Purpose: Operator guide for the target/payload mission controller.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 163
 
 ### `docs/TEAM_PI_WORKFLOW.md`
 
-- Purpose: Team workflow for sharing/updating Raspberry Pi code.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 139
 
+### `docs/TECHNICAL_HANDOFF_FOR_CLAUDE.md`
+
+- Purpose: Generated external-review handoff. Not embedded in its own appendix to avoid recursion.
+- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Lines: 10536
+
 ### `docs/VISION_MODEL_PLAN.md`
 
-- Purpose: Plan for future YOLO/Hailo vision model integration.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 78
 
 ### `real_mission/README.md`
 
-- Purpose: Operator-facing real mission wrapper documentation.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 205
 
 ### `real_mission/open_laptop_camera_window.sh`
 
-- Purpose: Starts the laptop-side live camera viewer/overlay.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 8
 
 ### `real_mission/parameter_config/README.md`
 
-- Purpose: Explains tunable real mission JSON parameters.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 99
 
 ### `real_mission/parameter_config/mission1_no_search.json`
 
-- Purpose: Mission 1 profile with search disabled.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: JSON configuration, no runtime library imports
-- Lines: 109
+- Lines: 114
 
 ### `real_mission/parameter_config/mission2_target_payload.json`
 
 - Purpose: Mission 2 profile for real Pi camera, search, centering, payload.
 - Libraries/tools: JSON configuration, no runtime library imports
-- Lines: 109
+- Lines: 114
 
 ### `real_mission/parameter_config/real_drone.json`
 
-- Purpose: Compatibility real-drone profile mirroring Mission 2 behavior.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: JSON configuration, no runtime library imports
-- Lines: 109
+- Lines: 114
 
 ### `real_mission/run_mission1_no_search.sh`
 
-- Purpose: Runs mission controller with search disabled for bench/no-search practice.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 6
 
 ### `real_mission/run_mission2_target_payload.sh`
 
-- Purpose: Runs mission controller with Mission 2 target/payload profile.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 6
 
 ### `real_mission/run_real_mission.sh`
 
-- Purpose: Generic real mission wrapper that accepts an optional config path.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 28
 
 ### `requirements.txt`
 
-- Purpose: Python dependency list.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 2
 
 ### `scripts/README.md`
 
-- Purpose: Script folder overview.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 79
 
 ### `scripts/check_project.sh`
 
-- Purpose: Runs all software checks and py_compile.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 35
 
 ### `scripts/clean_workspace.sh`
 
-- Purpose: Workspace cleanup helper for caches/logs.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 28
 
 ### `scripts/mavlink_bench.sh`
 
-- Purpose: Activates venv and runs MAVLink bench tool.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 15
 
 ### `scripts/pi_cache_wheels.sh`
 
-- Purpose: Pre-caches Python wheels on the Pi for poor-internet lab days.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 22
 
 ### `scripts/pi_camera_check.sh`
 
-- Purpose: Pi camera non-window check wrapper.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 26
 
 ### `scripts/pi_camera_live.sh`
 
-- Purpose: Pi/laptop live camera viewer wrapper.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 59
 
 ### `scripts/pi_mavlink_bench_sequence.sh`
 
-- Purpose: Guarded MAVLink arm/mode bench sequence wrapper.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 9
 
 ### `scripts/pi_test_day_readiness.sh`
 
-- Purpose: Readiness helper for Pi test day.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 82
 
 ### `scripts/pi_uart_preflight.sh`
 
-- Purpose: UART/serial inspection helper.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 54
 
 ### `scripts/pi_validate.sh`
 
-- Purpose: Pi validation helper.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 20
 
 ### `scripts/run_sitl_monitor.sh`
 
-- Purpose: Runs legacy SITL monitor.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 13
 
 ### `scripts/run_sitl_observer.sh`
 
-- Purpose: Runs legacy SITL observer.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 13
 
 ### `scripts/run_uart_monitor.sh`
 
-- Purpose: Runs legacy UART monitor.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 13
 
 ### `scripts/setup.sh`
 
-- Purpose: Creates venv and installs requirements.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 13
 
 ### `scripts/sync_to_pi.sh`
 
-- Purpose: Copies repo to Pi via rsync without deleting Pi files.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 48
 
 ### `simulation/README.md`
 
-- Purpose: Simulation launch/test instructions.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 94
 
 ### `simulation/enable_gazebo_camera.sh`
 
-- Purpose: Enables Gazebo camera stream helper.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 11
 
 ### `simulation/example_square_mission.waypoints`
 
-- Purpose: Example mission file.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: QGroundControl/Mission Planner waypoint text format
 - Lines: 9
 
 ### `simulation/legacy_shortcuts.md`
 
-- Purpose: Notes for old desktop shortcuts/scripts.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 29
 
 ### `simulation/run_target_mission.sh`
 
-- Purpose: Runs mission controller in simulation.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 10
 
 ### `simulation/start_gazebo.sh`
 
-- Purpose: Starts Gazebo environment shortcut.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 29
 
 ### `simulation/start_sitl.sh`
 
-- Purpose: Starts ArduPilot SITL shortcut.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 27
 
 ### `src/README.md`
 
-- Purpose: Legacy/monitoring package overview.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 13
 
 ### `src/wd_drone/__init__.py`
 
-- Purpose: Python package marker/version metadata.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: standard Python only / no imports
 - Lines: 3
 
 ### `src/wd_drone/config.py`
 
-- Purpose: Typed config loader for legacy monitor tools.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: from __future__ import annotations; from dataclasses import dataclass; import json; import os; from pathlib import Path; from typing import Any
 - Lines: 114
 
 ### `src/wd_drone/event_logger.py`
 
-- Purpose: Simple JSONL event logger.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: from __future__ import annotations; from dataclasses import asdict, is_dataclass; from datetime import datetime, timezone; import json; from pathlib import Path; from typing import Any
 - Lines: 36
 
 ### `src/wd_drone/main.py`
 
-- Purpose: Legacy/monitor CLI entry point.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: from __future__ import annotations; import argparse; import logging; from pathlib import Path; import signal; import sys; import time; from .config import load_config; from .event_logger import EventLogger; from .mavlink_client import MavlinkClient; from .mission_state import MissionObserver
 - Lines: 187
 
 ### `src/wd_drone/mavlink_client.py`
 
-- Purpose: Legacy threaded MAVLink receive client.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: from __future__ import annotations; import logging; from typing import Iterable; from pymavlink import mavutil; from .config import ConnectionProfile; from .vehicle_status import VehicleStatus
 - Lines: 116
 
 ### `src/wd_drone/mission_state.py`
 
-- Purpose: Mission observer state machine for telemetry-only monitoring.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: from __future__ import annotations; from dataclasses import dataclass; from enum import Enum, auto; from typing import Protocol
 - Lines: 104
 
 ### `src/wd_drone/vehicle_status.py`
 
-- Purpose: Vehicle status dataclass/telemetry model.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: from __future__ import annotations; from dataclasses import dataclass; import time; from typing import Any; from pymavlink import mavutil
 - Lines: 113
 
 ### `target_mission_v2/README.md`
 
-- Purpose: Active target mission engine documentation.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 293
 
 ### `target_mission_v2/camera_sources.py`
 
-- Purpose: Camera abstraction: UDP H264, GStreamer, device, rpicam MJPEG.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: from __future__ import annotations; import os; import select; import shutil; import signal; import subprocess; import time; from typing import Any, Optional, Protocol; import cv2; import numpy as np
 - Lines: 197
 
 ### `target_mission_v2/configs/README.md`
 
-- Purpose: Config profile explanation.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 31
 
 ### `target_mission_v2/configs/real_pi_camera_module_3.json`
 
-- Purpose: Legacy real Pi Camera Module 3 profile.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: JSON configuration, no runtime library imports
-- Lines: 94
+- Lines: 98
 
 ### `target_mission_v2/configs/sim_gazebo.json`
 
-- Purpose: Gazebo/SITL mission controller profile.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: JSON configuration, no runtime library imports
-- Lines: 86
+- Lines: 90
 
 ### `target_mission_v2/control.py`
 
-- Purpose: Small tested control math helpers.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: from __future__ import annotations; from typing import Optional
 - Lines: 28
 
 ### `target_mission_v2/mission_config.json`
 
-- Purpose: Default/legacy mission config.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: JSON configuration, no runtime library imports
-- Lines: 86
+- Lines: 90
 
 ### `target_mission_v2/mission_controller.py`
 
 - Purpose: Main active Mission 2 controller: MAVLink, state machine, vision, payload.
 - Libraries/tools: from __future__ import annotations; import argparse; import json; import math; import signal; import time; from dataclasses import asdict; from enum import Enum; from pathlib import Path; from typing import Any, Optional; import cv2; from pymavlink import mavutil; from camera_sources import CameraLike, SUPPORTED_CAMERA_SOURCES, open_camera; from vision import Detection, HitTracker, SUPPORTED_VISION_BACKENDS, create_detector; from control import altitude_velocity_down, clamp
-- Lines: 979
+- Lines: 1005
 
 ### `target_mission_v2/operator_config.json`
 
-- Purpose: Operator default profile.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: JSON configuration, no runtime library imports
-- Lines: 86
+- Lines: 90
 
 ### `target_mission_v2/parameter_config.json`
 
-- Purpose: Simulation/operator tunable parameter profile with help text.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: JSON configuration, no runtime library imports
-- Lines: 101
+- Lines: 106
 
 ### `target_mission_v2/run.sh`
 
-- Purpose: Runs target mission controller in venv.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 26
 
 ### `target_mission_v2/setup.sh`
 
-- Purpose: Creates target_mission_v2-local venv.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 12
 
 ### `target_mission_v2/test_mission_controller.py`
 
-- Purpose: Unit tests for vision, config, controller state, safety behavior.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: import json; import tempfile; import time; import unittest; from pathlib import Path; import cv2; import numpy as np; from vision import Detection, HitTracker, StrictShapeDetector; from control import altitude_velocity_down; from camera_sources import build_rpicam_mjpeg_command; from mission_controller import (
-- Lines: 711
+- Lines: 756
 
 ### `target_mission_v2/vision.py`
 
 - Purpose: OpenCV strict shape/color detector and hit tracker.
 - Libraries/tools: from __future__ import annotations; import math; import time; from collections import deque; from dataclasses import dataclass; from typing import Any, Deque, Dict, Iterable, Optional; import cv2; import numpy as np
-- Lines: 357
+- Lines: 405
 
 ### `test_components/COMMANDS.md`
 
-- Purpose: Full command cookbook for bench/prefight testing.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 216
 
 ### `test_components/README.md`
 
-- Purpose: Test component folder overview.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 22
 
 ### `test_components/camera/check_on_pi.sh`
 
-- Purpose: Pi camera check wrapper.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 7
 
 ### `test_components/camera/live_from_laptop.sh`
 
-- Purpose: Laptop live camera window wrapper.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 7
 
 ### `test_components/mavlink/MOTOR_MAPPING.md`
 
-- Purpose: Motor mapping diagnosis/fix notes.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 69
 
 ### `test_components/mavlink/bench_sequence.sh`
 
-- Purpose: Guarded mode/arm bench sequence wrapper.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 7
 
 ### `test_components/mavlink/health.sh`
 
-- Purpose: Read-only MAVLink health wrapper.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 7
 
 ### `test_components/mavlink/motor_test.sh`
 
-- Purpose: Guarded ArduPilot motor test wrapper.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 12
 
 ### `test_components/mavlink/rc_channels.sh`
 
-- Purpose: Read-only RC channel/switch monitor wrapper.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 7
 
 ### `test_components/mavlink/servo_payload_test.sh`
 
-- Purpose: Guarded payload servo test wrapper.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 25
 
 ### `test_components/mavlink/status.sh`
 
-- Purpose: Read-only MAVLink heartbeat/status wrapper.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 7
 
 ### `test_components/preflight/full_check.sh`
 
-- Purpose: Read-only preflight combining software, system, camera, MAVLink, config checks.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 77
 
 ### `test_components/software/run_all_checks.sh`
 
-- Purpose: Runs repo software tests.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: bash; may invoke project Python tools and shell utilities
 - Lines: 7
 
 ### `tests/README.md`
 
-- Purpose: Tests folder overview.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 16
 
 ### `tests/test_config.py`
 
-- Purpose: Tests legacy config loader.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: import json; from pathlib import Path; import tempfile; import unittest; from wd_drone.config import load_config
 - Lines: 52
 
 ### `tests/test_mavlink_bench.py`
 
-- Purpose: Tests RC channel formatting helper.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: import unittest; from tools.mavlink_bench import format_rc_channels
 - Lines: 14
 
 ### `tests/test_mission_state.py`
 
-- Purpose: Tests legacy mission observer state machine.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: from dataclasses import dataclass; import unittest; from wd_drone.mission_state import MissionObserver, MissionState
 - Lines: 87
 
 ### `tools/README.md`
 
-- Purpose: Tools folder overview.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: Markdown/text documentation, no runtime library imports
 - Lines: 9
 
@@ -1034,20 +785,19 @@ Watchdog:
 
 ### `tools/pi_camera_check.py`
 
-- Purpose: Pi Camera Module 3 FPS/snapshot check.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: from __future__ import annotations; import argparse; import json; import shutil; import subprocess; import sys; import time; from collections import deque; from pathlib import Path; from typing import Optional; import cv2  # noqa: E402; from camera_sources import open_camera  # noqa: E402
 - Lines: 137
 
 ### `tools/pi_camera_live_view.py`
 
-- Purpose: Live camera viewer with detector overlay/mask toggle.
+- Purpose: Tracked project file; see full content below for exact behavior.
 - Libraries/tools: from __future__ import annotations; import argparse; import json; import math; import os; import select; import shlex; import signal; import subprocess; import sys; import time; from collections import deque; from pathlib import Path; from typing import Optional; import cv2  # noqa: E402; import numpy as np  # noqa: E402; from camera_sources import build_rpicam_mjpeg_command  # noqa: E402; from vision import Detection, create_detector  # noqa: E402
 - Lines: 271
 
-
 # Full Source / Config / Documentation Appendix
 
-Every tracked file is included below verbatim. Runtime logs and `.git`/`.venv`/`__pycache__` files are intentionally excluded.
+Every tracked file except this generated handoff file is included below verbatim. Runtime logs and `.git`/`.venv`/`__pycache__` files are intentionally excluded.
 
 ## `.github/workflows/tests.yml`
 
@@ -1092,12 +842,11 @@ jobs:
         run: |
           . .ci-venv/bin/activate
           python -m py_compile target_mission_v2/*.py src/wd_drone/*.py tools/*.py
-
 ````
 
 ## `.gitignore`
 
-````text
+````
 __pycache__/
 *.py[cod]
 *.so
@@ -1125,7 +874,6 @@ models/*.onnx
 models/*.pt
 secrets/
 .env
-
 ````
 
 ## `README.md`
@@ -1267,7 +1015,6 @@ Keep this default until bench tests pass:
 ```
 
 Do not run arm, servo, or motor tests with propellers installed.
-
 ````
 
 ## `START_HERE.md`
@@ -1398,7 +1145,6 @@ Do not edit `.venv/`, `.git/`, `__pycache__/`, or logs.
 5. `simulation/README.md`
 6. `docs/SAFETY_AND_FAILSAFES.md`
 7. `docs/PIXHAWK_PI_TEST_DAY.md`
-
 ````
 
 ## `config/README.md`
@@ -1416,7 +1162,6 @@ Active mission configs are in:
 target_mission_v2/
 target_mission_v2/configs/
 ```
-
 ````
 
 ## `config/settings.json`
@@ -1451,7 +1196,6 @@ target_mission_v2/configs/
     "mission_complete_waypoint": 999
   }
 }
-
 ````
 
 ## `docs/ARCHITECTURE.md`
@@ -1500,7 +1244,6 @@ flowchart TD
 - Mission event logging
 
 The Raspberry Pi must never send raw motor commands.
-
 ````
 
 ## `docs/CAMERA_CALIBRATION.md`
@@ -1568,7 +1311,6 @@ The target is considered centered when the pixel error is inside:
 Smaller values are more precise in Gazebo but can oscillate with GPS noise,
 wind, camera vibration, and real lens distortion. For real flights, start
 conservative and reduce the value only after stable low-speed tests.
-
 ````
 
 ## `docs/COMPETITION_REQUIREMENTS.md`
@@ -1668,7 +1410,6 @@ The wiring notes mention:
 - strain relief/hot glue where wires enter screw terminals.
 
 These are tracked in `docs/SAFETY_AND_FAILSAFES.md`.
-
 ````
 
 ## `docs/MONITORING.md`
@@ -1754,7 +1495,6 @@ Before motor tests:
 - GPS status understood, even if GPS is not connected yet;
 - battery/power readings are sane;
 - Mission Planner agrees with the Pi mode output.
-
 ````
 
 ## `docs/PIXHAWK_PI_TEST_DAY.md`
@@ -1931,7 +1671,6 @@ only tests mission supervision, vision, and guided centering logic.
 
 Enable physical payload only after mode, servo, camera, and simulated mission
 tests are clean.
-
 ````
 
 ## `docs/PROJECT_STRUCTURE.md`
@@ -2053,7 +1792,6 @@ These are not source code:
 - `logs/`: runtime logs.
 
 Do not edit those by hand.
-
 ````
 
 ## `docs/RASPBERRY_PI_PIXHAWK_MAVLINK.md`
@@ -2250,7 +1988,6 @@ Props off is mandatory. The script refuses more than 15 percent throttle.
 ```
 
 Do not run motor tests on a fully assembled aircraft with propellers mounted.
-
 ````
 
 ## `docs/REAL_DRONE_CHECKLIST.md`
@@ -2297,7 +2034,6 @@ Enable physical payload only after:
 - real-camera recordings pass offline;
 - low-speed flight centering is correct;
 - servo release and reset are verified on the bench.
-
 ````
 
 ## `docs/REAL_MISSION_FLOW.md`
@@ -2519,7 +2255,6 @@ Before trusting it for payload release:
 
 YOLO/AI HAT+ can be added later as an optional backend, but the simple detector
 should remain as a fallback until the trained model passes real-world tests.
-
 ````
 
 ## `docs/ROADMAP.md`
@@ -2597,7 +2332,6 @@ should remain as a fallback until the trained model passes real-world tests.
 - [ ] Centering-only test
 - [ ] Dummy payload drop test
 - [ ] Complete autonomous mission test
-
 ````
 
 ## `docs/SAFETY_AND_FAILSAFES.md`
@@ -2729,7 +2463,6 @@ vcgencmd get_throttled
 
 Stop heavy work near 80 C. Do not run long OpenCV/YOLO workloads without
 cooling.
-
 ````
 
 ## `docs/SITL_TEST_PLAN.md`
@@ -2770,10 +2503,10 @@ Run this matrix after detector or controller changes.
 
 6. Failure handling:
    - cover target during centering;
-   - controller requests the configured active-target abort mode after
-     target-lost timeout;
-   - if centering cannot finish, controller requests the configured
-     active-target abort mode after safety timeout.
+   - controller holds GUIDED, stops horizontal motion, and searches for the same
+     target instead of returning to AUTO;
+   - if centering is slow, controller keeps GUIDED locked and keeps trying until
+     payload is completed or the operator takes over.
 
 ## Automated Tests
 
@@ -2783,7 +2516,6 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 cd target_mission_v2
 python3 -m unittest -v test_mission_controller.py
 ```
-
 ````
 
 ## `docs/TARGET_MISSION_OPERATIONS.md`
@@ -2901,17 +2633,17 @@ from this controller.
 GUIDED bounce protection is controlled by:
 
 ```json
-"guided_auto_bounce_grace_s": 8.0,
+"guided_auto_bounce_grace_s": null,
 "max_guided_auto_bounces_per_target": null,
 "active_target_abort_mode": "AUTO",
 "mode_retry_interval_s": 0.2
 ```
 
 If ArduPilot briefly reports AUTO after GUIDED was requested, the controller
-keeps the target lock and immediately forces GUIDED again during this grace
-period. With `max_guided_auto_bounces_per_target` set to `null`, repeated AUTO
-bounces do not abort the target; the controller keeps requesting GUIDED until
-centering and payload are finished.
+keeps the target lock and immediately forces GUIDED again. With
+`guided_auto_bounce_grace_s` and `max_guided_auto_bounces_per_target` set to
+`null`, repeated AUTO bounces do not abort the target; the controller keeps
+requesting GUIDED until centering and payload are finished.
 
 The overlay shows `Guided bounces`. This counter increases only when the
 controller is already centering a target and ArduPilot reports AUTO. It does not
@@ -2952,7 +2684,6 @@ Mask windows are disabled by default:
 ```
 
 Turn masks on only when debugging HSV thresholds.
-
 ````
 
 ## `docs/TEAM_PI_WORKFLOW.md`
@@ -3097,7 +2828,6 @@ Give teammates repository access from GitHub:
 
 For Pi access, GitHub permission is not enough. The Pi still needs each
 teammate's SSH public key in `/home/pi5/.ssh/authorized_keys`.
-
 ````
 
 ## `docs/VISION_MODEL_PLAN.md`
@@ -3181,7 +2911,6 @@ A trained detector is not ready for flight until it passes:
 - real-camera video tests;
 - props-off Pixhawk mode and payload tests;
 - low-speed centering with payload simulation enabled.
-
 ````
 
 ## `real_mission/README.md`
@@ -3392,7 +3121,6 @@ The default real-drone config keeps:
 
 That means the Pi can run headless and will not physically drop payload until
 you intentionally enable it after bench tests.
-
 ````
 
 ## `real_mission/open_laptop_camera_window.sh`
@@ -3406,7 +3134,6 @@ CONFIG_PATH="${REAL_MISSION_CONFIG:-$ROOT/real_mission/parameter_config/mission2
 
 cd "$ROOT"
 exec ./scripts/pi_camera_live.sh --config "$CONFIG_PATH" "$@"
-
 ````
 
 ## `real_mission/parameter_config/README.md`
@@ -3436,8 +3163,9 @@ Do not edit Python code for normal tuning. Start here first.
 | `control.center_max_speed_m_s` | Max GUIDED centering speed. | Start low, around `0.25` to `0.35`. |
 | `control.center_tolerance_px` | How close the target must be to camera center. | Larger is safer, smaller is more precise. |
 | `control.center_hold_s` | How long the target must stay centered before payload. | `1.0` to `1.5` seconds. |
-| `safety.max_guided_auto_bounces_per_target` | Whether repeated `GUIDED -> AUTO` bounces can abort an active target. | Keep `null` so the Pi keeps forcing GUIDED. |
-| `safety.active_target_abort_mode` | Mode requested for true target failure, not normal AUTO bounce. | Use `AUTO` so the mission continues. |
+| `safety.guided_auto_bounce_grace_s` | Time label for AUTO bounce diagnostics. | Keep `null` so active target GUIDED lock has no time limit. |
+| `safety.max_guided_auto_bounces_per_target` | Diagnostic counter for repeated `GUIDED -> AUTO` bounces. | Keep `null`; active target bounces should not abort centering. |
+| `safety.active_target_abort_mode` | Fallback mode for explicit abort paths, not normal target tracking. | Use `AUTO` only when you intentionally want the mission to continue after abort. |
 | `vision.required_hits` | Number of stable detections before target lock. | Higher is safer but slower. |
 | `vision.search_min_area_px` | Smallest target area accepted during search. | Lower for higher altitude, higher to reject noise. |
 | `payload.simulate_only` | If `true`, no servo command is sent. | Keep `true` until servo bench passes. |
@@ -3511,7 +3239,6 @@ in `mission2_target_payload.json`:
 ```
 
 Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
-
 ````
 
 ## `real_mission/parameter_config/mission1_no_search.json`
@@ -3524,10 +3251,11 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "mission.search_enable_rc_channel": "Optional extra RC switch gate. Null disables the RC gate. Example: 7 means RC channel 7 must be high before search can start.",
     "navigation.search_speed_source": "qgc_mission means Mission Planner/QGC/ArduPilot owns AUTO speed. companion_do_change_speed makes the Pi send MAV_CMD_DO_CHANGE_SPEED.",
     "control.center_max_speed_m_s": "Maximum horizontal speed during GUIDED centering.",
-    "control.center_tolerance_px": "Pixel error accepted as centered. Bigger is safer; smaller is more precise.",
-    "control.target_lost_timeout_s": "How long to stay in GUIDED trying to reacquire a confirmed target before using the active-target abort mode.",
-    "safety.max_guided_auto_bounces_per_target": "Set null to keep forcing GUIDED through AUTO bounces. Use a number only if you intentionally want an abort limit.",
-    "safety.active_target_abort_mode": "Mode requested for true target failure such as target lost or center timeout. AUTO keeps flying the mission.",
+    "control.center_tolerance_px": "Default pixel error accepted as centered. Bigger is safer; smaller is more precise.",
+    "control.center_tolerance_px_by_target": "Optional target-specific tolerance. Red triangle can need a slightly larger tolerance because its visual center jitters more.",
+    "control.target_lost_timeout_s": "How long to stay still in GUIDED while trying to reacquire a confirmed target before it keeps searching in place.",
+    "safety.max_guided_auto_bounces_per_target": "Diagnostic only; keep null so GUIDED lock has no time limit during active centering.",
+    "safety.active_target_abort_mode": "Fallback mode for explicit abort paths only. Normal target loss and slow centering now hold GUIDED and keep trying.",
     "vision.search_min_area_px": "Lower this carefully if real targets are too small at higher altitude.",
     "payload.simulate_only": "Keep true until servo and payload bench tests pass. Set false only for physical payload output.",
     "payload.servo_channel": "Pixhawk output channel for payload. Use 5 when the payload servo signal wire is on MAIN OUT / signal 5.",
@@ -3586,6 +3314,10 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "center_kp": 0.55,
     "center_max_speed_m_s": 0.35,
     "center_tolerance_px": 22.0,
+    "center_tolerance_px_by_target": {
+      "red_triangle": 30.0,
+      "blue_hexagon": 22.0
+    },
     "center_hold_s": 1.2,
     "target_lost_timeout_s": 4.0,
     "reacquire_after_lost_s": 0.25,
@@ -3605,9 +3337,9 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "total_action_time_s": 1.5
   },
   "safety": {
-    "max_center_time_s": 30.0,
+    "max_center_time_s": null,
     "max_guided_speed_m_s": 0.35,
-    "guided_auto_bounce_grace_s": 8.0,
+    "guided_auto_bounce_grace_s": null,
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
@@ -3626,7 +3358,6 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "flush_interval_s": 0.5
   }
 }
-
 ````
 
 ## `real_mission/parameter_config/mission2_target_payload.json`
@@ -3639,10 +3370,11 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "mission.search_enable_rc_channel": "Optional extra RC switch gate. Null disables the RC gate. Example: 7 means RC channel 7 must be high before search can start.",
     "navigation.search_speed_source": "qgc_mission means Mission Planner/QGC/ArduPilot owns AUTO speed. companion_do_change_speed makes the Pi send MAV_CMD_DO_CHANGE_SPEED.",
     "control.center_max_speed_m_s": "Maximum horizontal speed during GUIDED centering.",
-    "control.center_tolerance_px": "Pixel error accepted as centered. Bigger is safer; smaller is more precise.",
-    "control.target_lost_timeout_s": "How long to stay in GUIDED trying to reacquire a confirmed target before using the active-target abort mode.",
-    "safety.max_guided_auto_bounces_per_target": "Set null to keep forcing GUIDED through AUTO bounces. Use a number only if you intentionally want an abort limit.",
-    "safety.active_target_abort_mode": "Mode requested for true target failure such as target lost or center timeout. AUTO keeps flying the mission.",
+    "control.center_tolerance_px": "Default pixel error accepted as centered. Bigger is safer; smaller is more precise.",
+    "control.center_tolerance_px_by_target": "Optional target-specific tolerance. Red triangle can need a slightly larger tolerance because its visual center jitters more.",
+    "control.target_lost_timeout_s": "How long to stay still in GUIDED while trying to reacquire a confirmed target before it keeps searching in place.",
+    "safety.max_guided_auto_bounces_per_target": "Diagnostic only; keep null so GUIDED lock has no time limit during active centering.",
+    "safety.active_target_abort_mode": "Fallback mode for explicit abort paths only. Normal target loss and slow centering now hold GUIDED and keep trying.",
     "vision.search_min_area_px": "Lower this carefully if real targets are too small at higher altitude.",
     "payload.simulate_only": "Keep true until servo and payload bench tests pass. Set false only for physical payload output.",
     "payload.servo_channel": "Pixhawk output channel for payload. Use 5 when the payload servo signal wire is on MAIN OUT / signal 5.",
@@ -3701,6 +3433,10 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "center_kp": 0.55,
     "center_max_speed_m_s": 0.35,
     "center_tolerance_px": 22.0,
+    "center_tolerance_px_by_target": {
+      "red_triangle": 30.0,
+      "blue_hexagon": 22.0
+    },
     "center_hold_s": 1.2,
     "target_lost_timeout_s": 4.0,
     "reacquire_after_lost_s": 0.25,
@@ -3720,9 +3456,9 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "total_action_time_s": 1.5
   },
   "safety": {
-    "max_center_time_s": 30.0,
+    "max_center_time_s": null,
     "max_guided_speed_m_s": 0.35,
-    "guided_auto_bounce_grace_s": 8.0,
+    "guided_auto_bounce_grace_s": null,
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
@@ -3741,7 +3477,6 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "flush_interval_s": 0.5
   }
 }
-
 ````
 
 ## `real_mission/parameter_config/real_drone.json`
@@ -3754,10 +3489,11 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "mission.search_enable_rc_channel": "Optional extra RC switch gate. Null disables the RC gate. Example: 7 means RC channel 7 must be high before search can start.",
     "navigation.search_speed_source": "qgc_mission means Mission Planner/QGC/ArduPilot owns AUTO speed. companion_do_change_speed makes the Pi send MAV_CMD_DO_CHANGE_SPEED.",
     "control.center_max_speed_m_s": "Maximum horizontal speed during GUIDED centering.",
-    "control.center_tolerance_px": "Pixel error accepted as centered. Bigger is safer; smaller is more precise.",
-    "control.target_lost_timeout_s": "How long to stay in GUIDED trying to reacquire a confirmed target before using the active-target abort mode.",
-    "safety.max_guided_auto_bounces_per_target": "Set null to keep forcing GUIDED through AUTO bounces. Use a number only if you intentionally want an abort limit.",
-    "safety.active_target_abort_mode": "Mode requested for true target failure such as target lost or center timeout. AUTO keeps flying the mission.",
+    "control.center_tolerance_px": "Default pixel error accepted as centered. Bigger is safer; smaller is more precise.",
+    "control.center_tolerance_px_by_target": "Optional target-specific tolerance. Red triangle can need a slightly larger tolerance because its visual center jitters more.",
+    "control.target_lost_timeout_s": "How long to stay still in GUIDED while trying to reacquire a confirmed target before it keeps searching in place.",
+    "safety.max_guided_auto_bounces_per_target": "Diagnostic only; keep null so GUIDED lock has no time limit during active centering.",
+    "safety.active_target_abort_mode": "Fallback mode for explicit abort paths only. Normal target loss and slow centering now hold GUIDED and keep trying.",
     "vision.search_min_area_px": "Lower this carefully if real targets are too small at higher altitude.",
     "payload.simulate_only": "Keep true until servo and payload bench tests pass. Set false only for physical payload output.",
     "payload.servo_channel": "Pixhawk output channel for payload. Use 5 when the payload servo signal wire is on MAIN OUT / signal 5.",
@@ -3816,6 +3552,10 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "center_kp": 0.55,
     "center_max_speed_m_s": 0.35,
     "center_tolerance_px": 22.0,
+    "center_tolerance_px_by_target": {
+      "red_triangle": 30.0,
+      "blue_hexagon": 22.0
+    },
     "center_hold_s": 1.2,
     "target_lost_timeout_s": 4.0,
     "reacquire_after_lost_s": 0.25,
@@ -3835,9 +3575,9 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "total_action_time_s": 1.5
   },
   "safety": {
-    "max_center_time_s": 30.0,
+    "max_center_time_s": null,
     "max_guided_speed_m_s": 0.35,
-    "guided_auto_bounce_grace_s": 8.0,
+    "guided_auto_bounce_grace_s": null,
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
@@ -3856,7 +3596,6 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "flush_interval_s": 0.5
   }
 }
-
 ````
 
 ## `real_mission/run_mission1_no_search.sh`
@@ -3867,8 +3606,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 exec "$ROOT/real_mission/run_real_mission.sh" "$ROOT/real_mission/parameter_config/mission1_no_search.json"
-
-
 ````
 
 ## `real_mission/run_mission2_target_payload.sh`
@@ -3879,8 +3616,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 exec "$ROOT/real_mission/run_real_mission.sh" "$ROOT/real_mission/parameter_config/mission2_target_payload.json"
-
-
 ````
 
 ## `real_mission/run_real_mission.sh`
@@ -3914,7 +3649,6 @@ PYTHON_BIN="$(pick_python)" || {
 
 cd "$ROOT"
 exec "$PYTHON_BIN" target_mission_v2/mission_controller.py --config "$CONFIG_PATH"
-
 ````
 
 ## `requirements.txt`
@@ -3922,7 +3656,6 @@ exec "$PYTHON_BIN" target_mission_v2/mission_controller.py --config "$CONFIG_PAT
 ````text
 pymavlink==2.4.49
 pyserial==3.5
-
 ````
 
 ## `scripts/README.md`
@@ -4007,7 +3740,6 @@ Keys: `q`/Esc quit, `s` saves a snapshot, `m` toggles red/blue masks.
 - `run_sitl_observer.sh`: read-only monitor for SITL.
 - `run_uart_monitor.sh`: read-only monitor for the real Cube/Pi UART profile.
 - `run_sitl_monitor.sh`: SITL monitor helper.
-
 ````
 
 ## `scripts/check_project.sh`
@@ -4048,7 +3780,6 @@ PYTHONPATH=src "$PYTHON_BIN" -m unittest discover -s tests -v
     "$PYTHON_BIN" -m unittest -v test_mission_controller.py
 )
 "$PYTHON_BIN" -m py_compile target_mission_v2/*.py src/wd_drone/*.py tools/*.py
-
 ````
 
 ## `scripts/clean_workspace.sh`
@@ -4082,7 +3813,6 @@ if [[ "$REMOVE_LOGS" == "1" ]]; then
         fi
     done
 fi
-
 ````
 
 ## `scripts/mavlink_bench.sh`
@@ -4103,7 +3833,6 @@ fi
 
 source .venv/bin/activate
 python tools/mavlink_bench.py "$@"
-
 ````
 
 ## `scripts/pi_cache_wheels.sh`
@@ -4131,7 +3860,6 @@ python -m pip download -r requirements.txt -d .wheelhouse
 echo "[READY] Cached Python wheels in $(pwd)/.wheelhouse"
 ls -1 .wheelhouse
 REMOTE_SCRIPT
-
 ````
 
 ## `scripts/pi_camera_check.sh`
@@ -4163,7 +3891,6 @@ PYTHON_BIN="$(pick_python)" || {
 }
 
 exec "$PYTHON_BIN" tools/pi_camera_check.py "$@"
-
 ````
 
 ## `scripts/pi_camera_live.sh`
@@ -4228,7 +3955,6 @@ PYTHON_BIN="$(pick_python)" || {
 }
 
 exec "$PYTHON_BIN" tools/pi_camera_live_view.py "$@"
-
 ````
 
 ## `scripts/pi_mavlink_bench_sequence.sh`
@@ -4243,7 +3969,6 @@ exec ./scripts/mavlink_bench.sh bench-sequence \
     --connection "${MAVLINK_CONNECTION:-/dev/serial0}" \
     --baud "${MAVLINK_BAUD:-921600}" \
     "$@"
-
 ````
 
 ## `scripts/pi_test_day_readiness.sh`
@@ -4331,7 +4056,6 @@ echo "4. Test STABILIZE, GUIDED, AUTO, then back to STABILIZE."
 echo "5. Servo/output tests only after channel is verified and payload is safe."
 echo "6. Motor-test only with props removed and explicit safety flags."
 REMOTE_SCRIPT
-
 ````
 
 ## `scripts/pi_uart_preflight.sh`
@@ -4391,7 +4115,6 @@ python -c 'import serial; print(\"[OK] pyserial import works\")'
 
 echo \"[READY] Pi UART is ready for Pixhawk TELEM MAVLink. Do not connect props for bench tests.\"
 "
-
 ````
 
 ## `scripts/pi_validate.sh`
@@ -4417,7 +4140,6 @@ python -c 'import sys; import pymavlink; print(sys.version); print(\"pymavlink o
 vcgencmd measure_temp
 vcgencmd get_throttled
 "
-
 ````
 
 ## `scripts/run_sitl_monitor.sh`
@@ -4436,7 +4158,6 @@ fi
 source .venv/bin/activate
 export PYTHONPATH="$PWD/src"
 python -m wd_drone.main --profile sitl
-
 ````
 
 ## `scripts/run_sitl_observer.sh`
@@ -4455,7 +4176,6 @@ fi
 source .venv/bin/activate
 export PYTHONPATH="$PWD/src"
 python -m wd_drone.main --profile sitl
-
 ````
 
 ## `scripts/run_uart_monitor.sh`
@@ -4474,7 +4194,6 @@ fi
 source .venv/bin/activate
 export PYTHONPATH="$PWD/src"
 python -m wd_drone.main --profile cube_pi_uart
-
 ````
 
 ## `scripts/setup.sh`
@@ -4493,7 +4212,6 @@ python -m pip install -r requirements.txt
 echo
 echo "Environment created."
 echo "Activate it with: source .venv/bin/activate"
-
 ````
 
 ## `scripts/sync_to_pi.sh`
@@ -4547,7 +4265,6 @@ else
     echo
     echo "Synced project to $PI_ALIAS:$REMOTE_DIR"
 fi
-
 ````
 
 ## `simulation/README.md`
@@ -4646,8 +4363,6 @@ The detailed test matrix is in:
 ```text
 docs/SITL_TEST_PLAN.md
 ```
-
-
 ````
 
 ## `simulation/enable_gazebo_camera.sh`
@@ -4663,8 +4378,6 @@ exec gz topic \
     -t "$TOPIC" \
     -m gz.msgs.Boolean \
     -p "data: true"
-
-
 ````
 
 ## `simulation/example_square_mission.waypoints`
@@ -4678,8 +4391,6 @@ QGC WPL 110
 4	0	3	16	0.00000000	0.00000000	0.00000000	0.00000000	-35.363261	149.165507	20.0000000	1
 5	0	3	16	0.00000000	0.00000000	0.00000000	0.00000000	-35.363261	149.165237	20.0000000	1
 6	0	3	21	0.00000000	0.00000000	0.00000000	0.00000000	0.00000000	0.00000000	0.0000000	1
-
-
 ````
 
 ## `simulation/legacy_shortcuts.md`
@@ -4713,8 +4424,6 @@ gz topic -t /world/iris_runway/model/iris_with_gimbal/model/gimbal/link/pitch_li
 
 The old shortcuts are personal machine setup. The scripts in `simulation/` are
 kept in GitHub, documented, and safer for teammates to run consistently.
-
-
 ````
 
 ## `simulation/run_target_mission.sh`
@@ -4729,8 +4438,6 @@ CONFIG_PATH="${1:-$ROOT/target_mission_v2/configs/sim_gazebo.json}"
 cd "$ROOT/target_mission_v2"
 echo "[SIM MISSION] config=$CONFIG_PATH"
 exec ./run.sh "$CONFIG_PATH"
-
-
 ````
 
 ## `simulation/start_gazebo.sh`
@@ -4764,8 +4471,6 @@ export GZ_SIM_SYSTEM_PLUGIN_PATH="$GAZEBO_PLUGIN_PATH${GZ_SIM_SYSTEM_PLUGIN_PATH
 
 echo "[GAZEBO] world=$WORLD_PATH"
 exec gz sim -v4 -r "$WORLD_PATH" "$@"
-
-
 ````
 
 ## `simulation/start_sitl.sh`
@@ -4797,8 +4502,6 @@ exec python3 sim_vehicle.py \
     --out=udp:127.0.0.1:14550 \
     --out=udp:127.0.0.1:14551 \
     "$@"
-
-
 ````
 
 ## `src/README.md`
@@ -4817,7 +4520,6 @@ The active target mission lives in:
 ```text
 target_mission_v2/
 ```
-
 ````
 
 ## `src/wd_drone/__init__.py`
@@ -4826,7 +4528,6 @@ target_mission_v2/
 """WD DRONE autonomous mission package."""
 
 __version__ = "0.2.0"
-
 ````
 
 ## `src/wd_drone/config.py`
@@ -4946,7 +4647,6 @@ def load_config(path: str | Path, profile_override: str | None = None) -> AppCon
             mission_complete_waypoint=mission_complete_waypoint,
         ),
     )
-
 ````
 
 ## `src/wd_drone/event_logger.py`
@@ -4988,7 +4688,6 @@ class EventLogger:
         if hasattr(value, "name") and hasattr(value, "value"):
             return value.name
         return value
-
 ````
 
 ## `src/wd_drone/main.py`
@@ -5181,7 +4880,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
 ````
 
 ## `src/wd_drone/mavlink_client.py`
@@ -5303,7 +5001,6 @@ class MavlinkClient:
             if callable(close_method):
                 close_method()
             self.connection = None
-
 ````
 
 ## `src/wd_drone/mission_state.py`
@@ -5413,7 +5110,6 @@ class MissionObserver:
             f"AUTO mission is travelling to search waypoint "
             f"{self.search_start_waypoint}"
         )
-
 ````
 
 ## `src/wd_drone/vehicle_status.py`
@@ -5532,7 +5228,6 @@ class VehicleStatus:
             f"battery={fmt(self.battery_voltage_v)}V/"
             f"{self.battery_remaining_pct if self.battery_remaining_pct is not None else '-'}%"
         )
-
 ````
 
 ## `target_mission_v2/README.md`
@@ -5638,12 +5333,16 @@ Common values:
 },
 "control": {
   "center_max_speed_m_s": 0.35,
-  "center_tolerance_px": 12.0,
+  "center_tolerance_px": 16.0,
+  "center_tolerance_px_by_target": {
+    "red_triangle": 26.0,
+    "blue_hexagon": 16.0
+  },
   "target_lost_timeout_s": 4.0,
   "reacquire_after_lost_s": 0.25
 },
 "safety": {
-  "guided_auto_bounce_grace_s": 8.0,
+  "guided_auto_bounce_grace_s": null,
   "mode_retry_interval_s": 0.2
 }
 ```
@@ -5657,17 +5356,18 @@ Common values:
 For real flights, prefer `qgc_mission` unless companion-owned AUTO speed is
 intentional.
 
-`guided_auto_bounce_grace_s` prevents one temporary AUTO heartbeat from causing
-the controller to drop a target after GUIDED was requested. During this grace
-period it keeps the target lock and retries GUIDED.
+`guided_auto_bounce_grace_s` is `null` by default, which means a temporary AUTO
+heartbeat never causes the controller to drop a target after GUIDED was
+requested. The target lock survives and the controller keeps retrying GUIDED.
 
 If the target is briefly lost during centering, the controller stays in GUIDED,
-stops horizontal movement, searches the full frame for the same target, and only
-uses `safety.active_target_abort_mode` after `target_lost_timeout_s`.
+stops horizontal movement, searches the full frame for the same target, and keeps
+trying to reacquire the same active target.
 
-For Mission 2, set `max_guided_auto_bounces_per_target` to `null` when you want
-the target lock to survive repeated `GUIDED -> AUTO` bounces. The controller
-keeps requesting GUIDED until centering and payload are finished.
+For Mission 2, keep `max_guided_auto_bounces_per_target` as `null`. Repeated
+`GUIDED -> AUTO` bounces are counted for diagnosis, but they do not abort the
+active target. The controller keeps requesting GUIDED until centering and payload
+are finished.
 
 The overlay shows `Guided bounces`. A normal AUTO resume after completing one
 target does not increase this counter; only an unexpected AUTO report during
@@ -5831,7 +5531,6 @@ Left/right reverse:
 ```json
 "image_x_to_right_sign": -1.0
 ```
-
 ````
 
 ## `target_mission_v2/camera_sources.py`
@@ -6034,7 +5733,6 @@ def open_camera(camera_config: dict[str, Any]) -> CameraLike:
     if not cap.isOpened():
         raise RuntimeError(f"Camera source did not open: {description}")
     return cap
-
 ````
 
 ## `target_mission_v2/configs/README.md`
@@ -6071,7 +5769,6 @@ The real profile starts conservative:
 
 That means QGC/ArduPilot owns AUTO altitude and speed, and the Pi does not move
 the physical payload until the team intentionally enables it.
-
 ````
 
 ## `target_mission_v2/configs/real_pi_camera_module_3.json`
@@ -6131,6 +5828,10 @@ the physical payload until the team intentionally enables it.
     "center_kp": 0.55,
     "center_max_speed_m_s": 0.35,
     "center_tolerance_px": 22.0,
+    "center_tolerance_px_by_target": {
+      "red_triangle": 30.0,
+      "blue_hexagon": 22.0
+    },
     "center_hold_s": 1.2,
     "target_lost_timeout_s": 4.0,
     "reacquire_after_lost_s": 0.25,
@@ -6150,9 +5851,9 @@ the physical payload until the team intentionally enables it.
     "total_action_time_s": 1.5
   },
   "safety": {
-    "max_center_time_s": 30.0,
+    "max_center_time_s": null,
     "max_guided_speed_m_s": 0.35,
-    "guided_auto_bounce_grace_s": 8.0,
+    "guided_auto_bounce_grace_s": null,
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
@@ -6171,7 +5872,6 @@ the physical payload until the team intentionally enables it.
     "flush_interval_s": 0.5
   }
 }
-
 ````
 
 ## `target_mission_v2/configs/sim_gazebo.json`
@@ -6222,7 +5922,11 @@ the physical payload until the team intentionally enables it.
     "command_rate_hz": 10.0,
     "center_kp": 0.55,
     "center_max_speed_m_s": 0.35,
-    "center_tolerance_px": 12.0,
+    "center_tolerance_px": 16.0,
+    "center_tolerance_px_by_target": {
+      "red_triangle": 26.0,
+      "blue_hexagon": 16.0
+    },
     "center_hold_s": 1.4,
     "target_lost_timeout_s": 4.0,
     "reacquire_after_lost_s": 0.25,
@@ -6242,9 +5946,9 @@ the physical payload until the team intentionally enables it.
     "total_action_time_s": 1.5
   },
   "safety": {
-    "max_center_time_s": 30.0,
+    "max_center_time_s": null,
     "max_guided_speed_m_s": 0.35,
-    "guided_auto_bounce_grace_s": 8.0,
+    "guided_auto_bounce_grace_s": null,
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
@@ -6263,7 +5967,6 @@ the physical payload until the team intentionally enables it.
     "flush_interval_s": 0.5
   }
 }
-
 ````
 
 ## `target_mission_v2/control.py`
@@ -6297,7 +6000,6 @@ def altitude_velocity_down(
     if abs(error) <= tolerance_m:
         return 0.0
     return clamp(kp * error, max_speed_m_s)
-
 ````
 
 ## `target_mission_v2/mission_config.json`
@@ -6348,7 +6050,11 @@ def altitude_velocity_down(
     "command_rate_hz": 10.0,
     "center_kp": 0.55,
     "center_max_speed_m_s": 0.35,
-    "center_tolerance_px": 12.0,
+    "center_tolerance_px": 16.0,
+    "center_tolerance_px_by_target": {
+      "red_triangle": 26.0,
+      "blue_hexagon": 16.0
+    },
     "center_hold_s": 1.4,
     "target_lost_timeout_s": 4.0,
     "reacquire_after_lost_s": 0.25,
@@ -6368,9 +6074,9 @@ def altitude_velocity_down(
     "total_action_time_s": 1.5
   },
   "safety": {
-    "max_center_time_s": 30.0,
+    "max_center_time_s": null,
     "max_guided_speed_m_s": 0.35,
-    "guided_auto_bounce_grace_s": 8.0,
+    "guided_auto_bounce_grace_s": null,
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
@@ -6389,7 +6095,6 @@ def altitude_velocity_down(
     "flush_interval_s": 0.5
   }
 }
-
 ````
 
 ## `target_mission_v2/mission_controller.py`
@@ -6445,7 +6150,7 @@ TARGET_PAYLOAD_COLOUR = {
 DEFAULT_SAFETY = {
     "max_center_time_s": 25.0,
     "max_guided_speed_m_s": 0.45,
-    "guided_auto_bounce_grace_s": 8.0,
+    "guided_auto_bounce_grace_s": None,
     "max_guided_auto_bounces_per_target": None,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.5,
@@ -6544,6 +6249,11 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("control.command_rate_hz must be positive")
     if float(config["control"].get("center_tolerance_px", 1.0)) <= 0:
         raise ValueError("control.center_tolerance_px must be positive")
+    for target, value in config["control"].get("center_tolerance_px_by_target", {}).items():
+        if target not in {"red_triangle", "blue_hexagon"}:
+            raise ValueError("control.center_tolerance_px_by_target keys must be red_triangle or blue_hexagon")
+        if float(value) <= 0:
+            raise ValueError("control.center_tolerance_px_by_target values must be positive")
     if float(config["control"].get("target_lost_timeout_s", 2.0)) <= 0:
         raise ValueError("control.target_lost_timeout_s must be positive")
     if float(config["control"].get("reacquire_after_lost_s", 0.25)) < 0:
@@ -6922,6 +6632,13 @@ class Controller:
         maximum = float(c["center_max_speed_m_s"])
         return clamp(forward, maximum), clamp(right, maximum), math.hypot(ex, ey)
 
+    def center_tolerance_px(self) -> float:
+        target = self.current_target or ""
+        per_target = self.config["control"].get("center_tolerance_px_by_target", {})
+        if target in per_target:
+            return float(per_target[target])
+        return float(self.config["control"]["center_tolerance_px"])
+
     def search_speed_label(self) -> str:
         if self.navigation["search_speed_source"] == "companion_do_change_speed":
             return f"companion {float(self.navigation['search_speed_m_s']):.1f}m/s"
@@ -7109,45 +6826,39 @@ class Controller:
                         self.guided_mode_lost_since = now
                         self.guided_bounce_count += 1
                         self.guided_bounce_count_for_target += 1
-                    max_bounces = self.safety.get("max_guided_auto_bounces_per_target")
-                    if max_bounces is not None and self.guided_bounce_count_for_target > int(max_bounces):
-                        self.abandon_active_target(
-                            now,
-                            (
-                                f"GUIDED bounced to AUTO {self.guided_bounce_count_for_target} times "
-                                f"for {self.current_target}"
-                            ),
-                        )
-                        return detections, masks
                     elapsed = now - self.guided_mode_lost_since
                     grace_s = self.safety.get("guided_auto_bounce_grace_s")
-                    if max_bounces is None or grace_s is None or elapsed <= float(grace_s):
-                        bounce_limit = "inf" if max_bounces is None else str(int(max_bounces))
-                        grace_label = "inf" if grace_s is None else f"{float(grace_s):.1f}"
-                        self.status_message = (
-                            f"GUIDED lock: AUTO {elapsed:.1f}/{grace_label}s "
-                            f"bounce {self.guided_bounce_count_for_target}/{bounce_limit}"
+                    grace_label = "inf" if grace_s is None else f"{float(grace_s):.1f}"
+                    self.status_message = (
+                        f"GUIDED lock: AUTO {elapsed:.1f}/{grace_label}s "
+                        f"bounce {self.guided_bounce_count_for_target}; forcing GUIDED"
+                    )
+                    if now - self.last_guided_bounce_print_at >= 1.0:
+                        print(
+                            f"[GUIDED BOUNCE] target={self.current_target} "
+                            f"auto_for={elapsed:.1f}/{grace_label}s "
+                            f"target_count={self.guided_bounce_count_for_target} "
+                            f"total_count={self.guided_bounce_count}; forcing GUIDED"
                         )
-                        if now - self.last_guided_bounce_print_at >= 1.0:
-                            print(
-                                f"[GUIDED BOUNCE] target={self.current_target} "
-                                f"auto_for={elapsed:.1f}/{grace_label}s "
-                                f"target_count={self.guided_bounce_count_for_target} "
-                                f"total_count={self.guided_bounce_count}; forcing GUIDED"
-                            )
-                            self.last_guided_bounce_print_at = now
-                        self.request_mode_repeated("GUIDED", force=True)
-                        return detections, masks
+                        self.last_guided_bounce_print_at = now
+                    self.request_mode_repeated("GUIDED", force=True)
+                    return detections, masks
                 self.abandon_active_target(now, f"left GUIDED: {self.vehicle.mode}")
                 return detections, masks
             self.guided_mode_lost_since = None
+            self.request_mode_repeated("GUIDED")
             max_center_time_s = self.safety.get("max_center_time_s")
             if (
                 max_center_time_s is not None
                 and self.center_started_at is not None
                 and now - self.center_started_at > float(max_center_time_s)
             ):
-                self.abandon_active_target(now, f"center timeout after {float(max_center_time_s):.1f}s")
+                self.status_message = (
+                    f"Centering {self.current_target} is slow; holding GUIDED "
+                    f"after {float(max_center_time_s):.1f}s timeout"
+                )
+                self.send_velocity(0.0, 0.0, self.altitude_down())
+                self.request_mode_repeated("GUIDED", force=True)
                 return detections, masks
             fresh_detection = False
             if self.last_detection:
@@ -7177,7 +6888,12 @@ class Controller:
                     detections = search_detections
             lost_for = now - self.last_seen_at if self.last_seen_at else float("inf")
             if self.last_detection is None or now - self.last_seen_at > float(c["target_lost_timeout_s"]):
-                self.abandon_active_target(now, "target lost")
+                self.centered_since = None
+                self.status_message = (
+                    f"Target lock lost for {lost_for:.1f}s; holding GUIDED and searching"
+                )
+                self.send_velocity(0.0, 0.0, self.altitude_down())
+                self.request_mode_repeated("GUIDED", force=True)
                 return detections, masks
             if not fresh_detection:
                 self.centered_since = None
@@ -7191,7 +6907,8 @@ class Controller:
             self.last_center_error_px = distance
             self.last_center_forward = forward
             self.last_center_right = right
-            if distance <= float(c["center_tolerance_px"]):
+            tolerance_px = self.center_tolerance_px()
+            if distance <= tolerance_px:
                 forward = right = 0.0
                 if self.centered_since is None:
                     self.centered_since = now
@@ -7206,7 +6923,10 @@ class Controller:
                     self.status_message = f"Holding center on {self.current_target}: err={distance:.0f}px hold={held:.1f}/{float(c['center_hold_s']):.1f}s"
             else:
                 self.centered_since = None
-                self.status_message = f"Centering {self.current_target}: err={distance:.0f}px fwd={forward:.2f} right={right:.2f}"
+                self.status_message = (
+                    f"Centering {self.current_target}: err={distance:.0f}px "
+                    f"tol={tolerance_px:.0f}px fwd={forward:.2f} right={right:.2f}"
+                )
             self.send_velocity(forward, right, self.altitude_down())
 
         elif self.state == State.PAYLOAD:
@@ -7214,6 +6934,7 @@ class Controller:
             if not enabled:
                 self.abandon_active_target(now, reason)
                 return detections, masks
+            self.request_mode_repeated("GUIDED")
             self.payload_action(now)
 
         elif self.state == State.WAITING_FOR_AUTO_RESUME:
@@ -7374,7 +7095,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
 ````
 
 ## `target_mission_v2/operator_config.json`
@@ -7425,7 +7145,11 @@ if __name__ == "__main__":
     "command_rate_hz": 10.0,
     "center_kp": 0.55,
     "center_max_speed_m_s": 0.35,
-    "center_tolerance_px": 12.0,
+    "center_tolerance_px": 16.0,
+    "center_tolerance_px_by_target": {
+      "red_triangle": 26.0,
+      "blue_hexagon": 16.0
+    },
     "center_hold_s": 1.4,
     "target_lost_timeout_s": 4.0,
     "reacquire_after_lost_s": 0.25,
@@ -7445,9 +7169,9 @@ if __name__ == "__main__":
     "total_action_time_s": 1.5
   },
   "safety": {
-    "max_center_time_s": 30.0,
+    "max_center_time_s": null,
     "max_guided_speed_m_s": 0.35,
-    "guided_auto_bounce_grace_s": 8.0,
+    "guided_auto_bounce_grace_s": null,
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
@@ -7466,7 +7190,6 @@ if __name__ == "__main__":
     "flush_interval_s": 0.5
   }
 }
-
 ````
 
 ## `target_mission_v2/parameter_config.json`
@@ -7477,12 +7200,13 @@ if __name__ == "__main__":
     "mission.search_start_wp": "First AUTO mission item where vision search is allowed. Set this to 7 or 8 if you want search to begin later.",
     "navigation.search_speed_source": "qgc_mission means QGC/ArduPilot mission ChangeSpeed items control search speed. companion_do_change_speed makes this program send MAV_CMD_DO_CHANGE_SPEED.",
     "navigation.search_speed_m_s": "Used only when search_speed_source is companion_do_change_speed.",
-    "control.center_tolerance_px": "How close the target center must be to the camera center before payload action. Smaller is more precise but can oscillate.",
-    "control.target_lost_timeout_s": "How long the drone stays in GUIDED trying to reacquire the confirmed target before using the active-target abort mode.",
+    "control.center_tolerance_px": "Default pixel error accepted as centered. Smaller is more precise but can oscillate.",
+    "control.center_tolerance_px_by_target": "Optional target-specific tolerance. Red triangle can need a slightly larger tolerance because its visual center jitters more.",
+    "control.target_lost_timeout_s": "How long the drone stays still in GUIDED while trying to reacquire the confirmed target before it keeps searching in place.",
     "control.reacquire_after_lost_s": "Delay before doing a wider frame search when the locked target disappears.",
-    "safety.guided_auto_bounce_grace_s": "How long to keep requesting GUIDED if ArduPilot briefly reports AUTO after a target is confirmed.",
-    "safety.max_guided_auto_bounces_per_target": "Set null to keep forcing GUIDED through AUTO bounces. Use a number only if you intentionally want an abort limit.",
-    "safety.active_target_abort_mode": "Mode requested for true target failure such as target lost or center timeout. AUTO keeps flying the mission.",
+    "safety.guided_auto_bounce_grace_s": "Set null for indefinite active-target GUIDED lock if ArduPilot briefly reports AUTO after a target is confirmed.",
+    "safety.max_guided_auto_bounces_per_target": "Diagnostic only; keep null so GUIDED lock has no time limit during active centering.",
+    "safety.active_target_abort_mode": "Fallback mode for explicit abort paths only. Normal target loss and slow centering now hold GUIDED and keep trying.",
     "safety.mode_retry_interval_s": "How often the companion retries mode requests while waiting. Unexpected AUTO during centering always forces GUIDED immediately.",
     "camera.source": "SITL uses udp_h264. The Raspberry Pi Camera Module 3 profile uses rpicam_mjpeg because it does not depend on H.264 encoding.",
     "display.overlay_font_scale": "Camera-window text size.",
@@ -7532,7 +7256,11 @@ if __name__ == "__main__":
     "command_rate_hz": 10.0,
     "center_kp": 0.55,
     "center_max_speed_m_s": 0.35,
-    "center_tolerance_px": 12.0,
+    "center_tolerance_px": 16.0,
+    "center_tolerance_px_by_target": {
+      "red_triangle": 26.0,
+      "blue_hexagon": 16.0
+    },
     "center_hold_s": 1.4,
     "target_lost_timeout_s": 4.0,
     "reacquire_after_lost_s": 0.25,
@@ -7552,9 +7280,9 @@ if __name__ == "__main__":
     "total_action_time_s": 1.5
   },
   "safety": {
-    "max_center_time_s": 30.0,
+    "max_center_time_s": null,
     "max_guided_speed_m_s": 0.35,
-    "guided_auto_bounce_grace_s": 8.0,
+    "guided_auto_bounce_grace_s": null,
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
@@ -7573,7 +7301,6 @@ if __name__ == "__main__":
     "flush_interval_s": 0.5
   }
 }
-
 ````
 
 ## `target_mission_v2/run.sh`
@@ -7605,7 +7332,6 @@ PYTHON_BIN="$(pick_python)" || {
 
 CONFIG_PATH="${1:-parameter_config.json}"
 exec "$PYTHON_BIN" mission_controller.py --config "$CONFIG_PATH"
-
 ````
 
 ## `target_mission_v2/setup.sh`
@@ -7623,7 +7349,6 @@ source ../.venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install pymavlink
 python -m unittest -v test_mission_controller.py
-
 ````
 
 ## `target_mission_v2/test_mission_controller.py`
@@ -7777,6 +7502,22 @@ class VisionTests(unittest.TestCase):
         tracked, _ = self.detector.track_colour(image, "yellow_circle", (100, 100))
         self.assertIsNone(tracked)
 
+    def test_triangle_tracking_fallback_keeps_broken_confirmed_triangle(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        cv2.fillConvexPoly(image, np.array([[480, 80], [300, 420], [660, 420]], np.int32), (0, 0, 255))
+        cv2.rectangle(image, (430, 330), (530, 455), (0, 0, 0), -1)
+        detections, _ = self.detector.search(image)
+        self.assertNotIn("red_triangle", {item.target for item in detections})
+        tracked, _ = self.detector.track_colour(image, "red_triangle", (480, 280), max_jump_px=220)
+        self.assertIsNotNone(tracked)
+        self.assertEqual(tracked.target, "red_triangle")
+
+    def test_triangle_tracking_fallback_rejects_round_red_blob(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        cv2.ellipse(image, (480, 280), (140, 95), 0, 0, 360, (0, 0, 255), -1)
+        tracked, _ = self.detector.track_colour(image, "red_triangle", (480, 280), max_jump_px=220)
+        self.assertIsNone(tracked)
+
 
 class AltitudeTests(unittest.TestCase):
     def test_holds_five_metres(self):
@@ -7835,6 +7576,7 @@ class MissionConfigTests(unittest.TestCase):
                 "center_kp": 0.85,
                 "center_max_speed_m_s": 0.65,
                 "center_tolerance_px": 34.0,
+                "center_tolerance_px_by_target": {},
                 "center_hold_s": 0.8,
                 "target_lost_timeout_s": 2.0,
                 "reacquire_after_lost_s": 0.25,
@@ -7856,7 +7598,7 @@ class MissionConfigTests(unittest.TestCase):
             "safety": {
                 "max_center_time_s": 25.0,
                 "max_guided_speed_m_s": 0.45,
-                "guided_auto_bounce_grace_s": 8.0,
+                "guided_auto_bounce_grace_s": None,
                 "max_guided_auto_bounces_per_target": None,
                 "active_target_abort_mode": "AUTO",
                 "mode_retry_interval_s": 0.2,
@@ -7891,6 +7633,18 @@ class MissionConfigTests(unittest.TestCase):
     def test_validate_config_rejects_bad_command_rate(self):
         config = self.config()
         config["control"]["command_rate_hz"] = 0
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_validate_config_rejects_bad_target_center_tolerance(self):
+        config = self.config()
+        config["control"]["center_tolerance_px_by_target"] = {"red_triangle": 0}
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_validate_config_rejects_unknown_target_center_tolerance(self):
+        config = self.config()
+        config["control"]["center_tolerance_px_by_target"] = {"green_circle": 20}
         with self.assertRaises(ValueError):
             validate_config(config)
 
@@ -8245,7 +7999,7 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.update(self.blank_frame(), [], self.blank_masks())
         self.assertEqual(ctrl.state, State.CENTER)
         self.assertEqual(ctrl.current_target, "red_triangle")
-        self.assertEqual(vehicle.mode_requests, [])
+        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
         self.assertEqual(vehicle.velocities[-1][:2], (0.0, 0.0))
 
     def test_center_reacquires_same_target_before_timeout(self):
@@ -8282,7 +8036,7 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(ctrl.current_target, "red_triangle")
         self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
 
-    def test_optional_finite_auto_bounce_limit_aborts_target_to_configured_mode(self):
+    def test_optional_finite_auto_bounce_limit_is_diagnostic_only(self):
         vehicle = FakeVehicle()
         vehicle.mode = "AUTO"
         config = self.config()
@@ -8294,11 +8048,11 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.center_started_at = time.monotonic()
         ctrl.guided_bounce_count_for_target = 1
         ctrl.update(self.blank_frame(), [], self.blank_masks())
-        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO_RESUME)
-        self.assertIsNone(ctrl.current_target)
-        self.assertEqual(vehicle.mode_requests[-1], "AUTO")
+        self.assertEqual(ctrl.state, State.CENTER)
+        self.assertEqual(ctrl.current_target, "red_triangle")
+        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
 
-    def test_center_timeout_aborts_to_configured_mode(self):
+    def test_center_timeout_keeps_guided_target_lock(self):
         vehicle = FakeVehicle()
         config = self.config()
         config["safety"]["max_center_time_s"] = 0.1
@@ -8307,9 +8061,25 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.current_target = "red_triangle"
         ctrl.center_started_at = time.monotonic() - 1.0
         ctrl.update(self.blank_frame(), [], self.blank_masks())
-        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO_RESUME)
-        self.assertEqual(vehicle.mode_requests[-1], "AUTO")
-        self.assertIsNone(ctrl.current_target)
+        self.assertEqual(ctrl.state, State.CENTER)
+        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
+        self.assertEqual(ctrl.current_target, "red_triangle")
+
+    def test_target_lost_after_timeout_keeps_guided_and_searches(self):
+        vehicle = FakeVehicle()
+        config = self.config()
+        config["control"]["target_lost_timeout_s"] = 0.1
+        ctrl = self.controller(config, vehicle)
+        ctrl.detector = FakeDetector()
+        ctrl.state = State.CENTER
+        ctrl.current_target = "red_triangle"
+        ctrl.last_detection = Detection("red_triangle", 450, 260, 400.0, 0.8, 3, 3, 0, 0, 0.5, 0.6, 0.9, 430, 240, 40, 40)
+        ctrl.last_seen_at = time.monotonic() - 1.0
+        ctrl.center_started_at = time.monotonic()
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+        self.assertEqual(ctrl.state, State.CENTER)
+        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
+        self.assertEqual(ctrl.current_target, "red_triangle")
 
     def test_payload_waits_for_guided_instead_of_aborting(self):
         vehicle = FakeVehicle()
@@ -8340,7 +8110,6 @@ class ControllerFlowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-
 ````
 
 ## `target_mission_v2/vision.py`
@@ -8551,6 +8320,47 @@ class StrictShapeDetector:
             bbox_x=x, bbox_y=y, bbox_w=w, bbox_h=h,
         )
 
+    @staticmethod
+    def _make_colour_lock(contour: np.ndarray, target: str, area: float) -> Optional[Detection]:
+        """Build a detection from a confirmed target's colour blob.
+
+        Search mode must stay strict. During active centering, though, the
+        triangle can blur, clip, or shimmer enough that strict polygon votes
+        disappear for a few frames. This fallback keeps the already-confirmed
+        red triangle locked without allowing red rectangles/squares.
+        """
+        perimeter = float(cv2.arcLength(contour, True))
+        if perimeter <= 0:
+            return None
+        solidity, extent, circularity = StrictShapeDetector._metrics(contour, area, perimeter)
+        if target == "red_triangle":
+            if extent > 0.82 or solidity < 0.70 or not 0.22 <= circularity <= 0.80:
+                return None
+        else:
+            return None
+        m = cv2.moments(contour)
+        if abs(m["m00"]) < 1e-9:
+            return None
+        x, y, w, h = cv2.boundingRect(contour)
+        return Detection(
+            target=target,
+            center_x=int(m["m10"] / m["m00"]),
+            center_y=int(m["m01"] / m["m00"]),
+            area_px=round(area, 1),
+            confidence=0.60,
+            vertices=0,
+            triangle_votes=0,
+            four_corner_votes=0,
+            hexagon_votes=0,
+            extent=round(extent, 3),
+            circularity=round(circularity, 3),
+            solidity=round(solidity, 3),
+            bbox_x=x,
+            bbox_y=y,
+            bbox_w=w,
+            bbox_h=h,
+        )
+
     def _triangle(self, contour: np.ndarray, area: float, perimeter: float) -> Optional[Detection]:
         approximations = self._approximations(contour, perimeter)
         counts = [len(x) for x in approximations]
@@ -8673,6 +8483,7 @@ class StrictShapeDetector:
         colour = "red" if target == "red_triangle" else "blue"
         contours, _ = cv2.findContours(masks[colour], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         options: list[tuple[float, Detection]] = []
+        fallback_options: list[tuple[float, Detection]] = []
         for contour in contours:
             area = float(cv2.contourArea(contour))
             if area < self.tracking_min_area_px:
@@ -8682,9 +8493,15 @@ class StrictShapeDetector:
                 continue
             item = self._triangle(contour, area, perimeter) if target == "red_triangle" else self._hexagon(contour, area, perimeter)
             if item is None:
+                fallback = self._make_colour_lock(contour, target, area)
+                if fallback is not None:
+                    distance = math.hypot(fallback.center_x - previous_center[0], fallback.center_y - previous_center[1])
+                    fallback_options.append((distance, fallback))
                 continue
             distance = math.hypot(item.center_x - previous_center[0], item.center_y - previous_center[1])
             options.append((distance, item))
+        if not options and fallback_options:
+            options = fallback_options
         if not options:
             return None, masks
         distance, item = min(options, key=lambda x: x[0])
@@ -8703,7 +8520,6 @@ def create_detector(vision_config: dict[str, Any]) -> StrictShapeDetector:
         tracking_min_area_px=float(vision_config["tracking_min_area_px"]),
         debug_rejects=bool(vision_config.get("debug_rejects", False)),
     )
-
 ````
 
 ## `test_components/COMMANDS.md`
@@ -8925,7 +8741,6 @@ configured waypoint.
 During an active target, the real config keeps the target lock through
 `GUIDED -> AUTO` bounces and keeps requesting GUIDED. It should not RTL just
 because AUTO appears briefly during centering.
-
 ````
 
 ## `test_components/README.md`
@@ -8953,7 +8768,6 @@ and what a good result looks like.
 ## Safety Rule
 
 Never run servo, arm, or motor tests with propellers installed.
-
 ````
 
 ## `test_components/camera/check_on_pi.sh`
@@ -8966,7 +8780,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 exec ./scripts/pi_camera_check.sh --config "$ROOT/real_mission/parameter_config/mission2_target_payload.json" "$@"
-
 ````
 
 ## `test_components/camera/live_from_laptop.sh`
@@ -8979,7 +8792,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 exec ./real_mission/open_laptop_camera_window.sh "$@"
-
 ````
 
 ## `test_components/mavlink/MOTOR_MAPPING.md`
@@ -9054,7 +8866,6 @@ After rewiring or changing frame type, retest with propellers removed:
 
 Do not continue to propeller testing until motor position and spin direction are
 both correct.
-
 ````
 
 ## `test_components/mavlink/bench_sequence.sh`
@@ -9067,7 +8878,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 exec ./scripts/pi_mavlink_bench_sequence.sh "$@"
-
 ````
 
 ## `test_components/mavlink/health.sh`
@@ -9080,7 +8890,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 exec ./scripts/mavlink_bench.sh health --connection /dev/serial0 --baud 921600 --seconds "${SECONDS_TO_RUN:-10}"
-
 ````
 
 ## `test_components/mavlink/motor_test.sh`
@@ -9098,7 +8907,6 @@ exec ./scripts/mavlink_bench.sh motor-test \
     --i-understand-props-off \
     --i-accept-motor-spin \
     "$@"
-
 ````
 
 ## `test_components/mavlink/rc_channels.sh`
@@ -9111,7 +8919,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 exec ./scripts/mavlink_bench.sh rc-channels --connection /dev/serial0 --baud 921600 "$@"
-
 ````
 
 ## `test_components/mavlink/servo_payload_test.sh`
@@ -9142,7 +8949,6 @@ exec ./scripts/mavlink_bench.sh servo \
     --reset-pwm "$reset_pwm" \
     --hold "$hold_s" \
     --i-understand-props-off
-
 ````
 
 ## `test_components/mavlink/status.sh`
@@ -9155,7 +8961,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 exec ./scripts/mavlink_bench.sh status --connection /dev/serial0 --baud 921600 --seconds "${SECONDS_TO_RUN:-10}"
-
 ````
 
 ## `test_components/preflight/full_check.sh`
@@ -9238,7 +9043,6 @@ PY
 
 echo
 echo "[PREFLIGHT OK] read-only checks completed"
-
 ````
 
 ## `test_components/software/run_all_checks.sh`
@@ -9251,7 +9055,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 exec ./scripts/check_project.sh
-
 ````
 
 ## `tests/README.md`
@@ -9273,7 +9076,6 @@ Run all tests:
 cd ~/FOR_COMP/wd-drone-autonomous-mission
 ./scripts/check_project.sh
 ```
-
 ````
 
 ## `tests/test_config.py`
@@ -9331,7 +9133,6 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ````
 
 ## `tests/test_mavlink_bench.py`
@@ -9351,7 +9152,6 @@ class MavlinkBenchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ````
 
 ## `tests/test_mission_state.py`
@@ -9444,7 +9244,6 @@ class MissionObserverTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ````
 
 ## `tools/README.md`
@@ -9459,7 +9258,6 @@ Current tool:
 - `mavlink_bench.py`: implementation behind `scripts/mavlink_bench.sh`.
 
 Most users should run the script wrapper instead of calling Python directly.
-
 ````
 
 ## `tools/mavlink_bench.py`
@@ -10111,7 +9909,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
 ````
 
 ## `tools/pi_camera_check.py`
@@ -10254,7 +10051,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
 ````
 
 ## `tools/pi_camera_live_view.py`
@@ -10531,6 +10327,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
 ````
-

@@ -48,7 +48,7 @@ TARGET_PAYLOAD_COLOUR = {
 DEFAULT_SAFETY = {
     "max_center_time_s": 25.0,
     "max_guided_speed_m_s": 0.45,
-    "guided_auto_bounce_grace_s": 8.0,
+    "guided_auto_bounce_grace_s": None,
     "max_guided_auto_bounces_per_target": None,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.5,
@@ -147,6 +147,11 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("control.command_rate_hz must be positive")
     if float(config["control"].get("center_tolerance_px", 1.0)) <= 0:
         raise ValueError("control.center_tolerance_px must be positive")
+    for target, value in config["control"].get("center_tolerance_px_by_target", {}).items():
+        if target not in {"red_triangle", "blue_hexagon"}:
+            raise ValueError("control.center_tolerance_px_by_target keys must be red_triangle or blue_hexagon")
+        if float(value) <= 0:
+            raise ValueError("control.center_tolerance_px_by_target values must be positive")
     if float(config["control"].get("target_lost_timeout_s", 2.0)) <= 0:
         raise ValueError("control.target_lost_timeout_s must be positive")
     if float(config["control"].get("reacquire_after_lost_s", 0.25)) < 0:
@@ -525,6 +530,13 @@ class Controller:
         maximum = float(c["center_max_speed_m_s"])
         return clamp(forward, maximum), clamp(right, maximum), math.hypot(ex, ey)
 
+    def center_tolerance_px(self) -> float:
+        target = self.current_target or ""
+        per_target = self.config["control"].get("center_tolerance_px_by_target", {})
+        if target in per_target:
+            return float(per_target[target])
+        return float(self.config["control"]["center_tolerance_px"])
+
     def search_speed_label(self) -> str:
         if self.navigation["search_speed_source"] == "companion_do_change_speed":
             return f"companion {float(self.navigation['search_speed_m_s']):.1f}m/s"
@@ -712,45 +724,39 @@ class Controller:
                         self.guided_mode_lost_since = now
                         self.guided_bounce_count += 1
                         self.guided_bounce_count_for_target += 1
-                    max_bounces = self.safety.get("max_guided_auto_bounces_per_target")
-                    if max_bounces is not None and self.guided_bounce_count_for_target > int(max_bounces):
-                        self.abandon_active_target(
-                            now,
-                            (
-                                f"GUIDED bounced to AUTO {self.guided_bounce_count_for_target} times "
-                                f"for {self.current_target}"
-                            ),
-                        )
-                        return detections, masks
                     elapsed = now - self.guided_mode_lost_since
                     grace_s = self.safety.get("guided_auto_bounce_grace_s")
-                    if max_bounces is None or grace_s is None or elapsed <= float(grace_s):
-                        bounce_limit = "inf" if max_bounces is None else str(int(max_bounces))
-                        grace_label = "inf" if grace_s is None else f"{float(grace_s):.1f}"
-                        self.status_message = (
-                            f"GUIDED lock: AUTO {elapsed:.1f}/{grace_label}s "
-                            f"bounce {self.guided_bounce_count_for_target}/{bounce_limit}"
+                    grace_label = "inf" if grace_s is None else f"{float(grace_s):.1f}"
+                    self.status_message = (
+                        f"GUIDED lock: AUTO {elapsed:.1f}/{grace_label}s "
+                        f"bounce {self.guided_bounce_count_for_target}; forcing GUIDED"
+                    )
+                    if now - self.last_guided_bounce_print_at >= 1.0:
+                        print(
+                            f"[GUIDED BOUNCE] target={self.current_target} "
+                            f"auto_for={elapsed:.1f}/{grace_label}s "
+                            f"target_count={self.guided_bounce_count_for_target} "
+                            f"total_count={self.guided_bounce_count}; forcing GUIDED"
                         )
-                        if now - self.last_guided_bounce_print_at >= 1.0:
-                            print(
-                                f"[GUIDED BOUNCE] target={self.current_target} "
-                                f"auto_for={elapsed:.1f}/{grace_label}s "
-                                f"target_count={self.guided_bounce_count_for_target} "
-                                f"total_count={self.guided_bounce_count}; forcing GUIDED"
-                            )
-                            self.last_guided_bounce_print_at = now
-                        self.request_mode_repeated("GUIDED", force=True)
-                        return detections, masks
+                        self.last_guided_bounce_print_at = now
+                    self.request_mode_repeated("GUIDED", force=True)
+                    return detections, masks
                 self.abandon_active_target(now, f"left GUIDED: {self.vehicle.mode}")
                 return detections, masks
             self.guided_mode_lost_since = None
+            self.request_mode_repeated("GUIDED")
             max_center_time_s = self.safety.get("max_center_time_s")
             if (
                 max_center_time_s is not None
                 and self.center_started_at is not None
                 and now - self.center_started_at > float(max_center_time_s)
             ):
-                self.abandon_active_target(now, f"center timeout after {float(max_center_time_s):.1f}s")
+                self.status_message = (
+                    f"Centering {self.current_target} is slow; holding GUIDED "
+                    f"after {float(max_center_time_s):.1f}s timeout"
+                )
+                self.send_velocity(0.0, 0.0, self.altitude_down())
+                self.request_mode_repeated("GUIDED", force=True)
                 return detections, masks
             fresh_detection = False
             if self.last_detection:
@@ -780,7 +786,12 @@ class Controller:
                     detections = search_detections
             lost_for = now - self.last_seen_at if self.last_seen_at else float("inf")
             if self.last_detection is None or now - self.last_seen_at > float(c["target_lost_timeout_s"]):
-                self.abandon_active_target(now, "target lost")
+                self.centered_since = None
+                self.status_message = (
+                    f"Target lock lost for {lost_for:.1f}s; holding GUIDED and searching"
+                )
+                self.send_velocity(0.0, 0.0, self.altitude_down())
+                self.request_mode_repeated("GUIDED", force=True)
                 return detections, masks
             if not fresh_detection:
                 self.centered_since = None
@@ -794,7 +805,8 @@ class Controller:
             self.last_center_error_px = distance
             self.last_center_forward = forward
             self.last_center_right = right
-            if distance <= float(c["center_tolerance_px"]):
+            tolerance_px = self.center_tolerance_px()
+            if distance <= tolerance_px:
                 forward = right = 0.0
                 if self.centered_since is None:
                     self.centered_since = now
@@ -809,7 +821,10 @@ class Controller:
                     self.status_message = f"Holding center on {self.current_target}: err={distance:.0f}px hold={held:.1f}/{float(c['center_hold_s']):.1f}s"
             else:
                 self.centered_since = None
-                self.status_message = f"Centering {self.current_target}: err={distance:.0f}px fwd={forward:.2f} right={right:.2f}"
+                self.status_message = (
+                    f"Centering {self.current_target}: err={distance:.0f}px "
+                    f"tol={tolerance_px:.0f}px fwd={forward:.2f} right={right:.2f}"
+                )
             self.send_velocity(forward, right, self.altitude_down())
 
         elif self.state == State.PAYLOAD:
@@ -817,6 +832,7 @@ class Controller:
             if not enabled:
                 self.abandon_active_target(now, reason)
                 return detections, masks
+            self.request_mode_repeated("GUIDED")
             self.payload_action(now)
 
         elif self.state == State.WAITING_FOR_AUTO_RESUME:

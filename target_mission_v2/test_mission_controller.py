@@ -146,6 +146,22 @@ class VisionTests(unittest.TestCase):
         tracked, _ = self.detector.track_colour(image, "yellow_circle", (100, 100))
         self.assertIsNone(tracked)
 
+    def test_triangle_tracking_fallback_keeps_broken_confirmed_triangle(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        cv2.fillConvexPoly(image, np.array([[480, 80], [300, 420], [660, 420]], np.int32), (0, 0, 255))
+        cv2.rectangle(image, (430, 330), (530, 455), (0, 0, 0), -1)
+        detections, _ = self.detector.search(image)
+        self.assertNotIn("red_triangle", {item.target for item in detections})
+        tracked, _ = self.detector.track_colour(image, "red_triangle", (480, 280), max_jump_px=220)
+        self.assertIsNotNone(tracked)
+        self.assertEqual(tracked.target, "red_triangle")
+
+    def test_triangle_tracking_fallback_rejects_round_red_blob(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        cv2.ellipse(image, (480, 280), (140, 95), 0, 0, 360, (0, 0, 255), -1)
+        tracked, _ = self.detector.track_colour(image, "red_triangle", (480, 280), max_jump_px=220)
+        self.assertIsNone(tracked)
+
 
 class AltitudeTests(unittest.TestCase):
     def test_holds_five_metres(self):
@@ -204,6 +220,7 @@ class MissionConfigTests(unittest.TestCase):
                 "center_kp": 0.85,
                 "center_max_speed_m_s": 0.65,
                 "center_tolerance_px": 34.0,
+                "center_tolerance_px_by_target": {},
                 "center_hold_s": 0.8,
                 "target_lost_timeout_s": 2.0,
                 "reacquire_after_lost_s": 0.25,
@@ -225,7 +242,7 @@ class MissionConfigTests(unittest.TestCase):
             "safety": {
                 "max_center_time_s": 25.0,
                 "max_guided_speed_m_s": 0.45,
-                "guided_auto_bounce_grace_s": 8.0,
+                "guided_auto_bounce_grace_s": None,
                 "max_guided_auto_bounces_per_target": None,
                 "active_target_abort_mode": "AUTO",
                 "mode_retry_interval_s": 0.2,
@@ -260,6 +277,18 @@ class MissionConfigTests(unittest.TestCase):
     def test_validate_config_rejects_bad_command_rate(self):
         config = self.config()
         config["control"]["command_rate_hz"] = 0
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_validate_config_rejects_bad_target_center_tolerance(self):
+        config = self.config()
+        config["control"]["center_tolerance_px_by_target"] = {"red_triangle": 0}
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_validate_config_rejects_unknown_target_center_tolerance(self):
+        config = self.config()
+        config["control"]["center_tolerance_px_by_target"] = {"green_circle": 20}
         with self.assertRaises(ValueError):
             validate_config(config)
 
@@ -614,7 +643,7 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.update(self.blank_frame(), [], self.blank_masks())
         self.assertEqual(ctrl.state, State.CENTER)
         self.assertEqual(ctrl.current_target, "red_triangle")
-        self.assertEqual(vehicle.mode_requests, [])
+        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
         self.assertEqual(vehicle.velocities[-1][:2], (0.0, 0.0))
 
     def test_center_reacquires_same_target_before_timeout(self):
@@ -651,7 +680,7 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(ctrl.current_target, "red_triangle")
         self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
 
-    def test_optional_finite_auto_bounce_limit_aborts_target_to_configured_mode(self):
+    def test_optional_finite_auto_bounce_limit_is_diagnostic_only(self):
         vehicle = FakeVehicle()
         vehicle.mode = "AUTO"
         config = self.config()
@@ -663,11 +692,11 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.center_started_at = time.monotonic()
         ctrl.guided_bounce_count_for_target = 1
         ctrl.update(self.blank_frame(), [], self.blank_masks())
-        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO_RESUME)
-        self.assertIsNone(ctrl.current_target)
-        self.assertEqual(vehicle.mode_requests[-1], "AUTO")
+        self.assertEqual(ctrl.state, State.CENTER)
+        self.assertEqual(ctrl.current_target, "red_triangle")
+        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
 
-    def test_center_timeout_aborts_to_configured_mode(self):
+    def test_center_timeout_keeps_guided_target_lock(self):
         vehicle = FakeVehicle()
         config = self.config()
         config["safety"]["max_center_time_s"] = 0.1
@@ -676,9 +705,25 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.current_target = "red_triangle"
         ctrl.center_started_at = time.monotonic() - 1.0
         ctrl.update(self.blank_frame(), [], self.blank_masks())
-        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO_RESUME)
-        self.assertEqual(vehicle.mode_requests[-1], "AUTO")
-        self.assertIsNone(ctrl.current_target)
+        self.assertEqual(ctrl.state, State.CENTER)
+        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
+        self.assertEqual(ctrl.current_target, "red_triangle")
+
+    def test_target_lost_after_timeout_keeps_guided_and_searches(self):
+        vehicle = FakeVehicle()
+        config = self.config()
+        config["control"]["target_lost_timeout_s"] = 0.1
+        ctrl = self.controller(config, vehicle)
+        ctrl.detector = FakeDetector()
+        ctrl.state = State.CENTER
+        ctrl.current_target = "red_triangle"
+        ctrl.last_detection = Detection("red_triangle", 450, 260, 400.0, 0.8, 3, 3, 0, 0, 0.5, 0.6, 0.9, 430, 240, 40, 40)
+        ctrl.last_seen_at = time.monotonic() - 1.0
+        ctrl.center_started_at = time.monotonic()
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+        self.assertEqual(ctrl.state, State.CENTER)
+        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
+        self.assertEqual(ctrl.current_target, "red_triangle")
 
     def test_payload_waits_for_guided_instead_of_aborting(self):
         vehicle = FakeVehicle()

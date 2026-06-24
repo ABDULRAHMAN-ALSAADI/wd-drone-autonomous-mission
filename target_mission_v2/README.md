@@ -98,12 +98,16 @@ Common values:
 },
 "control": {
   "center_max_speed_m_s": 0.35,
-  "center_tolerance_px": 12.0,
+  "center_tolerance_px": 16.0,
+  "center_tolerance_px_by_target": {
+    "red_triangle": 26.0,
+    "blue_hexagon": 16.0
+  },
   "target_lost_timeout_s": 4.0,
   "reacquire_after_lost_s": 0.25
 },
 "safety": {
-  "guided_auto_bounce_grace_s": 8.0,
+  "guided_auto_bounce_grace_s": null,
   "mode_retry_interval_s": 0.2
 }
 ```
@@ -117,17 +121,18 @@ Common values:
 For real flights, prefer `qgc_mission` unless companion-owned AUTO speed is
 intentional.
 
-`guided_auto_bounce_grace_s` prevents one temporary AUTO heartbeat from causing
-the controller to drop a target after GUIDED was requested. During this grace
-period it keeps the target lock and retries GUIDED.
+`guided_auto_bounce_grace_s` is `null` by default, which means a temporary AUTO
+heartbeat never causes the controller to drop a target after GUIDED was
+requested. The target lock survives and the controller keeps retrying GUIDED.
 
 If the target is briefly lost during centering, the controller stays in GUIDED,
-stops horizontal movement, searches the full frame for the same target, and only
-uses `safety.active_target_abort_mode` after `target_lost_timeout_s`.
+stops horizontal movement, searches the full frame for the same target, and keeps
+trying to reacquire the same active target.
 
-For Mission 2, set `max_guided_auto_bounces_per_target` to `null` when you want
-the target lock to survive repeated `GUIDED -> AUTO` bounces. The controller
-keeps requesting GUIDED until centering and payload are finished.
+For Mission 2, keep `max_guided_auto_bounces_per_target` as `null`. Repeated
+`GUIDED -> AUTO` bounces are counted for diagnosis, but they do not abort the
+active target. The controller keeps requesting GUIDED until centering and payload
+are finished.
 
 The overlay shows `Guided bounces`. A normal AUTO resume after completing one
 target does not increase this counter; only an unexpected AUTO report during
