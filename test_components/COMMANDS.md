@@ -211,7 +211,6 @@ The script waits for AUTO, `mission.search_enabled=true`, and
 disarmed, while the Mission 1 no-search profile is running, or before the
 configured waypoint.
 
-During an active target, the real config now treats repeated `GUIDED -> AUTO`
-bounces as unsafe. It retries GUIDED briefly; if the bounce limit is exceeded,
-it aborts the active target by requesting the configured abort mode, normally
-`RTL`.
+During an active target, the real config keeps the target lock through
+`GUIDED -> AUTO` bounces and keeps requesting GUIDED. It should not RTL just
+because AUTO appears briefly during centering.

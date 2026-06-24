@@ -125,10 +125,9 @@ If the target is briefly lost during centering, the controller stays in GUIDED,
 stops horizontal movement, searches the full frame for the same target, and only
 uses `safety.active_target_abort_mode` after `target_lost_timeout_s`.
 
-For real Mission 2, repeated `GUIDED -> AUTO` bounces during the same target are
-treated as unsafe. The controller retries GUIDED up to
-`max_guided_auto_bounces_per_target`; after that it requests the configured
-abort mode, normally `RTL`.
+For Mission 2, set `max_guided_auto_bounces_per_target` to `null` when you want
+the target lock to survive repeated `GUIDED -> AUTO` bounces. The controller
+keeps requesting GUIDED until centering and payload are finished.
 
 The overlay shows `Guided bounces`. A normal AUTO resume after completing one
 target does not increase this counter; only an unexpected AUTO report during

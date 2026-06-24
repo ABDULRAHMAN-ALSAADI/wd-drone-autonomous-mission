@@ -22,8 +22,8 @@ Do not edit Python code for normal tuning. Start here first.
 | `control.center_max_speed_m_s` | Max GUIDED centering speed. | Start low, around `0.25` to `0.35`. |
 | `control.center_tolerance_px` | How close the target must be to camera center. | Larger is safer, smaller is more precise. |
 | `control.center_hold_s` | How long the target must stay centered before payload. | `1.0` to `1.5` seconds. |
-| `safety.max_guided_auto_bounces_per_target` | How many brief `GUIDED -> AUTO` bounces are tolerated while centering one target. | Start with `2`. |
-| `safety.active_target_abort_mode` | Mode requested if an active target cannot be safely completed. | Use `RTL` for real tests. |
+| `safety.max_guided_auto_bounces_per_target` | Whether repeated `GUIDED -> AUTO` bounces can abort an active target. | Keep `null` so the Pi keeps forcing GUIDED. |
+| `safety.active_target_abort_mode` | Mode requested for true target failure, not normal AUTO bounce. | Use `AUTO` so the mission continues. |
 | `vision.required_hits` | Number of stable detections before target lock. | Higher is safer but slower. |
 | `vision.search_min_area_px` | Smallest target area accepted during search. | Lower for higher altitude, higher to reject noise. |
 | `payload.simulate_only` | If `true`, no servo command is sent. | Keep `true` until servo bench passes. |

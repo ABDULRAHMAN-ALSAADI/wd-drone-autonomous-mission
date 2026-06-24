@@ -135,13 +135,14 @@ The real config now uses:
 
 ```json
 "safety": {
-  "max_guided_auto_bounces_per_target": 2,
-  "active_target_abort_mode": "RTL"
+  "max_guided_auto_bounces_per_target": null,
+  "active_target_abort_mode": "AUTO"
 }
 ```
 
-So a short `GUIDED -> AUTO -> GUIDED` bounce is retried, but repeated mode loss
-during the same target requests RTL.
+So `GUIDED -> AUTO -> GUIDED` bounces are retried without dropping the target
+lock. The Pi keeps requesting GUIDED until the target is centered and payload is
+finished.
 
 ## Laptop Camera Window
 

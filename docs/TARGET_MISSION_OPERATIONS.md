@@ -16,7 +16,7 @@ The companion controller owns only:
 - low-speed horizontal centering in GUIDED;
 - payload decision or simulated payload event;
 - returning to AUTO only after a successful first target payload;
-- requesting RTL after both targets or after an unsafe active-target abort.
+- requesting RTL after both targets are complete.
 
 The default config keeps vertical velocity disabled:
 
@@ -111,15 +111,16 @@ GUIDED bounce protection is controlled by:
 
 ```json
 "guided_auto_bounce_grace_s": 8.0,
-"max_guided_auto_bounces_per_target": 2,
-"active_target_abort_mode": "RTL",
+"max_guided_auto_bounces_per_target": null,
+"active_target_abort_mode": "AUTO",
 "mode_retry_interval_s": 0.2
 ```
 
 If ArduPilot briefly reports AUTO after GUIDED was requested, the controller
 keeps the target lock and immediately forces GUIDED again during this grace
-period. If AUTO keeps taking control during the same target, the controller
-requests `active_target_abort_mode` instead of silently continuing AUTO.
+period. With `max_guided_auto_bounces_per_target` set to `null`, repeated AUTO
+bounces do not abort the target; the controller keeps requesting GUIDED until
+centering and payload are finished.
 
 The overlay shows `Guided bounces`. This counter increases only when the
 controller is already centering a target and ArduPilot reports AUTO. It does not

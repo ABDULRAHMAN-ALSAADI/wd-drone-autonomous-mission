@@ -60,8 +60,8 @@ checks = [
     ("payload.simulate_only", cfg["payload"]["simulate_only"] is True),
     ("control.altitude_control", cfg["control"]["altitude_control"] == "off"),
     ("navigation.search_speed_source", cfg["navigation"]["search_speed_source"] == "qgc_mission"),
-    ("safety.active_target_abort_mode", cfg["safety"]["active_target_abort_mode"] == "RTL"),
-    ("safety.max_guided_auto_bounces_per_target", int(cfg["safety"]["max_guided_auto_bounces_per_target"]) <= 2),
+    ("safety.active_target_abort_mode", cfg["safety"]["active_target_abort_mode"] == "AUTO"),
+    ("safety.max_guided_auto_bounces_per_target", cfg["safety"]["max_guided_auto_bounces_per_target"] is None),
 ]
 
 failed = False

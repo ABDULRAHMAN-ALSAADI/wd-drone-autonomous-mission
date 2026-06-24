@@ -49,8 +49,8 @@ DEFAULT_SAFETY = {
     "max_center_time_s": 25.0,
     "max_guided_speed_m_s": 0.45,
     "guided_auto_bounce_grace_s": 8.0,
-    "max_guided_auto_bounces_per_target": 2,
-    "active_target_abort_mode": "RTL",
+    "max_guided_auto_bounces_per_target": None,
+    "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.5,
     "payload_requires_guided": True,
     "payload_min_altitude_m": None,
@@ -172,7 +172,7 @@ def validate_config(config: dict[str, Any]) -> None:
     max_guided_bounces = safety.get("max_guided_auto_bounces_per_target")
     if max_guided_bounces is not None and int(max_guided_bounces) < 0:
         raise ValueError("safety.max_guided_auto_bounces_per_target must be zero, positive, or null")
-    active_abort_mode = safety.get("active_target_abort_mode", "RTL")
+    active_abort_mode = safety.get("active_target_abort_mode", "AUTO")
     if active_abort_mode not in {"AUTO", "RTL", "LOITER", "LAND"}:
         raise ValueError("safety.active_target_abort_mode must be AUTO, RTL, LOITER, or LAND")
     mode_retry_interval_s = safety.get("mode_retry_interval_s")
@@ -580,7 +580,7 @@ class Controller:
         return None
 
     def active_target_abort_mode(self) -> str:
-        return str(self.safety.get("active_target_abort_mode", "RTL"))
+        return str(self.safety.get("active_target_abort_mode", "AUTO"))
 
     def abandon_active_target(self, now: float, reason: str) -> None:
         mode = self.active_target_abort_mode()
@@ -597,6 +597,15 @@ class Controller:
     def payload_action(self, now: float) -> None:
         p = self.config["payload"]
         safety_error = self.payload_safety_error()
+        if (
+            safety_error
+            and bool(self.safety.get("payload_requires_guided", True))
+            and self.vehicle.mode != "GUIDED"
+        ):
+            self.status_message = f"Payload locked; waiting for GUIDED instead of {self.vehicle.mode}"
+            self.send_velocity(0.0, 0.0, self.altitude_down())
+            self.request_mode_repeated("GUIDED", force=True)
+            return
         if safety_error:
             self.abandon_active_target(now, f"payload blocked: {safety_error}")
             return
@@ -687,7 +696,8 @@ class Controller:
                 self.send_velocity(0.0, 0.0, self.altitude_down())
                 self.transition(State.CENTER, "GUIDED confirmed; centering target")
             elif now - self.state_started_at > float(m["mode_change_timeout_s"]):
-                self.abandon_active_target(now, "GUIDED timeout after target confirmation")
+                self.status_message = "Target locked; still forcing GUIDED"
+                self.request_mode_repeated("GUIDED", force=True)
             else:
                 self.request_mode_repeated("GUIDED")
 
@@ -714,16 +724,17 @@ class Controller:
                         return detections, masks
                     elapsed = now - self.guided_mode_lost_since
                     grace_s = self.safety.get("guided_auto_bounce_grace_s")
-                    if grace_s is not None and elapsed <= float(grace_s):
+                    if max_bounces is None or grace_s is None or elapsed <= float(grace_s):
                         bounce_limit = "inf" if max_bounces is None else str(int(max_bounces))
+                        grace_label = "inf" if grace_s is None else f"{float(grace_s):.1f}"
                         self.status_message = (
-                            f"GUIDED bounce guard: AUTO {elapsed:.1f}/{float(grace_s):.1f}s "
+                            f"GUIDED lock: AUTO {elapsed:.1f}/{grace_label}s "
                             f"bounce {self.guided_bounce_count_for_target}/{bounce_limit}"
                         )
                         if now - self.last_guided_bounce_print_at >= 1.0:
                             print(
                                 f"[GUIDED BOUNCE] target={self.current_target} "
-                                f"auto_for={elapsed:.1f}/{float(grace_s):.1f}s "
+                                f"auto_for={elapsed:.1f}/{grace_label}s "
                                 f"target_count={self.guided_bounce_count_for_target} "
                                 f"total_count={self.guided_bounce_count}; forcing GUIDED"
                             )

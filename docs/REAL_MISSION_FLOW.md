@@ -140,8 +140,8 @@ The real config therefore has:
 
 ```json
 "safety": {
-  "max_guided_auto_bounces_per_target": 2,
-  "active_target_abort_mode": "RTL"
+  "max_guided_auto_bounces_per_target": null,
+  "active_target_abort_mode": "AUTO"
 }
 ```
 
@@ -149,8 +149,8 @@ This means:
 
 - if ArduPilot briefly reports AUTO during centering, the Pi immediately
   requests GUIDED again;
-- if this keeps happening during the same target, the Pi stops trusting the
-  handoff and requests RTL;
+- if this keeps happening during the same target, the Pi keeps the target lock
+  and keeps requesting GUIDED;
 - normal AUTO resume still happens after a successful payload action when there
   is another target left.
 

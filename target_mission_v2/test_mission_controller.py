@@ -226,8 +226,8 @@ class MissionConfigTests(unittest.TestCase):
                 "max_center_time_s": 25.0,
                 "max_guided_speed_m_s": 0.45,
                 "guided_auto_bounce_grace_s": 8.0,
-                "max_guided_auto_bounces_per_target": 2,
-                "active_target_abort_mode": "RTL",
+                "max_guided_auto_bounces_per_target": None,
+                "active_target_abort_mode": "AUTO",
                 "mode_retry_interval_s": 0.2,
                 "payload_requires_guided": True,
                 "payload_min_altitude_m": None,
@@ -584,6 +584,21 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
         self.assertEqual(ctrl.guided_bounce_count, 1)
 
+    def test_waiting_for_guided_timeout_keeps_target_lock(self):
+        vehicle = FakeVehicle()
+        vehicle.mode = "AUTO"
+        config = self.config()
+        config["mission"]["mode_change_timeout_s"] = 0.1
+        ctrl = self.controller(config, vehicle)
+        ctrl.state = State.WAITING_FOR_GUIDED
+        ctrl.state_started_at = time.monotonic() - 1.0
+        ctrl.current_target = "blue_hexagon"
+        ctrl.last_detection = Detection("blue_hexagon", 480, 270, 500.0, 0.9, 6, 0, 0, 6, 0.8, 0.7, 0.9, 460, 250, 40, 40)
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+        self.assertEqual(ctrl.state, State.WAITING_FOR_GUIDED)
+        self.assertEqual(ctrl.current_target, "blue_hexagon")
+        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
+
     def test_center_holds_guided_while_target_is_temporarily_lost(self):
         vehicle = FakeVehicle()
         config = self.config()
@@ -620,7 +635,7 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(ctrl.last_detection, reacquired)
         self.assertTrue(ctrl.last_seen_at > ctrl.state_started_at)
 
-    def test_auto_bounce_timeout_abandons_target(self):
+    def test_auto_bounce_keeps_forcing_guided_after_grace_time(self):
         vehicle = FakeVehicle()
         vehicle.mode = "AUTO"
         config = self.config()
@@ -632,10 +647,11 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.center_started_at = time.monotonic()
         ctrl.guided_mode_lost_since = time.monotonic() - 1.0
         ctrl.update(self.blank_frame(), [], self.blank_masks())
-        self.assertEqual(ctrl.state, State.WAITING_FOR_RTL)
-        self.assertIsNone(ctrl.current_target)
+        self.assertEqual(ctrl.state, State.CENTER)
+        self.assertEqual(ctrl.current_target, "red_triangle")
+        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
 
-    def test_too_many_auto_bounces_aborts_target_to_rtl(self):
+    def test_optional_finite_auto_bounce_limit_aborts_target_to_configured_mode(self):
         vehicle = FakeVehicle()
         vehicle.mode = "AUTO"
         config = self.config()
@@ -647,11 +663,11 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.center_started_at = time.monotonic()
         ctrl.guided_bounce_count_for_target = 1
         ctrl.update(self.blank_frame(), [], self.blank_masks())
-        self.assertEqual(ctrl.state, State.WAITING_FOR_RTL)
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO_RESUME)
         self.assertIsNone(ctrl.current_target)
-        self.assertEqual(vehicle.mode_requests[-1], "RTL")
+        self.assertEqual(vehicle.mode_requests[-1], "AUTO")
 
-    def test_center_timeout_aborts_to_rtl(self):
+    def test_center_timeout_aborts_to_configured_mode(self):
         vehicle = FakeVehicle()
         config = self.config()
         config["safety"]["max_center_time_s"] = 0.1
@@ -660,18 +676,20 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.current_target = "red_triangle"
         ctrl.center_started_at = time.monotonic() - 1.0
         ctrl.update(self.blank_frame(), [], self.blank_masks())
-        self.assertEqual(ctrl.state, State.WAITING_FOR_RTL)
-        self.assertEqual(vehicle.mode_requests[-1], "RTL")
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO_RESUME)
+        self.assertEqual(vehicle.mode_requests[-1], "AUTO")
         self.assertIsNone(ctrl.current_target)
 
-    def test_payload_is_blocked_outside_guided(self):
+    def test_payload_waits_for_guided_instead_of_aborting(self):
         vehicle = FakeVehicle()
         vehicle.mode = "AUTO"
         ctrl = self.controller(vehicle=vehicle)
         ctrl.state = State.PAYLOAD
         ctrl.current_target = "red_triangle"
         ctrl.update(self.blank_frame(), [], self.blank_masks())
-        self.assertEqual(ctrl.state, State.WAITING_FOR_RTL)
+        self.assertEqual(ctrl.state, State.PAYLOAD)
+        self.assertEqual(ctrl.current_target, "red_triangle")
+        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
         self.assertEqual(vehicle.servos, [])
         self.assertNotIn("red_triangle", ctrl.completed_targets)
 
