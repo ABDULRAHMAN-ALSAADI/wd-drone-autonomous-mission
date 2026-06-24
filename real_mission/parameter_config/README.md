@@ -22,6 +22,8 @@ Do not edit Python code for normal tuning. Start here first.
 | `control.center_max_speed_m_s` | Max GUIDED centering speed. | Start low, around `0.25` to `0.35`. |
 | `control.center_tolerance_px` | How close the target must be to camera center. | Larger is safer, smaller is more precise. |
 | `control.center_hold_s` | How long the target must stay centered before payload. | `1.0` to `1.5` seconds. |
+| `safety.max_guided_auto_bounces_per_target` | How many brief `GUIDED -> AUTO` bounces are tolerated while centering one target. | Start with `2`. |
+| `safety.active_target_abort_mode` | Mode requested if an active target cannot be safely completed. | Use `RTL` for real tests. |
 | `vision.required_hits` | Number of stable detections before target lock. | Higher is safer but slower. |
 | `vision.search_min_area_px` | Smallest target area accepted during search. | Lower for higher altitude, higher to reject noise. |
 | `payload.simulate_only` | If `true`, no servo command is sent. | Keep `true` until servo bench passes. |
@@ -73,3 +75,25 @@ For the wiring you showed:
 
 is correct only if the payload servo signal wire is on MAIN OUT / signal 5.
 If your wire is on AUX OUT 5 instead, stop and remap the channel before testing.
+
+## Optional RC Mission 2 Enable
+
+Before setting `mission.search_enable_rc_channel`, identify the switch channel:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./test_components/mavlink/rc_channels.sh --seconds 30 --channels 5 6 7 8
+```
+
+Flip one AT9S Pro switch at a time. The channel marked with `*` is the one that
+changed. After you choose the Mission 2 enable switch, put that channel number
+in `mission2_target_payload.json`:
+
+```json
+"mission": {
+  "search_enable_rc_channel": 7,
+  "search_enable_pwm_min": 1700
+}
+```
+
+Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.

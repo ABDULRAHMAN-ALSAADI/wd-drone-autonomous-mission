@@ -49,6 +49,8 @@ DEFAULT_SAFETY = {
     "max_center_time_s": 25.0,
     "max_guided_speed_m_s": 0.45,
     "guided_auto_bounce_grace_s": 8.0,
+    "max_guided_auto_bounces_per_target": 2,
+    "active_target_abort_mode": "RTL",
     "mode_retry_interval_s": 0.5,
     "payload_requires_guided": True,
     "payload_min_altitude_m": None,
@@ -167,6 +169,12 @@ def validate_config(config: dict[str, Any]) -> None:
     guided_auto_bounce_grace_s = safety.get("guided_auto_bounce_grace_s")
     if guided_auto_bounce_grace_s is not None and float(guided_auto_bounce_grace_s) < 0:
         raise ValueError("safety.guided_auto_bounce_grace_s must be zero, positive, or null")
+    max_guided_bounces = safety.get("max_guided_auto_bounces_per_target")
+    if max_guided_bounces is not None and int(max_guided_bounces) < 0:
+        raise ValueError("safety.max_guided_auto_bounces_per_target must be zero, positive, or null")
+    active_abort_mode = safety.get("active_target_abort_mode", "RTL")
+    if active_abort_mode not in {"AUTO", "RTL", "LOITER", "LAND"}:
+        raise ValueError("safety.active_target_abort_mode must be AUTO, RTL, LOITER, or LAND")
     mode_retry_interval_s = safety.get("mode_retry_interval_s")
     if mode_retry_interval_s is not None and float(mode_retry_interval_s) <= 0:
         raise ValueError("safety.mode_retry_interval_s must be positive or null")
@@ -415,6 +423,7 @@ class Controller:
         self.center_started_at: Optional[float] = None
         self.guided_mode_lost_since: Optional[float] = None
         self.guided_bounce_count = 0
+        self.guided_bounce_count_for_target = 0
         self.last_guided_bounce_print_at = 0.0
         self.last_center_error_px: Optional[float] = None
         self.last_center_forward: Optional[float] = None
@@ -451,6 +460,7 @@ class Controller:
         self.centered_since = None
         self.center_started_at = None
         self.guided_mode_lost_since = None
+        self.guided_bounce_count_for_target = 0
         self.last_center_error_px = None
         self.last_center_forward = None
         self.last_center_right = None
@@ -569,21 +579,26 @@ class Controller:
                 return f"altitude {altitude:.2f} m is above {float(max_alt):.2f} m"
         return None
 
-    def abandon_target_and_resume_auto(self, now: float, reason: str) -> None:
-        print(f"[TARGET ABORT] {reason}; returning to AUTO")
+    def active_target_abort_mode(self) -> str:
+        return str(self.safety.get("active_target_abort_mode", "RTL"))
+
+    def abandon_active_target(self, now: float, reason: str) -> None:
+        mode = self.active_target_abort_mode()
+        print(f"[TARGET ABORT] {reason}; requesting {mode}")
         self.send_velocity(0.0, 0.0, self.altitude_down())
         self.current_target = None
         self.last_detection = None
         self.tracker.reset()
-        self.vehicle.set_mode("AUTO")
+        self.vehicle.set_mode(mode)
         self.last_mode_request_at = now
-        self.transition(State.WAITING_FOR_AUTO_RESUME, reason)
+        self.transition(State.WAITING_FOR_AUTO_RESUME if mode == "AUTO" else State.WAITING_FOR_RTL,
+                        f"{reason}; abort to {mode}")
 
     def payload_action(self, now: float) -> None:
         p = self.config["payload"]
         safety_error = self.payload_safety_error()
         if safety_error:
-            self.abandon_target_and_resume_auto(now, f"payload blocked: {safety_error}")
+            self.abandon_active_target(now, f"payload blocked: {safety_error}")
             return
         self.send_velocity(0.0, 0.0, self.altitude_down())
         if not self.payload_started:
@@ -672,36 +687,50 @@ class Controller:
                 self.send_velocity(0.0, 0.0, self.altitude_down())
                 self.transition(State.CENTER, "GUIDED confirmed; centering target")
             elif now - self.state_started_at > float(m["mode_change_timeout_s"]):
-                self.current_target = None
-                self.last_detection = None
-                self.tracker.reset()
-                self.transition(State.WAITING_FOR_AUTO, "GUIDED timeout")
+                self.abandon_active_target(now, "GUIDED timeout after target confirmation")
             else:
                 self.request_mode_repeated("GUIDED")
 
         elif self.state == State.CENTER:
             enabled, reason = self.search_gate_status()
             if not enabled:
-                self.abandon_target_and_resume_auto(now, reason)
+                self.abandon_active_target(now, reason)
                 return detections, masks
             if self.vehicle.mode != "GUIDED":
                 if self.vehicle.mode == "AUTO":
                     if self.guided_mode_lost_since is None:
                         self.guided_mode_lost_since = now
                         self.guided_bounce_count += 1
+                        self.guided_bounce_count_for_target += 1
+                    max_bounces = self.safety.get("max_guided_auto_bounces_per_target")
+                    if max_bounces is not None and self.guided_bounce_count_for_target > int(max_bounces):
+                        self.abandon_active_target(
+                            now,
+                            (
+                                f"GUIDED bounced to AUTO {self.guided_bounce_count_for_target} times "
+                                f"for {self.current_target}"
+                            ),
+                        )
+                        return detections, masks
                     elapsed = now - self.guided_mode_lost_since
                     grace_s = self.safety.get("guided_auto_bounce_grace_s")
                     if grace_s is not None and elapsed <= float(grace_s):
-                        self.status_message = f"GUIDED bounce guard: mode=AUTO for {elapsed:.1f}/{float(grace_s):.1f}s"
+                        bounce_limit = "inf" if max_bounces is None else str(int(max_bounces))
+                        self.status_message = (
+                            f"GUIDED bounce guard: AUTO {elapsed:.1f}/{float(grace_s):.1f}s "
+                            f"bounce {self.guided_bounce_count_for_target}/{bounce_limit}"
+                        )
                         if now - self.last_guided_bounce_print_at >= 1.0:
                             print(
                                 f"[GUIDED BOUNCE] target={self.current_target} "
-                                f"auto_for={elapsed:.1f}/{float(grace_s):.1f}s count={self.guided_bounce_count}; forcing GUIDED"
+                                f"auto_for={elapsed:.1f}/{float(grace_s):.1f}s "
+                                f"target_count={self.guided_bounce_count_for_target} "
+                                f"total_count={self.guided_bounce_count}; forcing GUIDED"
                             )
                             self.last_guided_bounce_print_at = now
                         self.request_mode_repeated("GUIDED", force=True)
                         return detections, masks
-                self.abandon_target_and_resume_auto(now, f"left GUIDED: {self.vehicle.mode}")
+                self.abandon_active_target(now, f"left GUIDED: {self.vehicle.mode}")
                 return detections, masks
             self.guided_mode_lost_since = None
             max_center_time_s = self.safety.get("max_center_time_s")
@@ -710,7 +739,7 @@ class Controller:
                 and self.center_started_at is not None
                 and now - self.center_started_at > float(max_center_time_s)
             ):
-                self.abandon_target_and_resume_auto(now, f"center timeout after {float(max_center_time_s):.1f}s")
+                self.abandon_active_target(now, f"center timeout after {float(max_center_time_s):.1f}s")
                 return detections, masks
             fresh_detection = False
             if self.last_detection:
@@ -740,7 +769,7 @@ class Controller:
                     detections = search_detections
             lost_for = now - self.last_seen_at if self.last_seen_at else float("inf")
             if self.last_detection is None or now - self.last_seen_at > float(c["target_lost_timeout_s"]):
-                self.abandon_target_and_resume_auto(now, "target lost")
+                self.abandon_active_target(now, "target lost")
                 return detections, masks
             if not fresh_detection:
                 self.centered_since = None
@@ -775,7 +804,7 @@ class Controller:
         elif self.state == State.PAYLOAD:
             enabled, reason = self.search_gate_status()
             if not enabled:
-                self.abandon_target_and_resume_auto(now, reason)
+                self.abandon_active_target(now, reason)
                 return detections, masks
             self.payload_action(now)
 
@@ -843,7 +872,7 @@ class Controller:
             f"Search gate: {gate}",
             f"Hits: triangle {hits['red_triangle']}/{self.config['vision']['required_hits']} | hexagon {hits['blue_hexagon']}/{self.config['vision']['required_hits']}",
             f"Done: {done} | Runs {self.mission_done_count} | Guided bounces {self.guided_bounce_count}",
-            f"Search speed {self.search_speed_label()} | Retry {float(self.safety.get('mode_retry_interval_s') or 1.0):.1f}s",
+            f"Abort {self.active_target_abort_mode()} | Search speed {self.search_speed_label()} | Retry {float(self.safety.get('mode_retry_interval_s') or 1.0):.1f}s",
             f"Alt {alt} | Hspd {fmt(self.vehicle.horizontal_speed_m_s, 'm/s')} | Vspd {fmt(None if self.vehicle.velocity_down_m_s is None else -self.vehicle.velocity_down_m_s, 'm/s')} | Acc {fmt(self.vehicle.acceleration_m_s2, 'm/s2')}",
         ]]
         line_height = max(16, int(38 * font_scale))
@@ -867,7 +896,12 @@ class Controller:
         print(f"MISSION PROFILE: {self.config['mission'].get('name', 'unnamed')}")
         print(f"SEARCH START WP: {self.config['mission']['search_start_wp']} | SEARCH SPEED OWNER: {self.search_speed_label()}")
         print(f"SEARCH GATE: {'enabled' if gate_enabled else 'blocked'} ({gate_reason})")
-        print(f"GUIDED HOLD: {float(self.safety.get('guided_auto_bounce_grace_s', 0.0)):.1f}s | TARGET LOST TIMEOUT: {float(self.config['control']['target_lost_timeout_s']):.1f}s")
+        print(
+            f"GUIDED HOLD: {float(self.safety.get('guided_auto_bounce_grace_s', 0.0)):.1f}s | "
+            f"MAX AUTO BOUNCES/TARGET: {self.safety.get('max_guided_auto_bounces_per_target')} | "
+            f"ACTIVE TARGET ABORT: {self.active_target_abort_mode()} | "
+            f"TARGET LOST TIMEOUT: {float(self.config['control']['target_lost_timeout_s']):.1f}s"
+        )
         print("=" * 72)
         try:
             while not self.stop_requested:

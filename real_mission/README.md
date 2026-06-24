@@ -116,6 +116,33 @@ RC7 >= 1700
 If the switch is low, the overlay/logs say search is blocked. This is a safety
 enable, not a mission selector.
 
+Find the real AT9S Pro channel before enabling this:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./test_components/mavlink/rc_channels.sh --seconds 30 --channels 5 6 7 8
+```
+
+Flip one switch at a time. The changed channel is marked with `*`.
+
+## Active Target Abort Safety
+
+If Mission 2 has already confirmed a target and the vehicle repeatedly leaves
+GUIDED before the payload step is finished, the Pi should not quietly let AUTO
+continue the route.
+
+The real config now uses:
+
+```json
+"safety": {
+  "max_guided_auto_bounces_per_target": 2,
+  "active_target_abort_mode": "RTL"
+}
+```
+
+So a short `GUIDED -> AUTO -> GUIDED` bounce is retried, but repeated mode loss
+during the same target requests RTL.
+
 ## Laptop Camera Window
 
 The camera window is not opened by the RC and it is not sent through RFD900x.

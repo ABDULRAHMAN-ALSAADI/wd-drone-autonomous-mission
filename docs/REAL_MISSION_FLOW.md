@@ -122,6 +122,38 @@ enable. Example:
 That switch does not choose Mission 1 or Mission 2. It only allows Mission 2
 search after the correct mission profile is already running.
 
+To find the correct AT9S Pro channel, run this on the Raspberry Pi:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./test_components/mavlink/rc_channels.sh --seconds 30 --channels 5 6 7 8
+```
+
+Flip one switch at a time. The changed channel is printed with `*`.
+
+## Active Target Mode Safety
+
+During Mission 2, once a target is confirmed, the Pi should own the target job
+until the payload step finishes or the target is aborted.
+
+The real config therefore has:
+
+```json
+"safety": {
+  "max_guided_auto_bounces_per_target": 2,
+  "active_target_abort_mode": "RTL"
+}
+```
+
+This means:
+
+- if ArduPilot briefly reports AUTO during centering, the Pi immediately
+  requests GUIDED again;
+- if this keeps happening during the same target, the Pi stops trusting the
+  handoff and requests RTL;
+- normal AUTO resume still happens after a successful payload action when there
+  is another target left.
+
 ## Why Not Two RC Buttons Yet?
 
 A two-button system where one button starts Mission 1 and another starts Mission

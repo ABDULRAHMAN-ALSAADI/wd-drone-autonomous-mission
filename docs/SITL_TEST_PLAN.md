@@ -33,8 +33,10 @@ Run this matrix after detector or controller changes.
 
 6. Failure handling:
    - cover target during centering;
-   - controller returns to AUTO after target-lost timeout;
-   - if centering cannot finish, controller returns to AUTO after safety timeout.
+   - controller requests the configured active-target abort mode after
+     target-lost timeout;
+   - if centering cannot finish, controller requests the configured
+     active-target abort mode after safety timeout.
 
 ## Automated Tests
 

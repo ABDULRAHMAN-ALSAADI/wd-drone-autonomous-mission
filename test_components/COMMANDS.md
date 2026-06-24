@@ -121,6 +121,21 @@ If a requested mode immediately snaps to another mode, the Pi link works but
 another authority is winning. Check RC flight-mode switch, Mission Planner/QGC,
 failsafe conditions, and whether AUTO has a valid mission.
 
+## 6A. RC Switch / Mission Enable Mapping
+
+Run on the Raspberry Pi with the transmitter on:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./test_components/mavlink/rc_channels.sh --seconds 30 --channels 5 6 7 8
+```
+
+Flip one AT9S Pro switch at a time. The channel marked with `*` is the channel
+that changed. Use this to choose the optional Mission 2 search-enable switch.
+
+Do not guess the channel. If you choose the wrong channel, Mission 2 search may
+stay blocked or may become enabled at the wrong time.
+
 ## 7. Avionics Bench Sequence
 
 This is the requested sequence:
@@ -195,3 +210,8 @@ The script waits for AUTO, `mission.search_enabled=true`, and
 `mission.search_start_wp`. It should not start searching while the Cube is
 disarmed, while the Mission 1 no-search profile is running, or before the
 configured waypoint.
+
+During an active target, the real config now treats repeated `GUIDED -> AUTO`
+bounces as unsafe. It retries GUIDED briefly; if the bounce limit is exceeded,
+it aborts the active target by requesting the configured abort mode, normally
+`RTL`.

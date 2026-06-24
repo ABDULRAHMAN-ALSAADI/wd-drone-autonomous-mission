@@ -8,6 +8,7 @@ Use it to prove each piece works before enabling the real mission:
 - Pi camera stream and FPS;
 - laptop live camera window;
 - Pi to Cube MAVLink heartbeat and health;
+- AT9S Pro RC switch/channel mapping;
 - flight mode command authority;
 - guarded arm/mode sequence requested by the avionics test;
 - payload servo output;

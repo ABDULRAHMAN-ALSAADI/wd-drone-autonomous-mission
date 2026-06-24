@@ -87,6 +87,24 @@ def wait_ack(master, command: int, timeout_s: float = 5.0) -> Optional[str]:
     return None
 
 
+def request_message_interval(master, message_id: int, rate_hz: float) -> None:
+    if rate_hz <= 0:
+        return
+    master.mav.command_long_send(
+        master.target_system,
+        master.target_component,
+        mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL,
+        0,
+        message_id,
+        int(1_000_000 / rate_hz),
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
+
+
 def heartbeat_state(msg) -> tuple[str, bool]:
     return mavutil.mode_string_v10(msg), bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
 
@@ -118,6 +136,52 @@ def command_status(args) -> int:
             print(f"ALT rel={msg.relative_alt / 1000.0:.2f}m vx={msg.vx / 100.0:.2f} vy={msg.vy / 100.0:.2f}")
         elif kind == "VFR_HUD":
             print(f"VFR mode={mode_name(master)} alt={msg.alt:.1f}m groundspeed={msg.groundspeed:.2f}m/s heading={msg.heading}")
+    return 0
+
+
+def rc_channels_from_message(msg) -> dict[int, int]:
+    values: dict[int, int] = {}
+    for channel in range(1, 19):
+        value = int(getattr(msg, f"chan{channel}_raw", 0))
+        if value > 0:
+            values[channel] = value
+    return values
+
+
+def format_rc_channels(values: dict[int, int], changed: set[int] | None = None) -> str:
+    changed = changed or set()
+    fields = []
+    for channel in sorted(values):
+        marker = "*" if channel in changed else " "
+        fields.append(f"{marker}CH{channel:02d}={values[channel]:4d}")
+    return " ".join(fields)
+
+
+def command_rc_channels(args) -> int:
+    master = connect(args.connection, args.baud, args.timeout)
+    request_message_interval(master, mavutil.mavlink.MAVLINK_MSG_ID_RC_CHANNELS, args.rate_hz)
+    print("[RC MONITOR] read-only. Flip one AT9S switch at a time to find its channel.")
+    print("[RC MONITOR] channels marked with * changed since the previous RC_CHANNELS message.")
+    previous: dict[int, int] = {}
+    end = time.monotonic() + args.seconds
+    next_print_at = 0.0
+    while time.monotonic() < end:
+        msg = master.recv_match(type="RC_CHANNELS", blocking=True, timeout=0.5)
+        if msg is None:
+            continue
+        values = rc_channels_from_message(msg)
+        if args.channels:
+            allowed = set(args.channels)
+            values = {channel: value for channel, value in values.items() if channel in allowed}
+        changed = {
+            channel for channel, value in values.items()
+            if previous.get(channel) is not None and abs(previous[channel] - value) >= args.change_threshold
+        }
+        now = time.monotonic()
+        if changed or now >= next_print_at:
+            print(format_rc_channels(values, changed))
+            next_print_at = now + args.print_interval
+        previous = values
     return 0
 
 
@@ -502,6 +566,15 @@ def build_parser() -> argparse.ArgumentParser:
     health.add_argument("--seconds", type=float, default=8.0)
     health.add_argument("--min-sats", type=int, default=10)
     health.set_defaults(func=command_health)
+
+    rc_channels = subparsers.add_parser("rc-channels", help="read-only RC input monitor for switch/channel mapping")
+    add_connection_args(rc_channels)
+    rc_channels.add_argument("--seconds", type=float, default=30.0)
+    rc_channels.add_argument("--rate-hz", type=float, default=8.0)
+    rc_channels.add_argument("--print-interval", type=float, default=1.0)
+    rc_channels.add_argument("--change-threshold", type=int, default=20)
+    rc_channels.add_argument("--channels", type=int, nargs="*", help="optional channel numbers to show, e.g. --channels 5 6 7 8")
+    rc_channels.set_defaults(func=command_rc_channels)
 
     modes = subparsers.add_parser("modes", help="print available flight modes")
     add_connection_args(modes)
