@@ -112,6 +112,7 @@ GUIDED bounce protection is controlled by:
 ```json
 "guided_auto_bounce_grace_s": null,
 "max_guided_auto_bounces_per_target": null,
+"camera_frame_timeout_s": 2.0,
 "active_target_abort_mode": "AUTO",
 "mode_retry_interval_s": 0.2
 ```
@@ -125,6 +126,16 @@ requesting GUIDED until centering and payload are finished.
 The overlay shows `Guided bounces`. This counter increases only when the
 controller is already centering a target and ArduPilot reports AUTO. It does not
 count the normal AUTO resume after one target is complete.
+
+If the vehicle enters a non-mission mode such as LOITER, STABILIZE, RTL, or LAND
+during active target work, the Pi sends one zero-velocity command, clears the
+target lock, and waits for AUTO. That prevents the companion from fighting a
+pilot command or ArduPilot failsafe.
+
+If the camera stops delivering frames during active target work for longer than
+`camera_frame_timeout_s`, the Pi holds position in GUIDED and keeps requesting
+GUIDED. This is meant to avoid continuing AUTO blindly when the confirmed target
+camera stream freezes.
 
 Temporary target loss during centering is controlled by:
 

@@ -141,6 +141,7 @@ The real config therefore has:
 ```json
 "safety": {
   "max_guided_auto_bounces_per_target": null,
+  "camera_frame_timeout_s": 2.0,
   "active_target_abort_mode": "AUTO"
 }
 ```
@@ -153,6 +154,11 @@ This means:
   and keeps requesting GUIDED;
 - normal AUTO resume still happens after a successful payload action when there
   is another target left.
+
+If a pilot switch or failsafe puts the vehicle into LOITER, STABILIZE, RTL, LAND,
+or another non-mission mode during target work, the Pi does not force the mission
+back. It sends a zero-velocity command, clears the current target, and waits for
+AUTO again.
 
 ## Why Not Two RC Buttons Yet?
 

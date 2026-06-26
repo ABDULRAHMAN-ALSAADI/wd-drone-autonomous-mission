@@ -1,69 +1,70 @@
 # Technical Handoff For External Review: Teknofest 2026 Rotary-Wing UAV
 
-Generated: 2026-06-25T00:40:56 local time
+Generated: 2026-06-26T11:39:14 local time
 
 Repository: `git@github.com:ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission.git`
 Branch: `main`
-Commit at generation time: `ae66507` plus current uncommitted worktree changes
+Commit at generation time: `f587429` plus current working-tree changes
 Workspace: `/home/kambe/FOR_COMP/wd-drone-autonomous-mission`
 
-Audience: another AI/code reviewer. This document is intentionally exhaustive and includes full tracked source/config/docs content in the appendix, except this generated handoff file itself to avoid recursive self-embedding.
+Audience: another AI/code reviewer. This document is intentionally exhaustive and includes all tracked source/config/docs content in the appendix, except this generated handoff file itself to avoid recursive self-embedding.
+
+## Current Worktree Status
+
+```text
+M docs/REAL_MISSION_FLOW.md
+ M docs/SAFETY_AND_FAILSAFES.md
+ M docs/TARGET_MISSION_OPERATIONS.md
+ M real_mission/README.md
+ M real_mission/parameter_config/README.md
+ M real_mission/parameter_config/mission1_no_search.json
+ M real_mission/parameter_config/mission2_target_payload.json
+ M real_mission/parameter_config/real_drone.json
+ M target_mission_v2/configs/real_pi_camera_module_3.json
+ M target_mission_v2/configs/sim_gazebo.json
+ M target_mission_v2/mission_config.json
+ M target_mission_v2/mission_controller.py
+ M target_mission_v2/operator_config.json
+ M target_mission_v2/parameter_config.json
+ M target_mission_v2/test_mission_controller.py
+ M test_components/preflight/full_check.sh
+```
 
 ## Executive Summary
 
-This repository implements and documents a companion-computer mission stack for a Teknofest 2026 rotary-wing UAV project. The active mission is Mission 2: ArduPilot flies the normal AUTO waypoint mission, while a Raspberry Pi 5 companion watches the camera, detects a blue hexagon and red triangle, requests GUIDED for target centering, simulates or commands the payload servo, resumes AUTO after the first target, and requests RTL after both targets are complete.
+This repository implements a companion-computer mission stack for a Teknofest 2026 rotary-wing UAV. ArduPilot/Cube Orange owns normal AUTO waypoint flight, altitude, speed, arming, RTL, and failsafes. The Raspberry Pi 5 companion owns camera acquisition, target detection, target confirmation, requesting GUIDED for low-speed target centering, optional payload servo command, AUTO resume after the first target, and RTL after both targets are complete.
 
-Current important behavior after the latest triangle-centering fix:
+Important current behavior:
 
-- AUTO altitude and waypoint speed are owned by Mission Planner/QGC/ArduPilot by default.
-- The Pi does not upload or choose waypoint missions in flight.
-- Mission 2 search starts only when armed, in AUTO, at/after `mission.search_start_wp`, with `mission.search_enabled=true`, and optionally when an RC channel gate is high.
-- During active target centering/payload, temporary `GUIDED -> AUTO` mode bounces keep the target lock and force GUIDED again. They do **not** cause RTL.
-- Active target lost/center timeout no longer returns AUTO immediately; it holds GUIDED and keeps searching/forcing GUIDED so triangle centering can finish.
-- Red triangle tracking has a post-confirmation color-centroid fallback for broken/blurred triangle frames while still rejecting round red blobs.
-- `center_tolerance_px_by_target` allows a larger red-triangle tolerance than blue-hexagon tolerance.
-- Payload output is simulated by default. Real servo output requires setting `payload.simulate_only=false`.
+- Mission 1 is a no-search profile (`search_enabled=false`), so the Pi does not trigger Mission 2 target logic during the figure-8 mission.
+- Mission 2 search starts only when armed, in AUTO, at or after `mission.search_start_wp`, with `search_enabled=true`, and optionally when an RC gate is high.
+- AUTO search speed is QGC/Mission Planner/ArduPilot-owned by default through `navigation.search_speed_source = qgc_mission`.
+- The controller filters MAVLink HEARTBEAT messages so GCS/onboard-controller heartbeats do not corrupt the active vehicle mode/armed state.
+- During active target work, `GUIDED -> AUTO -> GUIDED` bounces are treated as mission-owned AUTO bounce; the target lock is kept and GUIDED is requested again.
+- If the vehicle enters a non-mission mode such as LOITER/STABILIZE/RTL/LAND during target work, the Pi sends zero velocity, drops the target lock, and waits for AUTO instead of fighting pilot/failsafe authority.
+- If camera frames stop during active target work longer than `safety.camera_frame_timeout_s`, the Pi holds in GUIDED and reports the timeout.
+- Payload output is simulated by default in real configs. Physical servo output requires `payload.simulate_only=false` after bench tests.
 
 ## User-Provided Hardware Context
 
 - Flight controller: Cube Orange running ArduPilot.
-- Companion link: TELEM2 UART at 57600 baud to Raspberry Pi 5 GPIO 14/15.
+- Companion link: TELEM2 UART at 57600 baud to Raspberry Pi 5 GPIO 14/15, although the currently tested repo config uses `/dev/serial0` at 921600 baud.
 - Companion computer: Raspberry Pi 5.
 - AI accelerator: Hailo AI HAT+ on PCIe.
-- Camera: AR0234 Global Shutter camera on MIPI CSI.
+- Camera: AR0234 Global Shutter camera on MIPI CSI; earlier live-view tests also used Raspberry Pi Camera Module 3 style rpicam paths.
 - ESC: Tekko 32 4-in-1 ESC.
 - Motors: F90 motors.
 - GPS/Compass: NEO 3 Pro GPS on CAN2.
 - Receiver: RadioLink R9DS on RCIN via SBUS.
 - Transmitter: AT9S Pro.
 - Battery: 5S 5000mAh LiPo.
-- Telemetry radio: 915MHz SiK telemetry on TELEM1.
+- Telemetry radio: 915MHz SiK/RFD style telemetry on TELEM1 depending on setup notes.
 
-Critical mismatch to review: current real configs use `/dev/serial0` at `921600` baud because that was the baud tested earlier on the Pi/Cube connection. The latest hardware context says TELEM2 UART should be `57600`. Before real integration, update `real_mission/parameter_config/mission2_target_payload.json` and related wrappers/configs if TELEM2 is actually configured for 57600.
+Critical baud review item: the hardware brief says TELEM2 at 57600, while the Pi/Cube bench tests showed stable `/dev/serial0` at 921600. Confirm the actual SERIAL port baud in Mission Planner before real flight and update `real_mission/parameter_config/mission2_target_payload.json` if needed.
 
-## Current Tracked Project Structure
+## Full Project Structure
 
 ```text
-.
-.github/
-.github/workflows/
-config/
-docs/
-real_mission/
-real_mission/parameter_config/
-scripts/
-simulation/
-src/
-src/wd_drone/
-target_mission_v2/
-target_mission_v2/configs/
-test_components/
-test_components/camera/
-test_components/mavlink/
-test_components/preflight/
-test_components/software/
-tests/
-tools/
 .github/workflows/tests.yml
 .gitignore
 README.md
@@ -84,7 +85,6 @@ docs/SAFETY_AND_FAILSAFES.md
 docs/SITL_TEST_PLAN.md
 docs/TARGET_MISSION_OPERATIONS.md
 docs/TEAM_PI_WORKFLOW.md
-docs/TECHNICAL_HANDOFF_FOR_CLAUDE.md
 docs/VISION_MODEL_PLAN.md
 real_mission/README.md
 real_mission/open_laptop_camera_window.sh
@@ -164,644 +164,601 @@ tools/pi_camera_check.py
 tools/pi_camera_live_view.py
 ```
 
-## Architecture Decisions
-
-### Mission Separation
-
-Mission 1 and Mission 2 are separated by profile, not by companion-controlled mission upload. Mission 1 remains ArduPilot AUTO-only with `search_enabled=false`; Mission 2 uses the Pi vision/centering/payload controller. This avoids an early risky design where the Pi chooses/uploads missions in the air.
-
-### Control Ownership
-
-ArduPilot/QGC owns takeoff/landing mission items, waypoint navigation, AUTO altitude, AUTO speed by default, RTL behavior, arming, failsafes, geofence, RC failsafe, and battery failsafe. The Pi owns camera acquisition, target detection/confirmation, GUIDED request, low-speed body-frame centering velocity, simulated/physical payload command, AUTO resume after first target, and RTL after both targets.
-
-### State Machine
-
-The active controller is a single explicit state machine: `WAITING_FOR_AUTO -> SEARCH -> WAITING_FOR_GUIDED -> CENTER -> PAYLOAD -> WAITING_FOR_AUTO_RESUME / WAITING_FOR_RTL -> COMPLETE`. This is intentionally simple and testable.
-
-## MAVLink / pymavlink Implementation
-
-Active mission uses `pymavlink.mavutil.mavlink_connection`, waits for heartbeat, parses heartbeat/mode/armed, requests message intervals for `GLOBAL_POSITION_INT`, `MISSION_CURRENT`, and `RC_CHANNELS`, sends `set_mode_send`, sends `SET_POSITION_TARGET_LOCAL_NED` body velocity in GUIDED, sends `MAV_CMD_DO_SET_SERVO` for payload when enabled, and optionally sends `MAV_CMD_DO_CHANGE_SPEED` when companion speed mode is selected. The active mission does not arm or take off; bench tools can arm/motor-test only with explicit safety flags.
-
-## Threading and Concurrency Model
-
-The active mission controller is single-threaded: poll MAVLink, read camera frame, run vision, advance state machine, send command/velocity, draw/log, repeat. The legacy monitor package has a threaded receive client, but it is not the active payload mission controller.
-
-## Vision Integration
-
-Current active vision is OpenCV/NumPy strict color/shape detection. Hailo AI HAT+ is not integrated yet. Future Hailo/YOLO should be added as a detector backend behind the existing `create_detector()`/`search(frame)` interface. No IPC format, refresh rate, or Hailo process exists yet.
-
-## Safety and Error Handling
-
-Covered: heartbeat timeout, mission/search gates, Mission 1 no-search profile, multi-hit target confirmation, active target GUIDED lock through AUTO bounces, lost triangle/center-timeout stays GUIDED and searches, payload waits for GUIDED, payload simulated by default, altitude/speed owned by ArduPilot by default, guarded bench commands, preflight config checks.
-
-Not covered: companion GPS-loss logic, RC override/failsafe beyond ArduPilot, low-battery action beyond ArduPilot, geofence setup from companion, EKF/compass health gate before search, systemd watchdog, Hailo model pipeline, formal camera calibration, real flight validation.
-
-## Known Issues / Uncertainties
-
-- TELEM2 baud mismatch: repo 921600 vs latest hardware context 57600.
-- AR0234 camera may require different rpicam/libcamera settings than current Pi Camera Module style profile.
-- Strict OpenCV detector can still fail under real sunlight/shadows/motion blur.
-- Physical payload servo channel depends on ArduPilot output mapping.
-- Motor mapping must be verified props-off.
-- External mode authority from RC/GCS can still fight GUIDED; code now keeps forcing GUIDED during active target.
-
-## File-by-File Index
+## File-by-File Purpose Index
 
 ### `.github/workflows/tests.yml`
-
-- Purpose: GitHub Actions workflow that installs dependencies and runs the Python/unit checks on pushes/PRs.
-- Libraries/tools: YAML GitHub Actions configuration
+- Purpose: GitHub Actions workflow for dependency install and automated unit checks.
+- Type/libraries: YAML configuration.
 - Lines: 40
 
 ### `.gitignore`
-
-- Purpose: Git ignore rules for local venvs, caches, logs, and generated artifacts.
-- Libraries/tools: text/source file
+- Purpose: Ignores local virtualenvs, caches, logs, snapshots, and generated runtime artifacts.
+- Type/libraries: Project file/data artifact.
 - Lines: 27
 
 ### `README.md`
-
-- Purpose: Top-level project overview and entry points for team members.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Top-level project overview and entry points for real mission, simulation, and tests.
+- Type/libraries: Markdown documentation.
 - Lines: 136
 
 ### `START_HERE.md`
-
-- Purpose: Human-first quickstart for operators/developers joining the project.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Human-first quick start for team members using the repo on Ubuntu or Pi.
+- Type/libraries: Markdown documentation.
 - Lines: 125
 
 ### `config/README.md`
-
-- Purpose: Explains legacy shared config folder.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Explains global non-mission configuration files.
+- Type/libraries: Markdown documentation.
 - Lines: 12
 
 ### `config/settings.json`
-
-- Purpose: Legacy observer config used by src/wd_drone monitoring tools.
-- Libraries/tools: JSON configuration, no runtime library imports
+- Purpose: Small shared project settings used by helper tests/docs.
+- Type/libraries: JSON configuration/profile data.
 - Lines: 29
 
 ### `docs/ARCHITECTURE.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Architecture overview and component ownership boundaries.
+- Type/libraries: Markdown documentation.
 - Lines: 43
 
 ### `docs/CAMERA_CALIBRATION.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Camera setup and calibration notes for Pi camera/live vision.
+- Type/libraries: Markdown documentation.
 - Lines: 62
 
 ### `docs/COMPETITION_REQUIREMENTS.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Notes extracted from Teknofest mission/safety requirements.
+- Type/libraries: Markdown documentation.
 - Lines: 94
 
 ### `docs/MONITORING.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Telemetry and status monitoring notes.
+- Type/libraries: Markdown documentation.
 - Lines: 80
 
 ### `docs/PIXHAWK_PI_TEST_DAY.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Step-by-step Pi/Cube test-day procedure.
+- Type/libraries: Markdown documentation.
 - Lines: 171
 
 ### `docs/PROJECT_STRUCTURE.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Folder/file organization guide.
+- Type/libraries: Markdown documentation.
 - Lines: 116
 
 ### `docs/RASPBERRY_PI_PIXHAWK_MAVLINK.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: UART/MAVLink setup notes between Pi 5 and Cube Orange.
+- Type/libraries: Markdown documentation.
 - Lines: 191
 
 ### `docs/REAL_DRONE_CHECKLIST.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Real-drone readiness checklist before flight.
+- Type/libraries: Markdown documentation.
 - Lines: 41
 
 ### `docs/REAL_MISSION_FLOW.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
-- Lines: 216
+- Purpose: Operator flow for Mission 1 vs Mission 2 and RC/GCS usage.
+- Type/libraries: Markdown documentation.
+- Lines: 222
 
 ### `docs/ROADMAP.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Planned improvements and future work.
+- Type/libraries: Markdown documentation.
 - Lines: 72
 
 ### `docs/SAFETY_AND_FAILSAFES.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
-- Lines: 126
+- Purpose: Safety ownership, ArduPilot failsafes, companion boundaries.
+- Type/libraries: Markdown documentation.
+- Lines: 137
 
 ### `docs/SITL_TEST_PLAN.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Simulation/SITL testing procedure.
+- Type/libraries: Markdown documentation.
 - Lines: 48
 
 ### `docs/TARGET_MISSION_OPERATIONS.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
-- Lines: 163
+- Purpose: Detailed target mission behavior/tuning guide.
+- Type/libraries: Markdown documentation.
+- Lines: 174
 
 ### `docs/TEAM_PI_WORKFLOW.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: How team members sync/run code on the Pi.
+- Type/libraries: Markdown documentation.
 - Lines: 139
 
-### `docs/TECHNICAL_HANDOFF_FOR_CLAUDE.md`
-
-- Purpose: Generated external-review handoff. Not embedded in its own appendix to avoid recursion.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
-- Lines: 10536
-
 ### `docs/VISION_MODEL_PLAN.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Plan for adding trained YOLO/Hailo vision later.
+- Type/libraries: Markdown documentation.
 - Lines: 78
 
 ### `real_mission/README.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
-- Lines: 205
+- Purpose: Real drone mission commands and operating notes.
+- Type/libraries: Markdown documentation.
+- Lines: 211
 
 ### `real_mission/open_laptop_camera_window.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Laptop helper to open live Pi camera/vision viewer over SSH/network.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 8
 
 ### `real_mission/parameter_config/README.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
-- Lines: 99
+- Purpose: Explains real mission parameter files and tunable fields.
+- Type/libraries: Markdown documentation.
+- Lines: 101
 
 ### `real_mission/parameter_config/mission1_no_search.json`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: JSON configuration, no runtime library imports
-- Lines: 114
+- Purpose: Real Mission 1 profile; search disabled, monitor only.
+- Type/libraries: JSON configuration/profile data.
+- Lines: 117
 
 ### `real_mission/parameter_config/mission2_target_payload.json`
-
-- Purpose: Mission 2 profile for real Pi camera, search, centering, payload.
-- Libraries/tools: JSON configuration, no runtime library imports
-- Lines: 114
+- Purpose: Real Mission 2 profile; Pi vision/search/payload enabled with conservative defaults.
+- Type/libraries: JSON configuration/profile data.
+- Lines: 117
 
 ### `real_mission/parameter_config/real_drone.json`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: JSON configuration, no runtime library imports
-- Lines: 114
+- Purpose: Compatibility real-drone profile.
+- Type/libraries: JSON configuration/profile data.
+- Lines: 117
 
 ### `real_mission/run_mission1_no_search.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Runs Mission 1 monitor profile.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 6
 
 ### `real_mission/run_mission2_target_payload.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Runs Mission 2 target/payload profile.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 6
 
 ### `real_mission/run_real_mission.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Generic real mission launcher with selected config.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 28
 
 ### `requirements.txt`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Python package dependencies.
+- Type/libraries: Plain text/data file.
 - Lines: 2
 
 ### `scripts/README.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Helper script guide.
+- Type/libraries: Markdown documentation.
 - Lines: 79
 
 ### `scripts/check_project.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Basic local project sanity checks.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 35
 
 ### `scripts/clean_workspace.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Removes local runtime clutter/caches.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 28
 
 ### `scripts/mavlink_bench.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Wrapper for MAVLink bench CLI.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 15
 
 ### `scripts/pi_cache_wheels.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Pi dependency wheel cache helper.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 22
 
 ### `scripts/pi_camera_check.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Pi camera still/readiness wrapper.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 26
 
 ### `scripts/pi_camera_live.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Pi live OpenCV camera/vision window wrapper.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 59
 
 ### `scripts/pi_mavlink_bench_sequence.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Pi MAVLink bench sequence wrapper.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 9
 
 ### `scripts/pi_test_day_readiness.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Pi test-day readiness wrapper.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 82
 
 ### `scripts/pi_uart_preflight.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: UART preflight helper for Pi serial.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 54
 
 ### `scripts/pi_validate.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Pi-side validation helper.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 20
 
 ### `scripts/run_sitl_monitor.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Legacy SITL monitor launcher.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 13
 
 ### `scripts/run_sitl_observer.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Legacy SITL observer launcher.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 13
 
 ### `scripts/run_uart_monitor.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: UART monitor launcher.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 13
 
 ### `scripts/setup.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Project setup/install helper.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 13
 
 ### `scripts/sync_to_pi.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Rsync helper from laptop to Pi.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 48
 
 ### `simulation/README.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Simulation folder guide.
+- Type/libraries: Markdown documentation.
 - Lines: 94
 
 ### `simulation/enable_gazebo_camera.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Enables the Gazebo camera stream/source.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 11
 
 ### `simulation/example_square_mission.waypoints`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: QGroundControl/Mission Planner waypoint text format
+- Purpose: Example ArduPilot mission file for SITL.
+- Type/libraries: ArduPilot mission waypoint file.
 - Lines: 9
 
 ### `simulation/legacy_shortcuts.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Documents older desktop terminal shortcuts.
+- Type/libraries: Markdown documentation.
 - Lines: 29
 
 ### `simulation/run_target_mission.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: SITL target mission launcher.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 10
 
 ### `simulation/start_gazebo.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Gazebo startup helper.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 29
 
 ### `simulation/start_sitl.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: ArduPilot SITL startup helper.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 27
 
 ### `src/README.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Legacy/experimental package notes.
+- Type/libraries: Markdown documentation.
 - Lines: 13
 
 ### `src/wd_drone/__init__.py`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: standard Python only / no imports
+- Purpose: Python package marker.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
 - Lines: 3
 
 ### `src/wd_drone/config.py`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: from __future__ import annotations; from dataclasses import dataclass; import json; import os; from pathlib import Path; from typing import Any
+- Purpose: Small config loader for the legacy monitor package.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
 - Lines: 114
 
 ### `src/wd_drone/event_logger.py`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: from __future__ import annotations; from dataclasses import asdict, is_dataclass; from datetime import datetime, timezone; import json; from pathlib import Path; from typing import Any
+- Purpose: CSV/event logger utility for legacy monitor package.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
 - Lines: 36
 
 ### `src/wd_drone/main.py`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: from __future__ import annotations; import argparse; import logging; from pathlib import Path; import signal; import sys; import time; from .config import load_config; from .event_logger import EventLogger; from .mavlink_client import MavlinkClient; from .mission_state import MissionObserver
+- Purpose: Legacy mission monitor entry point.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
 - Lines: 187
 
 ### `src/wd_drone/mavlink_client.py`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: from __future__ import annotations; import logging; from typing import Iterable; from pymavlink import mavutil; from .config import ConnectionProfile; from .vehicle_status import VehicleStatus
+- Purpose: Threaded legacy MAVLink receive client.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
 - Lines: 116
 
 ### `src/wd_drone/mission_state.py`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: from __future__ import annotations; from dataclasses import dataclass; from enum import Enum, auto; from typing import Protocol
+- Purpose: Legacy mission-state observer.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
 - Lines: 104
 
 ### `src/wd_drone/vehicle_status.py`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: from __future__ import annotations; from dataclasses import dataclass; import time; from typing import Any; from pymavlink import mavutil
+- Purpose: Vehicle telemetry dataclass for legacy monitor package.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
 - Lines: 113
 
 ### `target_mission_v2/README.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
-- Lines: 293
+- Purpose: Active mission engine guide.
+- Type/libraries: Markdown documentation.
+- Lines: 298
 
 ### `target_mission_v2/camera_sources.py`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: from __future__ import annotations; import os; import select; import shutil; import signal; import subprocess; import time; from typing import Any, Optional, Protocol; import cv2; import numpy as np
+- Purpose: Camera source factory for UDP, OpenCV device, and rpicam MJPEG.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
 - Lines: 197
 
 ### `target_mission_v2/configs/README.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Compatibility/SITL config guide.
+- Type/libraries: Markdown documentation.
 - Lines: 31
 
 ### `target_mission_v2/configs/real_pi_camera_module_3.json`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: JSON configuration, no runtime library imports
-- Lines: 98
+- Purpose: Older Pi Camera Module 3 real profile kept for compatibility.
+- Type/libraries: JSON configuration/profile data.
+- Lines: 99
 
 ### `target_mission_v2/configs/sim_gazebo.json`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: JSON configuration, no runtime library imports
-- Lines: 90
+- Purpose: SITL/Gazebo profile for Ubuntu simulation.
+- Type/libraries: JSON configuration/profile data.
+- Lines: 91
 
 ### `target_mission_v2/control.py`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: from __future__ import annotations; from typing import Optional
+- Purpose: Small control math helpers.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
 - Lines: 28
 
 ### `target_mission_v2/mission_config.json`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: JSON configuration, no runtime library imports
-- Lines: 90
+- Purpose: Compatibility mission config.
+- Type/libraries: JSON configuration/profile data.
+- Lines: 91
 
 ### `target_mission_v2/mission_controller.py`
-
-- Purpose: Main active Mission 2 controller: MAVLink, state machine, vision, payload.
-- Libraries/tools: from __future__ import annotations; import argparse; import json; import math; import signal; import time; from dataclasses import asdict; from enum import Enum; from pathlib import Path; from typing import Any, Optional; import cv2; from pymavlink import mavutil; from camera_sources import CameraLike, SUPPORTED_CAMERA_SOURCES, open_camera; from vision import Detection, HitTracker, SUPPORTED_VISION_BACKENDS, create_detector; from control import altitude_velocity_down, clamp
-- Lines: 1005
+- Purpose: Active Mission 2 controller, MAVLink vehicle adapter, state machine, overlay, payload logic.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
+- Lines: 1067
 
 ### `target_mission_v2/operator_config.json`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: JSON configuration, no runtime library imports
-- Lines: 90
+- Purpose: Operator-facing compatibility config.
+- Type/libraries: JSON configuration/profile data.
+- Lines: 91
 
 ### `target_mission_v2/parameter_config.json`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: JSON configuration, no runtime library imports
-- Lines: 106
+- Purpose: SITL/tuning config with inline help.
+- Type/libraries: JSON configuration/profile data.
+- Lines: 109
 
 ### `target_mission_v2/run.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Target mission launcher.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 26
 
 ### `target_mission_v2/setup.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Target mission local setup helper.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 12
 
 ### `target_mission_v2/test_mission_controller.py`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: import json; import tempfile; import time; import unittest; from pathlib import Path; import cv2; import numpy as np; from vision import Detection, HitTracker, StrictShapeDetector; from control import altitude_velocity_down; from camera_sources import build_rpicam_mjpeg_command; from mission_controller import (
-- Lines: 756
+- Purpose: Mission, vision, config, and safety unit tests.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
+- Lines: 883
 
 ### `target_mission_v2/vision.py`
-
-- Purpose: OpenCV strict shape/color detector and hit tracker.
-- Libraries/tools: from __future__ import annotations; import math; import time; from collections import deque; from dataclasses import dataclass; from typing import Any, Deque, Dict, Iterable, Optional; import cv2; import numpy as np
+- Purpose: Strict OpenCV color/shape detector and tracker.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
 - Lines: 405
 
 ### `test_components/COMMANDS.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Copy/paste test command reference.
+- Type/libraries: Markdown documentation.
 - Lines: 216
 
 ### `test_components/README.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Component test folder guide.
+- Type/libraries: Markdown documentation.
 - Lines: 22
 
 ### `test_components/camera/check_on_pi.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Camera check wrapper for Pi.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 7
 
 ### `test_components/camera/live_from_laptop.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Laptop camera live-view helper.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 7
 
 ### `test_components/mavlink/MOTOR_MAPPING.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Motor command vs physical motor mapping notes.
+- Type/libraries: Markdown documentation.
 - Lines: 69
 
 ### `test_components/mavlink/bench_sequence.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: MAVLink mode/arm sequence bench test.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 7
 
 ### `test_components/mavlink/health.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Read-only MAVLink health telemetry test.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 7
 
 ### `test_components/mavlink/motor_test.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Props-off MAVLink motor test wrapper.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 12
 
 ### `test_components/mavlink/rc_channels.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: RC channel observer wrapper.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 7
 
 ### `test_components/mavlink/servo_payload_test.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Payload servo bench test wrapper.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 25
 
 ### `test_components/mavlink/status.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Read-only heartbeat/mode status wrapper.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 7
 
 ### `test_components/preflight/full_check.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
-- Lines: 77
+- Purpose: Read-only-ish combined preflight check with optional camera/MAVLink sections.
+- Type/libraries: Bash shell wrapper/helper.
+- Lines: 78
 
 ### `test_components/software/run_all_checks.sh`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: bash; may invoke project Python tools and shell utilities
+- Purpose: Runs software/unit checks.
+- Type/libraries: Bash shell wrapper/helper.
 - Lines: 7
 
 ### `tests/README.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Unit test folder guide.
+- Type/libraries: Markdown documentation.
 - Lines: 16
 
 ### `tests/test_config.py`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: import json; from pathlib import Path; import tempfile; import unittest; from wd_drone.config import load_config
+- Purpose: Config loading tests.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
 - Lines: 52
 
 ### `tests/test_mavlink_bench.py`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: import unittest; from tools.mavlink_bench import format_rc_channels
+- Purpose: MAVLink bench helper tests.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
 - Lines: 14
 
 ### `tests/test_mission_state.py`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: from dataclasses import dataclass; import unittest; from wd_drone.mission_state import MissionObserver, MissionState
+- Purpose: Legacy mission-state tests.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
 - Lines: 87
 
 ### `tools/README.md`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: Markdown/text documentation, no runtime library imports
+- Purpose: Tools folder guide.
+- Type/libraries: Markdown documentation.
 - Lines: 9
 
 ### `tools/mavlink_bench.py`
-
-- Purpose: Bench-safe MAVLink command/status/motor/servo/RC test CLI.
-- Libraries/tools: from __future__ import annotations; import argparse; import time; from typing import Any, Optional; from pymavlink import mavutil
+- Purpose: MAVLink bench CLI for status, health, mode, servo, motor, RC tests.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
 - Lines: 646
 
 ### `tools/pi_camera_check.py`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: from __future__ import annotations; import argparse; import json; import shutil; import subprocess; import sys; import time; from collections import deque; from pathlib import Path; from typing import Optional; import cv2  # noqa: E402; from camera_sources import open_camera  # noqa: E402
+- Purpose: Pi camera check utility.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
 - Lines: 137
 
 ### `tools/pi_camera_live_view.py`
-
-- Purpose: Tracked project file; see full content below for exact behavior.
-- Libraries/tools: from __future__ import annotations; import argparse; import json; import math; import os; import select; import shlex; import signal; import subprocess; import sys; import time; from collections import deque; from pathlib import Path; from typing import Optional; import cv2  # noqa: E402; import numpy as np  # noqa: E402; from camera_sources import build_rpicam_mjpeg_command  # noqa: E402; from vision import Detection, create_detector  # noqa: E402
+- Purpose: Live OpenCV camera window and strict-shape detector test utility.
+- Type/libraries: Python; see imports in code. Main external libraries are pymavlink, OpenCV cv2, NumPy.
 - Lines: 271
 
-# Full Source / Config / Documentation Appendix
+## Architecture Decisions
 
-Every tracked file except this generated handoff file is included below verbatim. Runtime logs and `.git`/`.venv`/`__pycache__` files are intentionally excluded.
+### Mission Separation
+Mission selection is profile-based. Mission 1 uses a no-search profile and ArduPilot AUTO mission behavior. Mission 2 uses the target/payload profile. The Pi does not upload or select waypoint missions in flight; the operator uploads the proper mission in Mission Planner/QGC and starts AUTO.
 
-## `.github/workflows/tests.yml`
+### Control Ownership
+ArduPilot owns takeoff, mission waypoints, AUTO speed/altitude, arming, RTL, geofence, RC failsafe, battery failsafe, EKF/GPS acceptance, and vehicle stabilization. The Pi owns only the companion task: target search, confirmation, low-speed GUIDED centering, payload command, and mission resume/RTL requests after payload tasks.
 
-````yaml
+### State Machine
+The active mission controller is an explicit state machine: `WAITING_FOR_AUTO -> SEARCH -> WAITING_FOR_GUIDED -> CENTER -> PAYLOAD -> WAITING_FOR_AUTO_RESUME / WAITING_FOR_RTL -> COMPLETE`. This keeps behavior observable, testable, and simple enough for competition debugging.
+
+### Configuration First
+Normal tuning belongs in JSON profiles, especially `real_mission/parameter_config/mission2_target_payload.json` and `target_mission_v2/parameter_config.json`, not in Python. Code validates key ranges and tests load all profiles.
+
+### What Was Not Chosen
+The project intentionally does not currently use a complex behavior tree, ROS graph, companion mission uploader, or Hailo/YOLO runtime in the active mission. Those are useful later but would add integration risk before the baseline mission is proven in real flight.
+
+## MAVLink / pymavlink Implementation
+
+Active mission MAVLink is implemented in `target_mission_v2/mission_controller.py` through the `Vehicle` class:
+
+- Connection: `mavutil.mavlink_connection(connection, baud=...)` using JSON config.
+- Heartbeat acquisition: waits for a vehicle/autopilot heartbeat only; ignores GCS/onboard-controller heartbeats.
+- Telemetry parsing: consumes HEARTBEAT, GLOBAL_POSITION_INT, VFR_HUD, MISSION_CURRENT, ATTITUDE, HIGHRES_IMU, SYS_STATUS, BATTERY_STATUS, GPS_RAW_INT, RC_CHANNELS, and PARAM_VALUE where relevant.
+- Mode switching: sends `set_mode_send` with the ArduCopter mode mapping from pymavlink.
+- Guided centering: sends `SET_POSITION_TARGET_LOCAL_NED` in body-offset NED with velocity fields enabled and position/acceleration/yaw ignored.
+- Search speed: if `navigation.search_speed_source` is `companion_do_change_speed`, sends `MAV_CMD_DO_CHANGE_SPEED`; default is `qgc_mission`, so no companion speed command is sent.
+- Payload: sends `MAV_CMD_DO_SET_SERVO` only when `payload.simulate_only=false`; otherwise logs simulated payload drops.
+- Parameter enforcement: optional; real profiles currently disable enforcement so Mission Planner/QGC/ArduPilot parameters remain the source of truth.
+- Arming/takeoff: active mission does not arm or take off. Bench tools can test arm/mode/motor/servo behavior explicitly, with props-off warnings.
+
+`tools/mavlink_bench.py` is the bench CLI for read-only status/health/RC tests plus explicit mode/servo/motor test commands. It also filters/labels heartbeats to reduce confusion from GCS component heartbeats.
+
+## Threading and Concurrency Model
+
+The active target mission is single-threaded by design: poll MAVLink, read one camera frame, run detector, update the state machine, send at most the needed command/velocity, draw/log, repeat. This minimizes race conditions on the Pi 5. The legacy `src/wd_drone/mavlink_client.py` has a threaded receiver for older monitoring experiments, but it is not the active payload mission controller.
+
+## Vision Integration
+
+Current active vision is OpenCV/NumPy strict color/shape detection in `target_mission_v2/vision.py`. It detects red triangles and blue/purple-blue hexagons, rejects squares/rectangles/runway strips, uses multi-hit confirmation, and tracks the confirmed target during centering. The mission controller calls detector methods directly in-process; there is no IPC layer yet.
+
+Hailo AI HAT+ is not integrated yet. The intended future design is to add a detector backend behind the existing interface (`create_detector`, `search(frame)`, `track_colour(...)` or equivalent target-return format). The output format should mirror the current `Detection` dataclass: target label, center x/y, area, confidence, vertex metrics, shape metrics, and bbox. Refresh rate should be measured on the Pi after the fan/AI HAT/camera are installed; no safe real refresh rate is claimed yet.
+
+## Safety and Error Handling
+
+Covered in current code/tests:
+
+- Heartbeat timeout exits active mission.
+- HEARTBEAT filtering prevents GCS/onboard heartbeats from changing vehicle mode state.
+- Mission 1 no-search profile prevents accidental target logic during the figure-8 mission.
+- Search gates require AUTO, armed, configured waypoint, `search_enabled`, and optional RC gate.
+- Multi-hit target confirmation reduces one-frame false locks.
+- Active target AUTO bounce keeps target lock and retries GUIDED.
+- External non-mission mode during target work stands down instead of fighting pilot/failsafe.
+- Camera frame timeout during active target holds GUIDED/zero velocity.
+- Payload waits for mission-owned mode and is simulated by default.
+- Real config keeps AUTO speed/altitude owned by QGC/ArduPilot.
+- Preflight script checks key real-mission safety defaults.
+- Unit tests cover vision rejection cases, target flow, configs, mode bounce behavior, and safety stand-down paths.
+
+Not covered or still ArduPilot-owned:
+
+- GPS loss, EKF failsafe, RC failsafe, low battery, geofence, and RTL altitude are expected to be configured/tested in ArduPilot/Mission Planner.
+- No companion-side arming gate or autonomous takeoff logic exists in the active mission.
+- No systemd watchdog/service restart is installed yet.
+- No real Hailo inference path exists yet.
+- No formal camera intrinsic/extrinsic calibration is applied to centering yet; centering is image-error proportional control.
+
+## Search Speed Answer
+
+The current real and simulation profiles use `navigation.search_speed_source = qgc_mission`. That means search speed comes from the Mission Planner/QGC mission items and ArduPilot navigation parameters, not from companion code. If you see about 1.5-1.6 m/s while QGC says 3 m/s, check the uploaded mission ChangeSpeed items, waypoint speed acceptance, WPNAV speed parameters, and vehicle limits. The code can own search speed only if you intentionally switch to `companion_do_change_speed`, but the safer default is to keep speed in QGC/Mission Planner so one authority owns AUTO navigation.
+
+## What Is Not Done Yet
+
+- Real flight validation with props on and safety pilot.
+- Final TELEM2 baud decision between 57600 and the bench-tested 921600.
+- Hailo YOLO backend integration and latency/FPS testing.
+- AR0234-specific rpicam/libcamera tuning under sunlight and vibration.
+- Camera calibration and altitude-to-pixel centering model.
+- Systemd service for mission startup/log capture on Pi.
+- Formal RC switch mapping for optional Mission 2 search enable.
+- Physical payload release disabled until bench and mechanism tests pass.
+
+## Known Issues / Assumptions
+
+- Current real profiles use `/dev/serial0` at 921600 because that worked in bench tests; hardware notes mention TELEM2 57600, so this must be reconciled.
+- Strict color/shape vision can fail under real lighting, shadows, motion blur, target wear, and camera exposure changes.
+- Centering accuracy depends on the camera being mounted downward and signs in `image_y_to_forward_sign` / `image_x_to_right_sign` being correct.
+- Servo channel 5 assumes payload servo signal is actually on ArduPilot output 5 with correct SERVO mapping/power.
+- Motor order must be verified with the real frame and ArduPilot motor test; command order and physical label order may differ.
+
+## Verification Snapshot
+
+Latest local checks before this handoff was regenerated:
+
+```text
+python3 -m unittest -v test_mission_controller.py  # 72 tests passed
+./test_components/software/run_all_checks.sh      # 7 general tests + 72 mission tests passed
+SKIP_CAMERA=1 SKIP_MAVLINK=1 ./test_components/preflight/full_check.sh  # passed on laptop; camera/MAVLink skipped
+```
+
+## Full Code / Config / Documentation Appendix
+
+Every tracked file except this generated handoff file is included below verbatim. Runtime logs, `.git`, `.venv`, and `__pycache__` files are not tracked and are excluded.
+
+### `.github/workflows/tests.yml`
+
+`````yml
 name: tests
 
 on:
@@ -842,11 +799,11 @@ jobs:
         run: |
           . .ci-venv/bin/activate
           python -m py_compile target_mission_v2/*.py src/wd_drone/*.py tools/*.py
-````
+`````
 
-## `.gitignore`
+### `.gitignore`
 
-````
+`````text
 __pycache__/
 *.py[cod]
 *.so
@@ -874,11 +831,11 @@ models/*.onnx
 models/*.pt
 secrets/
 .env
-````
+`````
 
-## `README.md`
+### `README.md`
 
-````markdown
+`````md
 # WD Drone Autonomous Mission
 
 Autonomous rotary-wing UAV mission software for the 2026 UAV competition.
@@ -1015,11 +972,11 @@ Keep this default until bench tests pass:
 ```
 
 Do not run arm, servo, or motor tests with propellers installed.
-````
+`````
 
-## `START_HERE.md`
+### `START_HERE.md`
 
-````markdown
+`````md
 # Start Here
 
 This repo has three folders you should care about first:
@@ -1145,11 +1102,11 @@ Do not edit `.venv/`, `.git/`, `__pycache__/`, or logs.
 5. `simulation/README.md`
 6. `docs/SAFETY_AND_FAILSAFES.md`
 7. `docs/PIXHAWK_PI_TEST_DAY.md`
-````
+`````
 
-## `config/README.md`
+### `config/README.md`
 
-````markdown
+`````md
 # Config
 
 This folder configures the read-only observer package in `src/wd_drone/`.
@@ -1162,11 +1119,11 @@ Active mission configs are in:
 target_mission_v2/
 target_mission_v2/configs/
 ```
-````
+`````
 
-## `config/settings.json`
+### `config/settings.json`
 
-````json
+`````json
 {
   "active_profile": "sitl",
   "profiles": {
@@ -1196,11 +1153,11 @@ target_mission_v2/configs/
     "mission_complete_waypoint": 999
   }
 }
-````
+`````
 
-## `docs/ARCHITECTURE.md`
+### `docs/ARCHITECTURE.md`
 
-````markdown
+`````md
 # System Architecture
 
 ```mermaid
@@ -1244,11 +1201,11 @@ flowchart TD
 - Mission event logging
 
 The Raspberry Pi must never send raw motor commands.
-````
+`````
 
-## `docs/CAMERA_CALIBRATION.md`
+### `docs/CAMERA_CALIBRATION.md`
 
-````markdown
+`````md
 # Camera Calibration
 
 Gazebo camera images are not the same as Raspberry Pi Camera Module 3 images.
@@ -1311,11 +1268,11 @@ The target is considered centered when the pixel error is inside:
 Smaller values are more precise in Gazebo but can oscillate with GPS noise,
 wind, camera vibration, and real lens distortion. For real flights, start
 conservative and reduce the value only after stable low-speed tests.
-````
+`````
 
-## `docs/COMPETITION_REQUIREMENTS.md`
+### `docs/COMPETITION_REQUIREMENTS.md`
 
-````markdown
+`````md
 # Competition Requirements For This Software
 
 Source files reviewed:
@@ -1410,11 +1367,11 @@ The wiring notes mention:
 - strain relief/hot glue where wires enter screw terminals.
 
 These are tracked in `docs/SAFETY_AND_FAILSAFES.md`.
-````
+`````
 
-## `docs/MONITORING.md`
+### `docs/MONITORING.md`
 
-````markdown
+`````md
 # Monitoring
 
 Monitoring has two levels:
@@ -1495,11 +1452,11 @@ Before motor tests:
 - GPS status understood, even if GPS is not connected yet;
 - battery/power readings are sane;
 - Mission Planner agrees with the Pi mode output.
-````
+`````
 
-## `docs/PIXHAWK_PI_TEST_DAY.md`
+### `docs/PIXHAWK_PI_TEST_DAY.md`
 
-````markdown
+`````md
 # Pixhawk + Raspberry Pi 5 Test Day
 
 Use this when the Cube Orange and Raspberry Pi 5 are connected for bench tests
@@ -1671,11 +1628,11 @@ only tests mission supervision, vision, and guided centering logic.
 
 Enable physical payload only after mode, servo, camera, and simulated mission
 tests are clean.
-````
+`````
 
-## `docs/PROJECT_STRUCTURE.md`
+### `docs/PROJECT_STRUCTURE.md`
 
-````markdown
+`````md
 # Project Structure
 
 This file explains the repository in plain language.
@@ -1792,11 +1749,11 @@ These are not source code:
 - `logs/`: runtime logs.
 
 Do not edit those by hand.
-````
+`````
 
-## `docs/RASPBERRY_PI_PIXHAWK_MAVLINK.md`
+### `docs/RASPBERRY_PI_PIXHAWK_MAVLINK.md`
 
-````markdown
+`````md
 # Raspberry Pi 5 to Pixhawk MAVLink Bench Tests
 
 Use this to verify communication before running the autonomous mission.
@@ -1988,11 +1945,11 @@ Props off is mandatory. The script refuses more than 15 percent throttle.
 ```
 
 Do not run motor tests on a fully assembled aircraft with propellers mounted.
-````
+`````
 
-## `docs/REAL_DRONE_CHECKLIST.md`
+### `docs/REAL_DRONE_CHECKLIST.md`
 
-````markdown
+`````md
 # Real Drone Checklist
 
 Use this before moving from SITL to Cube Orange Plus and Raspberry Pi 5.
@@ -2034,11 +1991,11 @@ Enable physical payload only after:
 - real-camera recordings pass offline;
 - low-speed flight centering is correct;
 - servo release and reset are verified on the bench.
-````
+`````
 
-## `docs/REAL_MISSION_FLOW.md`
+### `docs/REAL_MISSION_FLOW.md`
 
-````markdown
+`````md
 # Real Mission Flow
 
 This is the recommended operator flow for the two competition tasks.
@@ -2182,6 +2139,7 @@ The real config therefore has:
 ```json
 "safety": {
   "max_guided_auto_bounces_per_target": null,
+  "camera_frame_timeout_s": 2.0,
   "active_target_abort_mode": "AUTO"
 }
 ```
@@ -2194,6 +2152,11 @@ This means:
   and keeps requesting GUIDED;
 - normal AUTO resume still happens after a successful payload action when there
   is another target left.
+
+If a pilot switch or failsafe puts the vehicle into LOITER, STABILIZE, RTL, LAND,
+or another non-mission mode during target work, the Pi does not force the mission
+back. It sends a zero-velocity command, clears the current target, and waits for
+AUTO again.
 
 ## Why Not Two RC Buttons Yet?
 
@@ -2255,11 +2218,11 @@ Before trusting it for payload release:
 
 YOLO/AI HAT+ can be added later as an optional backend, but the simple detector
 should remain as a fallback until the trained model passes real-world tests.
-````
+`````
 
-## `docs/ROADMAP.md`
+### `docs/ROADMAP.md`
 
-````markdown
+`````md
 # Development Roadmap
 
 ## Phase 1 — MAVLink link
@@ -2332,11 +2295,11 @@ should remain as a fallback until the trained model passes real-world tests.
 - [ ] Centering-only test
 - [ ] Dummy payload drop test
 - [ ] Complete autonomous mission test
-````
+`````
 
-## `docs/SAFETY_AND_FAILSAFES.md`
+### `docs/SAFETY_AND_FAILSAFES.md`
 
-````markdown
+`````md
 # Safety And Failsafes
 
 Safety is part of the mission design, not a final checkbox.
@@ -2428,6 +2391,17 @@ The default real mission profile keeps:
 }
 ```
 
+During Mission 2 the companion only treats AUTO and GUIDED as mission-owned
+modes. If ArduPilot briefly reports AUTO while the Pi is centering a confirmed
+target, the Pi keeps the target lock and requests GUIDED again. If the pilot or
+failsafe changes to LOITER, STABILIZE, RTL, LAND, or another non-mission mode,
+the Pi sends zero velocity, drops the active target lock, and waits for AUTO
+instead of fighting the aircraft.
+
+`safety.camera_frame_timeout_s` protects active target work if the camera feed
+stalls. After the timeout, the Pi holds position in GUIDED and reports a camera
+timeout in the overlay/log instead of continuing the route blindly.
+
 ## Before Real Payload Release
 
 Keep `payload.simulate_only` set to `true` until:
@@ -2463,11 +2437,11 @@ vcgencmd get_throttled
 
 Stop heavy work near 80 C. Do not run long OpenCV/YOLO workloads without
 cooling.
-````
+`````
 
-## `docs/SITL_TEST_PLAN.md`
+### `docs/SITL_TEST_PLAN.md`
 
-````markdown
+`````md
 # SITL Test Plan
 
 Run this matrix after detector or controller changes.
@@ -2516,11 +2490,11 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 cd target_mission_v2
 python3 -m unittest -v test_mission_controller.py
 ```
-````
+`````
 
-## `docs/TARGET_MISSION_OPERATIONS.md`
+### `docs/TARGET_MISSION_OPERATIONS.md`
 
-````markdown
+`````md
 # Target Mission Operations
 
 This is the active operating guide for the real mission wrapper in
@@ -2635,6 +2609,7 @@ GUIDED bounce protection is controlled by:
 ```json
 "guided_auto_bounce_grace_s": null,
 "max_guided_auto_bounces_per_target": null,
+"camera_frame_timeout_s": 2.0,
 "active_target_abort_mode": "AUTO",
 "mode_retry_interval_s": 0.2
 ```
@@ -2648,6 +2623,16 @@ requesting GUIDED until centering and payload are finished.
 The overlay shows `Guided bounces`. This counter increases only when the
 controller is already centering a target and ArduPilot reports AUTO. It does not
 count the normal AUTO resume after one target is complete.
+
+If the vehicle enters a non-mission mode such as LOITER, STABILIZE, RTL, or LAND
+during active target work, the Pi sends one zero-velocity command, clears the
+target lock, and waits for AUTO. That prevents the companion from fighting a
+pilot command or ArduPilot failsafe.
+
+If the camera stops delivering frames during active target work for longer than
+`camera_frame_timeout_s`, the Pi holds position in GUIDED and keeps requesting
+GUIDED. This is meant to avoid continuing AUTO blindly when the confirmed target
+camera stream freezes.
 
 Temporary target loss during centering is controlled by:
 
@@ -2684,11 +2669,11 @@ Mask windows are disabled by default:
 ```
 
 Turn masks on only when debugging HSV thresholds.
-````
+`````
 
-## `docs/TEAM_PI_WORKFLOW.md`
+### `docs/TEAM_PI_WORKFLOW.md`
 
-````markdown
+`````md
 # Team Raspberry Pi Workflow
 
 This guide is for team members who need to inspect, edit, sync, and test the
@@ -2828,11 +2813,11 @@ Give teammates repository access from GitHub:
 
 For Pi access, GitHub permission is not enough. The Pi still needs each
 teammate's SSH public key in `/home/pi5/.ssh/authorized_keys`.
-````
+`````
 
-## `docs/VISION_MODEL_PLAN.md`
+### `docs/VISION_MODEL_PLAN.md`
 
-````markdown
+`````md
 # Vision Model Plan
 
 The mission should stay simple on the Raspberry Pi. Classical shape detection
@@ -2911,11 +2896,11 @@ A trained detector is not ready for flight until it passes:
 - real-camera video tests;
 - props-off Pixhawk mode and payload tests;
 - low-speed centering with payload simulation enabled.
-````
+`````
 
-## `real_mission/README.md`
+### `real_mission/README.md`
 
-````markdown
+`````md
 # Real Mission
 
 This folder is the operator-facing place for the real drone mission.
@@ -3054,6 +3039,7 @@ The real config now uses:
 ```json
 "safety": {
   "max_guided_auto_bounces_per_target": null,
+  "camera_frame_timeout_s": 2.0,
   "active_target_abort_mode": "AUTO"
 }
 ```
@@ -3061,6 +3047,11 @@ The real config now uses:
 So `GUIDED -> AUTO -> GUIDED` bounces are retried without dropping the target
 lock. The Pi keeps requesting GUIDED until the target is centered and payload is
 finished.
+
+If the pilot or failsafe changes the vehicle to LOITER, STABILIZE, RTL, LAND, or
+another non-mission mode, the Pi stands down, sends zero velocity, clears the
+target lock, and waits for AUTO. That keeps the companion from overriding a real
+safety decision.
 
 ## Laptop Camera Window
 
@@ -3121,11 +3112,11 @@ The default real-drone config keeps:
 
 That means the Pi can run headless and will not physically drop payload until
 you intentionally enable it after bench tests.
-````
+`````
 
-## `real_mission/open_laptop_camera_window.sh`
+### `real_mission/open_laptop_camera_window.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -3134,11 +3125,11 @@ CONFIG_PATH="${REAL_MISSION_CONFIG:-$ROOT/real_mission/parameter_config/mission2
 
 cd "$ROOT"
 exec ./scripts/pi_camera_live.sh --config "$CONFIG_PATH" "$@"
-````
+`````
 
-## `real_mission/parameter_config/README.md`
+### `real_mission/parameter_config/README.md`
 
-````markdown
+`````md
 # Real Mission Parameter Config
 
 Edit the named mission profile for the real Raspberry Pi 5 + Cube Orange mission:
@@ -3166,6 +3157,7 @@ Do not edit Python code for normal tuning. Start here first.
 | `safety.guided_auto_bounce_grace_s` | Time label for AUTO bounce diagnostics. | Keep `null` so active target GUIDED lock has no time limit. |
 | `safety.max_guided_auto_bounces_per_target` | Diagnostic counter for repeated `GUIDED -> AUTO` bounces. | Keep `null`; active target bounces should not abort centering. |
 | `safety.active_target_abort_mode` | Fallback mode for explicit abort paths, not normal target tracking. | Use `AUTO` only when you intentionally want the mission to continue after abort. |
+| `safety.camera_frame_timeout_s` | Active-target camera freeze timeout. | Start at `2.0`; set `null` only for debugging. |
 | `vision.required_hits` | Number of stable detections before target lock. | Higher is safer but slower. |
 | `vision.search_min_area_px` | Smallest target area accepted during search. | Lower for higher altitude, higher to reject noise. |
 | `payload.simulate_only` | If `true`, no servo command is sent. | Keep `true` until servo bench passes. |
@@ -3239,11 +3231,11 @@ in `mission2_target_payload.json`:
 ```
 
 Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
-````
+`````
 
-## `real_mission/parameter_config/mission1_no_search.json`
+### `real_mission/parameter_config/mission1_no_search.json`
 
-````json
+`````json
 {
   "_help": {
     "mission.search_start_wp": "First AUTO mission item where the Pi is allowed to search for targets.",
@@ -3259,7 +3251,9 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "vision.search_min_area_px": "Lower this carefully if real targets are too small at higher altitude.",
     "payload.simulate_only": "Keep true until servo and payload bench tests pass. Set false only for physical payload output.",
     "payload.servo_channel": "Pixhawk output channel for payload. Use 5 when the payload servo signal wire is on MAIN OUT / signal 5.",
-    "display.show_main_window": "Keep false on Raspberry Pi OS Lite. Use real_mission/open_laptop_camera_window.sh on the Ubuntu laptop for live viewing."
+    "display.show_main_window": "Keep false on Raspberry Pi OS Lite. Use real_mission/open_laptop_camera_window.sh on the Ubuntu laptop for live viewing.",
+    "safety.camera_frame_timeout_s": "If camera frames stop during active target work, hold position after this many seconds. Set null to disable.",
+    "safety.manual_override_behavior": "If the pilot/failsafe changes to a non-AUTO/non-GUIDED mode, the Pi stops commanding and waits for AUTO instead of fighting the pilot."
   },
   "mavlink": {
     "connection": "/dev/serial0",
@@ -3343,6 +3337,7 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
+    "camera_frame_timeout_s": 2.0,
     "payload_requires_guided": true,
     "payload_min_altitude_m": null,
     "payload_max_altitude_m": null
@@ -3358,11 +3353,11 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "flush_interval_s": 0.5
   }
 }
-````
+`````
 
-## `real_mission/parameter_config/mission2_target_payload.json`
+### `real_mission/parameter_config/mission2_target_payload.json`
 
-````json
+`````json
 {
   "_help": {
     "mission.search_start_wp": "First AUTO mission item where the Pi is allowed to search for targets.",
@@ -3378,7 +3373,9 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "vision.search_min_area_px": "Lower this carefully if real targets are too small at higher altitude.",
     "payload.simulate_only": "Keep true until servo and payload bench tests pass. Set false only for physical payload output.",
     "payload.servo_channel": "Pixhawk output channel for payload. Use 5 when the payload servo signal wire is on MAIN OUT / signal 5.",
-    "display.show_main_window": "Keep false on Raspberry Pi OS Lite. Use real_mission/open_laptop_camera_window.sh on the Ubuntu laptop for live viewing."
+    "display.show_main_window": "Keep false on Raspberry Pi OS Lite. Use real_mission/open_laptop_camera_window.sh on the Ubuntu laptop for live viewing.",
+    "safety.camera_frame_timeout_s": "If camera frames stop during active target work, hold position after this many seconds. Set null to disable.",
+    "safety.manual_override_behavior": "If the pilot/failsafe changes to a non-AUTO/non-GUIDED mode, the Pi stops commanding and waits for AUTO instead of fighting the pilot."
   },
   "mavlink": {
     "connection": "/dev/serial0",
@@ -3462,6 +3459,7 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
+    "camera_frame_timeout_s": 2.0,
     "payload_requires_guided": true,
     "payload_min_altitude_m": null,
     "payload_max_altitude_m": null
@@ -3477,11 +3475,11 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "flush_interval_s": 0.5
   }
 }
-````
+`````
 
-## `real_mission/parameter_config/real_drone.json`
+### `real_mission/parameter_config/real_drone.json`
 
-````json
+`````json
 {
   "_help": {
     "mission.search_start_wp": "First AUTO mission item where the Pi is allowed to search for targets.",
@@ -3497,7 +3495,9 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "vision.search_min_area_px": "Lower this carefully if real targets are too small at higher altitude.",
     "payload.simulate_only": "Keep true until servo and payload bench tests pass. Set false only for physical payload output.",
     "payload.servo_channel": "Pixhawk output channel for payload. Use 5 when the payload servo signal wire is on MAIN OUT / signal 5.",
-    "display.show_main_window": "Keep false on Raspberry Pi OS Lite. Use real_mission/open_laptop_camera_window.sh on the Ubuntu laptop for live viewing."
+    "display.show_main_window": "Keep false on Raspberry Pi OS Lite. Use real_mission/open_laptop_camera_window.sh on the Ubuntu laptop for live viewing.",
+    "safety.camera_frame_timeout_s": "If camera frames stop during active target work, hold position after this many seconds. Set null to disable.",
+    "safety.manual_override_behavior": "If the pilot/failsafe changes to a non-AUTO/non-GUIDED mode, the Pi stops commanding and waits for AUTO instead of fighting the pilot."
   },
   "mavlink": {
     "connection": "/dev/serial0",
@@ -3581,6 +3581,7 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
+    "camera_frame_timeout_s": 2.0,
     "payload_requires_guided": true,
     "payload_min_altitude_m": null,
     "payload_max_altitude_m": null
@@ -3596,31 +3597,31 @@ Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
     "flush_interval_s": 0.5
   }
 }
-````
+`````
 
-## `real_mission/run_mission1_no_search.sh`
+### `real_mission/run_mission1_no_search.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 exec "$ROOT/real_mission/run_real_mission.sh" "$ROOT/real_mission/parameter_config/mission1_no_search.json"
-````
+`````
 
-## `real_mission/run_mission2_target_payload.sh`
+### `real_mission/run_mission2_target_payload.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 exec "$ROOT/real_mission/run_real_mission.sh" "$ROOT/real_mission/parameter_config/mission2_target_payload.json"
-````
+`````
 
-## `real_mission/run_real_mission.sh`
+### `real_mission/run_real_mission.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -3649,18 +3650,18 @@ PYTHON_BIN="$(pick_python)" || {
 
 cd "$ROOT"
 exec "$PYTHON_BIN" target_mission_v2/mission_controller.py --config "$CONFIG_PATH"
-````
+`````
 
-## `requirements.txt`
+### `requirements.txt`
 
-````text
+`````txt
 pymavlink==2.4.49
 pyserial==3.5
-````
+`````
 
-## `scripts/README.md`
+### `scripts/README.md`
 
-````markdown
+`````md
 # Scripts
 
 These are terminal commands for humans.
@@ -3740,11 +3741,11 @@ Keys: `q`/Esc quit, `s` saves a snapshot, `m` toggles red/blue masks.
 - `run_sitl_observer.sh`: read-only monitor for SITL.
 - `run_uart_monitor.sh`: read-only monitor for the real Cube/Pi UART profile.
 - `run_sitl_monitor.sh`: SITL monitor helper.
-````
+`````
 
-## `scripts/check_project.sh`
+### `scripts/check_project.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -3780,11 +3781,11 @@ PYTHONPATH=src "$PYTHON_BIN" -m unittest discover -s tests -v
     "$PYTHON_BIN" -m unittest -v test_mission_controller.py
 )
 "$PYTHON_BIN" -m py_compile target_mission_v2/*.py src/wd_drone/*.py tools/*.py
-````
+`````
 
-## `scripts/clean_workspace.sh`
+### `scripts/clean_workspace.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -3813,11 +3814,11 @@ if [[ "$REMOVE_LOGS" == "1" ]]; then
         fi
     done
 fi
-````
+`````
 
-## `scripts/mavlink_bench.sh`
+### `scripts/mavlink_bench.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -3833,11 +3834,11 @@ fi
 
 source .venv/bin/activate
 python tools/mavlink_bench.py "$@"
-````
+`````
 
-## `scripts/pi_cache_wheels.sh`
+### `scripts/pi_cache_wheels.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -3860,11 +3861,11 @@ python -m pip download -r requirements.txt -d .wheelhouse
 echo "[READY] Cached Python wheels in $(pwd)/.wheelhouse"
 ls -1 .wheelhouse
 REMOTE_SCRIPT
-````
+`````
 
-## `scripts/pi_camera_check.sh`
+### `scripts/pi_camera_check.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -3891,11 +3892,11 @@ PYTHON_BIN="$(pick_python)" || {
 }
 
 exec "$PYTHON_BIN" tools/pi_camera_check.py "$@"
-````
+`````
 
-## `scripts/pi_camera_live.sh`
+### `scripts/pi_camera_live.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -3955,11 +3956,11 @@ PYTHON_BIN="$(pick_python)" || {
 }
 
 exec "$PYTHON_BIN" tools/pi_camera_live_view.py "$@"
-````
+`````
 
-## `scripts/pi_mavlink_bench_sequence.sh`
+### `scripts/pi_mavlink_bench_sequence.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -3969,11 +3970,11 @@ exec ./scripts/mavlink_bench.sh bench-sequence \
     --connection "${MAVLINK_CONNECTION:-/dev/serial0}" \
     --baud "${MAVLINK_BAUD:-921600}" \
     "$@"
-````
+`````
 
-## `scripts/pi_test_day_readiness.sh`
+### `scripts/pi_test_day_readiness.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -4056,11 +4057,11 @@ echo "4. Test STABILIZE, GUIDED, AUTO, then back to STABILIZE."
 echo "5. Servo/output tests only after channel is verified and payload is safe."
 echo "6. Motor-test only with props removed and explicit safety flags."
 REMOTE_SCRIPT
-````
+`````
 
-## `scripts/pi_uart_preflight.sh`
+### `scripts/pi_uart_preflight.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -4115,11 +4116,11 @@ python -c 'import serial; print(\"[OK] pyserial import works\")'
 
 echo \"[READY] Pi UART is ready for Pixhawk TELEM MAVLink. Do not connect props for bench tests.\"
 "
-````
+`````
 
-## `scripts/pi_validate.sh`
+### `scripts/pi_validate.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -4140,11 +4141,11 @@ python -c 'import sys; import pymavlink; print(sys.version); print(\"pymavlink o
 vcgencmd measure_temp
 vcgencmd get_throttled
 "
-````
+`````
 
-## `scripts/run_sitl_monitor.sh`
+### `scripts/run_sitl_monitor.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -4158,11 +4159,11 @@ fi
 source .venv/bin/activate
 export PYTHONPATH="$PWD/src"
 python -m wd_drone.main --profile sitl
-````
+`````
 
-## `scripts/run_sitl_observer.sh`
+### `scripts/run_sitl_observer.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -4176,11 +4177,11 @@ fi
 source .venv/bin/activate
 export PYTHONPATH="$PWD/src"
 python -m wd_drone.main --profile sitl
-````
+`````
 
-## `scripts/run_uart_monitor.sh`
+### `scripts/run_uart_monitor.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -4194,11 +4195,11 @@ fi
 source .venv/bin/activate
 export PYTHONPATH="$PWD/src"
 python -m wd_drone.main --profile cube_pi_uart
-````
+`````
 
-## `scripts/setup.sh`
+### `scripts/setup.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -4212,11 +4213,11 @@ python -m pip install -r requirements.txt
 echo
 echo "Environment created."
 echo "Activate it with: source .venv/bin/activate"
-````
+`````
 
-## `scripts/sync_to_pi.sh`
+### `scripts/sync_to_pi.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -4265,11 +4266,11 @@ else
     echo
     echo "Synced project to $PI_ALIAS:$REMOTE_DIR"
 fi
-````
+`````
 
-## `simulation/README.md`
+### `simulation/README.md`
 
-````markdown
+`````md
 # Simulation
 
 This folder is the clean entry point for running the Gazebo + ArduPilot SITL
@@ -4363,11 +4364,11 @@ The detailed test matrix is in:
 ```text
 docs/SITL_TEST_PLAN.md
 ```
-````
+`````
 
-## `simulation/enable_gazebo_camera.sh`
+### `simulation/enable_gazebo_camera.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -4378,11 +4379,11 @@ exec gz topic \
     -t "$TOPIC" \
     -m gz.msgs.Boolean \
     -p "data: true"
-````
+`````
 
-## `simulation/example_square_mission.waypoints`
+### `simulation/example_square_mission.waypoints`
 
-````text
+`````waypoints
 QGC WPL 110
 0	1	0	16	0	0	0	0	-35.363261	149.165237	584	1
 1	0	3	22	0.00000000	0.00000000	0.00000000	0.00000000	0.00000000	0.00000000	10.0000000	1
@@ -4391,11 +4392,11 @@ QGC WPL 110
 4	0	3	16	0.00000000	0.00000000	0.00000000	0.00000000	-35.363261	149.165507	20.0000000	1
 5	0	3	16	0.00000000	0.00000000	0.00000000	0.00000000	-35.363261	149.165237	20.0000000	1
 6	0	3	21	0.00000000	0.00000000	0.00000000	0.00000000	0.00000000	0.00000000	0.0000000	1
-````
+`````
 
-## `simulation/legacy_shortcuts.md`
+### `simulation/legacy_shortcuts.md`
 
-````markdown
+`````md
 # Legacy Laptop Shortcuts
 
 This records the old local shortcuts that existed on the Ubuntu laptop before
@@ -4424,11 +4425,11 @@ gz topic -t /world/iris_runway/model/iris_with_gimbal/model/gimbal/link/pitch_li
 
 The old shortcuts are personal machine setup. The scripts in `simulation/` are
 kept in GitHub, documented, and safer for teammates to run consistently.
-````
+`````
 
-## `simulation/run_target_mission.sh`
+### `simulation/run_target_mission.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -4438,11 +4439,11 @@ CONFIG_PATH="${1:-$ROOT/target_mission_v2/configs/sim_gazebo.json}"
 cd "$ROOT/target_mission_v2"
 echo "[SIM MISSION] config=$CONFIG_PATH"
 exec ./run.sh "$CONFIG_PATH"
-````
+`````
 
-## `simulation/start_gazebo.sh`
+### `simulation/start_gazebo.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -4471,11 +4472,11 @@ export GZ_SIM_SYSTEM_PLUGIN_PATH="$GAZEBO_PLUGIN_PATH${GZ_SIM_SYSTEM_PLUGIN_PATH
 
 echo "[GAZEBO] world=$WORLD_PATH"
 exec gz sim -v4 -r "$WORLD_PATH" "$@"
-````
+`````
 
-## `simulation/start_sitl.sh`
+### `simulation/start_sitl.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -4502,11 +4503,11 @@ exec python3 sim_vehicle.py \
     --out=udp:127.0.0.1:14550 \
     --out=udp:127.0.0.1:14551 \
     "$@"
-````
+`````
 
-## `src/README.md`
+### `src/README.md`
 
-````markdown
+`````md
 # Source Package
 
 `src/wd_drone/` is a read-only telemetry observer package.
@@ -4520,19 +4521,19 @@ The active target mission lives in:
 ```text
 target_mission_v2/
 ```
-````
+`````
 
-## `src/wd_drone/__init__.py`
+### `src/wd_drone/__init__.py`
 
-````python
+`````py
 """WD DRONE autonomous mission package."""
 
 __version__ = "0.2.0"
-````
+`````
 
-## `src/wd_drone/config.py`
+### `src/wd_drone/config.py`
 
-````python
+`````py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -4647,11 +4648,11 @@ def load_config(path: str | Path, profile_override: str | None = None) -> AppCon
             mission_complete_waypoint=mission_complete_waypoint,
         ),
     )
-````
+`````
 
-## `src/wd_drone/event_logger.py`
+### `src/wd_drone/event_logger.py`
 
-````python
+`````py
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
@@ -4688,11 +4689,11 @@ class EventLogger:
         if hasattr(value, "name") and hasattr(value, "value"):
             return value.name
         return value
-````
+`````
 
-## `src/wd_drone/main.py`
+### `src/wd_drone/main.py`
 
-````python
+`````py
 """Read-only mission observer entry point.
 
 This package is for monitoring telemetry and mission state. It does not send
@@ -4880,11 +4881,11 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-````
+`````
 
-## `src/wd_drone/mavlink_client.py`
+### `src/wd_drone/mavlink_client.py`
 
-````python
+`````py
 from __future__ import annotations
 
 import logging
@@ -5001,11 +5002,11 @@ class MavlinkClient:
             if callable(close_method):
                 close_method()
             self.connection = None
-````
+`````
 
-## `src/wd_drone/mission_state.py`
+### `src/wd_drone/mission_state.py`
 
-````python
+`````py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -5110,11 +5111,11 @@ class MissionObserver:
             f"AUTO mission is travelling to search waypoint "
             f"{self.search_start_waypoint}"
         )
-````
+`````
 
-## `src/wd_drone/vehicle_status.py`
+### `src/wd_drone/vehicle_status.py`
 
-````python
+`````py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -5228,11 +5229,11 @@ class VehicleStatus:
             f"battery={fmt(self.battery_voltage_v)}V/"
             f"{self.battery_remaining_pct if self.battery_remaining_pct is not None else '-'}%"
         )
-````
+`````
 
-## `target_mission_v2/README.md`
+### `target_mission_v2/README.md`
 
-````markdown
+`````md
 # WD DRONE Target Mission V2
 
 This is the tested mission engine. For normal real-drone operation, start in:
@@ -5531,11 +5532,11 @@ Left/right reverse:
 ```json
 "image_x_to_right_sign": -1.0
 ```
-````
+`````
 
-## `target_mission_v2/camera_sources.py`
+### `target_mission_v2/camera_sources.py`
 
-````python
+`````py
 #!/usr/bin/env python3
 """Camera input helpers for SITL and Raspberry Pi Camera Module 3.
 
@@ -5733,11 +5734,11 @@ def open_camera(camera_config: dict[str, Any]) -> CameraLike:
     if not cap.isOpened():
         raise RuntimeError(f"Camera source did not open: {description}")
     return cap
-````
+`````
 
-## `target_mission_v2/configs/README.md`
+### `target_mission_v2/configs/README.md`
 
-````markdown
+`````md
 # Mission Profiles
 
 These JSON files are compatibility/SITL profiles for the tested mission engine.
@@ -5769,11 +5770,11 @@ The real profile starts conservative:
 
 That means QGC/ArduPilot owns AUTO altitude and speed, and the Pi does not move
 the physical payload until the team intentionally enables it.
-````
+`````
 
-## `target_mission_v2/configs/real_pi_camera_module_3.json`
+### `target_mission_v2/configs/real_pi_camera_module_3.json`
 
-````json
+`````json
 {
   "mavlink": {
     "connection": "/dev/serial0",
@@ -5857,6 +5858,7 @@ the physical payload until the team intentionally enables it.
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
+    "camera_frame_timeout_s": 2.0,
     "payload_requires_guided": true,
     "payload_min_altitude_m": null,
     "payload_max_altitude_m": null
@@ -5872,11 +5874,11 @@ the physical payload until the team intentionally enables it.
     "flush_interval_s": 0.5
   }
 }
-````
+`````
 
-## `target_mission_v2/configs/sim_gazebo.json`
+### `target_mission_v2/configs/sim_gazebo.json`
 
-````json
+`````json
 {
   "mavlink": {
     "connection": "udpin:0.0.0.0:14551",
@@ -5952,6 +5954,7 @@ the physical payload until the team intentionally enables it.
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
+    "camera_frame_timeout_s": 2.0,
     "payload_requires_guided": true,
     "payload_min_altitude_m": null,
     "payload_max_altitude_m": null
@@ -5967,11 +5970,11 @@ the physical payload until the team intentionally enables it.
     "flush_interval_s": 0.5
   }
 }
-````
+`````
 
-## `target_mission_v2/control.py`
+### `target_mission_v2/control.py`
 
-````python
+`````py
 #!/usr/bin/env python3
 """Small control math helpers for mission centering.
 
@@ -6000,11 +6003,11 @@ def altitude_velocity_down(
     if abs(error) <= tolerance_m:
         return 0.0
     return clamp(kp * error, max_speed_m_s)
-````
+`````
 
-## `target_mission_v2/mission_config.json`
+### `target_mission_v2/mission_config.json`
 
-````json
+`````json
 {
   "mavlink": {
     "connection": "udpin:0.0.0.0:14551",
@@ -6080,6 +6083,7 @@ def altitude_velocity_down(
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
+    "camera_frame_timeout_s": 2.0,
     "payload_requires_guided": true,
     "payload_min_altitude_m": null,
     "payload_max_altitude_m": null
@@ -6095,11 +6099,11 @@ def altitude_velocity_down(
     "flush_interval_s": 0.5
   }
 }
-````
+`````
 
-## `target_mission_v2/mission_controller.py`
+### `target_mission_v2/mission_controller.py`
 
-````python
+`````py
 #!/usr/bin/env python3
 """Active target mission controller.
 
@@ -6131,6 +6135,10 @@ from vision import Detection, HitTracker, SUPPORTED_VISION_BACKENDS, create_dete
 from control import altitude_velocity_down, clamp
 
 
+AUTOPILOT_COMPONENTS = {mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1}
+MISSION_OWNED_MODES = {"AUTO", "GUIDED"}
+
+
 class State(str, Enum):
     WAITING_FOR_AUTO = "WAITING_FOR_AUTO"
     SEARCH = "SEARCH"
@@ -6154,6 +6162,7 @@ DEFAULT_SAFETY = {
     "max_guided_auto_bounces_per_target": None,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.5,
+    "camera_frame_timeout_s": 2.0,
     "payload_requires_guided": True,
     "payload_min_altitude_m": None,
     "payload_max_altitude_m": None,
@@ -6187,6 +6196,23 @@ def optional_seconds_label(value: Any) -> str:
     if value is None:
         return "inf"
     return f"{float(value):.1f}s"
+
+
+def heartbeat_is_vehicle(message: Any) -> bool:
+    if message.get_srcSystem() <= 0:
+        return False
+    if message.get_srcComponent() not in AUTOPILOT_COMPONENTS:
+        return False
+    if message.type in (
+        mavutil.mavlink.MAV_TYPE_GCS,
+        mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER,
+    ):
+        return False
+    return message.autopilot != mavutil.mavlink.MAV_AUTOPILOT_INVALID
+
+
+def heartbeat_is_target_vehicle(message: Any, target_system: int) -> bool:
+    return message.get_srcSystem() == target_system and heartbeat_is_vehicle(message)
 
 
 def required_ardupilot_parameters(config: dict[str, Any]) -> dict[str, float]:
@@ -6291,6 +6317,9 @@ def validate_config(config: dict[str, Any]) -> None:
     mode_retry_interval_s = safety.get("mode_retry_interval_s")
     if mode_retry_interval_s is not None and float(mode_retry_interval_s) <= 0:
         raise ValueError("safety.mode_retry_interval_s must be positive or null")
+    camera_frame_timeout_s = safety.get("camera_frame_timeout_s")
+    if camera_frame_timeout_s is not None and float(camera_frame_timeout_s) <= 0:
+        raise ValueError("safety.camera_frame_timeout_s must be positive or null")
     min_alt = safety.get("payload_min_altitude_m")
     max_alt = safety.get("payload_max_altitude_m")
     if min_alt is not None and max_alt is not None and float(min_alt) > float(max_alt):
@@ -6318,11 +6347,13 @@ class Vehicle:
         if baud is not None:
             kwargs["baud"] = int(baud)
         self.master = mavutil.mavlink_connection(connection, **kwargs)
-        hb = self.master.wait_heartbeat(timeout=30)
+        hb = self._wait_vehicle_heartbeat(timeout_s=30.0)
         if hb is None:
             raise RuntimeError("No ArduPilot heartbeat")
-        self.target_system = self.master.target_system
-        self.target_component = self.master.target_component or 1
+        self.target_system = hb.get_srcSystem()
+        self.target_component = hb.get_srcComponent()
+        self.master.target_system = self.target_system
+        self.master.target_component = self.target_component
         self.mode = mavutil.mode_string_v10(hb)
         self.armed = bool(hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
         self.relative_alt_m: Optional[float] = None
@@ -6341,6 +6372,18 @@ class Vehicle:
         self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_RC_CHANNELS, 4.0)
         print(f"[MAVLINK] Connected system={self.target_system} component={self.target_component}")
 
+    def _wait_vehicle_heartbeat(self, timeout_s: float) -> Optional[Any]:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            message = self.master.recv_match(type="HEARTBEAT", blocking=True, timeout=0.5)
+            if message is None:
+                continue
+            if heartbeat_is_vehicle(message):
+                return message
+            source = f"{message.get_srcSystem()}:{message.get_srcComponent()}"
+            print(f"[MAVLINK] Ignoring non-vehicle heartbeat src={source} mode={mavutil.mode_string_v10(message)}")
+        return None
+
     def _request_interval(self, message_id: int, hz: float) -> None:
         self.master.mav.command_long_send(
             self.target_system, self.target_component,
@@ -6357,7 +6400,11 @@ class Vehicle:
 
     def _handle_message(self, msg: Any) -> None:
         kind = msg.get_type()
+        if kind != "BAD_DATA" and msg.get_srcSystem() not in (0, self.target_system):
+            return
         if kind == "HEARTBEAT":
+            if not heartbeat_is_target_vehicle(msg, self.target_system):
+                return
             self.mode = mavutil.mode_string_v10(msg)
             self.armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
             self.last_heartbeat = time.monotonic()
@@ -6541,6 +6588,8 @@ class Controller:
         self.last_center_error_px: Optional[float] = None
         self.last_center_forward: Optional[float] = None
         self.last_center_right: Optional[float] = None
+        self.last_frame_at = time.monotonic()
+        self.last_camera_timeout_print_at = 0.0
         self.status_message = "Waiting for AUTO at search waypoint"
         self.payload_started = False
         self.payload_reset = False
@@ -6595,9 +6644,9 @@ class Controller:
             float(c["altitude_max_speed_m_s"]),
         )
 
-    def send_velocity(self, forward: float, right: float, down: float) -> None:
+    def send_velocity(self, forward: float, right: float, down: float, force: bool = False) -> None:
         now = time.monotonic()
-        if now - self.last_velocity_at >= 1.0 / float(self.config["control"]["command_rate_hz"]):
+        if force or now - self.last_velocity_at >= 1.0 / float(self.config["control"]["command_rate_hz"]):
             max_guided_speed = self.safety.get("max_guided_speed_m_s")
             if max_guided_speed is not None:
                 forward = clamp(forward, float(max_guided_speed))
@@ -6649,6 +6698,36 @@ class Controller:
         if self.navigation["search_speed_source"] == "companion_do_change_speed":
             return f"companion {float(self.navigation['search_speed_m_s']):.1f}m/s"
         return "QGC mission"
+
+    def active_target_phase(self) -> bool:
+        return self.state in {State.WAITING_FOR_GUIDED, State.CENTER, State.PAYLOAD} and self.current_target is not None
+
+    def stand_down_for_external_mode(self, reason: str) -> None:
+        print(f"[EXTERNAL MODE] {reason}; standing down and waiting for AUTO")
+        self.send_velocity(0.0, 0.0, 0.0, force=True)
+        self.current_target = None
+        self.last_detection = None
+        self.last_seen_at = 0.0
+        self.centered_since = None
+        self.center_started_at = None
+        self.guided_mode_lost_since = None
+        self.tracker.reset()
+        self.transition(State.WAITING_FOR_AUTO, f"{reason}; waiting for AUTO")
+
+    def handle_camera_frame_miss(self, now: float) -> None:
+        timeout_s = self.safety.get("camera_frame_timeout_s")
+        if timeout_s is None or not self.active_target_phase():
+            return
+        missed_for = now - self.last_frame_at
+        if missed_for < float(timeout_s):
+            return
+        self.status_message = f"Camera frame timeout {missed_for:.1f}s; holding position"
+        if self.vehicle.mode in MISSION_OWNED_MODES:
+            self.send_velocity(0.0, 0.0, self.altitude_down(), force=True)
+            self.request_mode_repeated("GUIDED", force=True)
+        if now - self.last_camera_timeout_print_at >= 1.0:
+            print(f"[CAMERA TIMEOUT] no frame for {missed_for:.1f}s during {self.state.value}; holding")
+            self.last_camera_timeout_print_at = now
 
     def search_gate_status(self) -> tuple[bool, str]:
         mission = self.config["mission"]
@@ -6803,18 +6882,12 @@ class Controller:
                     self.transition(State.WAITING_FOR_GUIDED, "target confirmed")
 
         elif self.state == State.WAITING_FOR_GUIDED:
-            enabled, reason = self.search_gate_status()
-            if not enabled:
-                self.current_target = None
-                self.last_detection = None
-                self.tracker.reset()
-                self.vehicle.set_mode("AUTO")
-                self.last_mode_request_at = now
-                self.transition(State.WAITING_FOR_AUTO, reason)
-                return detections, masks
             if self.vehicle.mode == "GUIDED":
                 self.send_velocity(0.0, 0.0, self.altitude_down())
                 self.transition(State.CENTER, "GUIDED confirmed; centering target")
+            elif self.vehicle.mode != "AUTO":
+                self.stand_down_for_external_mode(f"external mode {self.vehicle.mode} before GUIDED lock")
+                return detections, masks
             elif now - self.state_started_at > float(m["mode_change_timeout_s"]):
                 self.status_message = "Target locked; still forcing GUIDED"
                 self.request_mode_repeated("GUIDED", force=True)
@@ -6822,10 +6895,6 @@ class Controller:
                 self.request_mode_repeated("GUIDED")
 
         elif self.state == State.CENTER:
-            enabled, reason = self.search_gate_status()
-            if not enabled:
-                self.abandon_active_target(now, reason)
-                return detections, masks
             if self.vehicle.mode != "GUIDED":
                 if self.vehicle.mode == "AUTO":
                     if self.guided_mode_lost_since is None:
@@ -6849,7 +6918,7 @@ class Controller:
                         self.last_guided_bounce_print_at = now
                     self.request_mode_repeated("GUIDED", force=True)
                     return detections, masks
-                self.abandon_active_target(now, f"left GUIDED: {self.vehicle.mode}")
+                self.stand_down_for_external_mode(f"external mode {self.vehicle.mode} during centering")
                 return detections, masks
             self.guided_mode_lost_since = None
             self.request_mode_repeated("GUIDED")
@@ -6936,9 +7005,8 @@ class Controller:
             self.send_velocity(forward, right, self.altitude_down())
 
         elif self.state == State.PAYLOAD:
-            enabled, reason = self.search_gate_status()
-            if not enabled:
-                self.abandon_active_target(now, reason)
+            if self.vehicle.mode not in MISSION_OWNED_MODES:
+                self.stand_down_for_external_mode(f"external mode {self.vehicle.mode} during payload")
                 return detections, masks
             self.request_mode_repeated("GUIDED")
             self.payload_action(now)
@@ -7046,8 +7114,10 @@ class Controller:
                     return 3
                 ok, frame = self.camera.read()
                 if not ok or frame is None:
+                    self.handle_camera_frame_miss(time.monotonic())
                     time.sleep(0.02)
                     continue
+                self.last_frame_at = time.monotonic()
                 frame = self.resize(frame)
                 if self.state in {State.WAITING_FOR_AUTO, State.SEARCH, State.WAITING_FOR_GUIDED, State.WAITING_FOR_AUTO_RESUME, State.WAITING_FOR_RTL, State.COMPLETE}:
                     detections, masks = self.detector.search(frame)
@@ -7077,7 +7147,7 @@ class Controller:
                     break
         finally:
             if self.vehicle.mode == "GUIDED":
-                self.vehicle.send_body_velocity(0.0, 0.0, 0.0)
+                self.send_velocity(0.0, 0.0, 0.0, force=True)
             self.camera.release()
             self.log_file.close()
             cv2.destroyAllWindows()
@@ -7101,11 +7171,11 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-````
+`````
 
-## `target_mission_v2/operator_config.json`
+### `target_mission_v2/operator_config.json`
 
-````json
+`````json
 {
   "mavlink": {
     "connection": "udpin:0.0.0.0:14551",
@@ -7181,6 +7251,7 @@ if __name__ == "__main__":
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
+    "camera_frame_timeout_s": 2.0,
     "payload_requires_guided": true,
     "payload_min_altitude_m": null,
     "payload_max_altitude_m": null
@@ -7196,11 +7267,11 @@ if __name__ == "__main__":
     "flush_interval_s": 0.5
   }
 }
-````
+`````
 
-## `target_mission_v2/parameter_config.json`
+### `target_mission_v2/parameter_config.json`
 
-````json
+`````json
 {
   "_help": {
     "mission.search_start_wp": "First AUTO mission item where vision search is allowed. Set this to 7 or 8 if you want search to begin later.",
@@ -7216,7 +7287,9 @@ if __name__ == "__main__":
     "safety.mode_retry_interval_s": "How often the companion retries mode requests while waiting. Unexpected AUTO during centering always forces GUIDED immediately.",
     "camera.source": "SITL uses udp_h264. The Raspberry Pi Camera Module 3 profile uses rpicam_mjpeg because it does not depend on H.264 encoding.",
     "display.overlay_font_scale": "Camera-window text size.",
-    "parameters.enforce": "Keep false unless you intentionally want the companion computer to change ArduPilot parameters."
+    "parameters.enforce": "Keep false unless you intentionally want the companion computer to change ArduPilot parameters.",
+    "safety.camera_frame_timeout_s": "If camera frames stop during active target work, hold position after this many seconds. Set null to disable.",
+    "safety.manual_override_behavior": "If the pilot/failsafe changes to a non-AUTO/non-GUIDED mode, the Pi stops commanding and waits for AUTO instead of fighting the pilot."
   },
   "mavlink": {
     "connection": "udpin:0.0.0.0:14551",
@@ -7292,6 +7365,7 @@ if __name__ == "__main__":
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
+    "camera_frame_timeout_s": 2.0,
     "payload_requires_guided": true,
     "payload_min_altitude_m": null,
     "payload_max_altitude_m": null
@@ -7307,11 +7381,11 @@ if __name__ == "__main__":
     "flush_interval_s": 0.5
   }
 }
-````
+`````
 
-## `target_mission_v2/run.sh`
+### `target_mission_v2/run.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -7338,11 +7412,11 @@ PYTHON_BIN="$(pick_python)" || {
 
 CONFIG_PATH="${1:-parameter_config.json}"
 exec "$PYTHON_BIN" mission_controller.py --config "$CONFIG_PATH"
-````
+`````
 
-## `target_mission_v2/setup.sh`
+### `target_mission_v2/setup.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -7355,11 +7429,11 @@ source ../.venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install pymavlink
 python -m unittest -v test_mission_controller.py
-````
+`````
 
-## `target_mission_v2/test_mission_controller.py`
+### `target_mission_v2/test_mission_controller.py`
 
-````python
+`````py
 #!/usr/bin/env python3
 import json
 import tempfile
@@ -7369,6 +7443,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from pymavlink import mavutil
 
 from vision import Detection, HitTracker, StrictShapeDetector
 from control import altitude_velocity_down
@@ -7376,12 +7451,63 @@ from camera_sources import build_rpicam_mjpeg_command
 from mission_controller import (
     Controller,
     State,
+    Vehicle,
     enforce_parameters,
+    heartbeat_is_vehicle,
     optional_seconds_label,
     payload_colour_for_target,
     required_ardupilot_parameters,
     validate_config,
 )
+
+
+class FakeHeartbeat:
+    def __init__(self, system, component, vehicle_type, autopilot, mode="STABILIZE", armed=False):
+        self._system = system
+        self._component = component
+        self.type = vehicle_type
+        self.autopilot = autopilot
+        self.base_mode = mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
+        if armed:
+            self.base_mode |= mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
+        self.custom_mode = {
+            "STABILIZE": 0,
+            "AUTO": 3,
+            "GUIDED": 4,
+            "LOITER": 5,
+            "RTL": 6,
+        }.get(mode, 0)
+
+    def get_srcSystem(self):
+        return self._system
+
+    def get_srcComponent(self):
+        return self._component
+
+    def get_type(self):
+        return "HEARTBEAT"
+
+
+class MavlinkFilteringTests(unittest.TestCase):
+    def test_heartbeat_filter_accepts_autopilot_only(self):
+        vehicle_hb = FakeHeartbeat(1, mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, mavutil.mavlink.MAV_TYPE_QUADROTOR, mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA)
+        gcs_hb = FakeHeartbeat(255, 190, mavutil.mavlink.MAV_TYPE_GCS, mavutil.mavlink.MAV_AUTOPILOT_INVALID)
+        onboard_hb = FakeHeartbeat(1, 0, mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER, mavutil.mavlink.MAV_AUTOPILOT_INVALID)
+        self.assertTrue(heartbeat_is_vehicle(vehicle_hb))
+        self.assertFalse(heartbeat_is_vehicle(gcs_hb))
+        self.assertFalse(heartbeat_is_vehicle(onboard_hb))
+
+    def test_vehicle_ignores_non_vehicle_heartbeat_for_mode_state(self):
+        vehicle = Vehicle.__new__(Vehicle)
+        vehicle.target_system = 1
+        vehicle.mode = "GUIDED"
+        vehicle.armed = False
+        vehicle.last_heartbeat = 123.0
+        ignored = FakeHeartbeat(255, 190, mavutil.mavlink.MAV_TYPE_GCS, mavutil.mavlink.MAV_AUTOPILOT_INVALID, mode="AUTO", armed=True)
+        vehicle._handle_message(ignored)
+        self.assertEqual(vehicle.mode, "GUIDED")
+        self.assertFalse(vehicle.armed)
+        self.assertEqual(vehicle.last_heartbeat, 123.0)
 
 
 class VisionTests(unittest.TestCase):
@@ -7613,6 +7739,7 @@ class MissionConfigTests(unittest.TestCase):
                 "max_guided_auto_bounces_per_target": None,
                 "active_target_abort_mode": "AUTO",
                 "mode_retry_interval_s": 0.2,
+                "camera_frame_timeout_s": 2.0,
                 "payload_requires_guided": True,
                 "payload_min_altitude_m": None,
                 "payload_max_altitude_m": None,
@@ -7763,6 +7890,12 @@ class MissionConfigTests(unittest.TestCase):
     def test_validate_config_rejects_bad_active_target_abort_mode(self):
         config = self.config()
         config["safety"]["active_target_abort_mode"] = "DRIFT"
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_validate_config_rejects_bad_camera_frame_timeout(self):
+        config = self.config()
+        config["safety"]["camera_frame_timeout_s"] = 0
         with self.assertRaises(ValueError):
             validate_config(config)
 
@@ -7995,6 +8128,21 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(ctrl.current_target, "blue_hexagon")
         self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
 
+    def test_waiting_for_guided_stands_down_on_external_mode(self):
+        vehicle = FakeVehicle()
+        vehicle.mode = "LOITER"
+        ctrl = self.controller(vehicle=vehicle)
+        ctrl.state = State.WAITING_FOR_GUIDED
+        ctrl.current_target = "blue_hexagon"
+        ctrl.last_detection = Detection("blue_hexagon", 480, 270, 500.0, 0.9, 6, 0, 0, 6, 0.8, 0.7, 0.9, 460, 250, 40, 40)
+
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO)
+        self.assertIsNone(ctrl.current_target)
+        self.assertEqual(vehicle.mode_requests, [])
+        self.assertEqual(vehicle.velocities[-1], (0.0, 0.0, 0.0))
+
     def test_center_holds_guided_while_target_is_temporarily_lost(self):
         vehicle = FakeVehicle()
         config = self.config()
@@ -8063,6 +8211,23 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(ctrl.current_target, "red_triangle")
         self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
 
+    def test_center_stands_down_on_external_mode_instead_of_forcing_auto(self):
+        vehicle = FakeVehicle()
+        vehicle.mode = "STABILIZE"
+        ctrl = self.controller(vehicle=vehicle)
+        ctrl.state = State.CENTER
+        ctrl.current_target = "red_triangle"
+        ctrl.last_detection = Detection("red_triangle", 450, 260, 400.0, 0.8, 3, 3, 0, 0, 0.5, 0.6, 0.9, 430, 240, 40, 40)
+        ctrl.last_seen_at = time.monotonic()
+        ctrl.center_started_at = time.monotonic()
+
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO)
+        self.assertIsNone(ctrl.current_target)
+        self.assertEqual(vehicle.mode_requests, [])
+        self.assertEqual(vehicle.velocities[-1], (0.0, 0.0, 0.0))
+
     def test_center_timeout_keeps_guided_target_lock(self):
         vehicle = FakeVehicle()
         config = self.config()
@@ -8105,6 +8270,37 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(vehicle.servos, [])
         self.assertNotIn("red_triangle", ctrl.completed_targets)
 
+    def test_payload_stands_down_on_external_mode(self):
+        vehicle = FakeVehicle()
+        vehicle.mode = "LOITER"
+        ctrl = self.controller(vehicle=vehicle)
+        ctrl.state = State.PAYLOAD
+        ctrl.current_target = "red_triangle"
+
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO)
+        self.assertIsNone(ctrl.current_target)
+        self.assertEqual(vehicle.mode_requests, [])
+        self.assertEqual(vehicle.servos, [])
+
+    def test_camera_timeout_holds_guided_position_during_active_target(self):
+        vehicle = FakeVehicle()
+        vehicle.mode = "GUIDED"
+        config = self.config()
+        config["control"]["altitude_control"] = "off"
+        ctrl = self.controller(config, vehicle)
+        ctrl.state = State.CENTER
+        ctrl.current_target = "red_triangle"
+        ctrl.last_frame_at = time.monotonic() - 3.0
+
+        ctrl.handle_camera_frame_miss(time.monotonic())
+
+        self.assertEqual(ctrl.state, State.CENTER)
+        self.assertEqual(ctrl.current_target, "red_triangle")
+        self.assertEqual(vehicle.velocities[-1], (0.0, 0.0, 0.0))
+        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
+
     def test_complete_state_resets_for_next_auto_run(self):
         vehicle = FakeVehicle()
         vehicle.mode = "AUTO"
@@ -8121,11 +8317,11 @@ class ControllerFlowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-````
+`````
 
-## `target_mission_v2/vision.py`
+### `target_mission_v2/vision.py`
 
-````python
+`````py
 #!/usr/bin/env python3
 """Target detection for the active mission.
 
@@ -8531,11 +8727,11 @@ def create_detector(vision_config: dict[str, Any]) -> StrictShapeDetector:
         tracking_min_area_px=float(vision_config["tracking_min_area_px"]),
         debug_rejects=bool(vision_config.get("debug_rejects", False)),
     )
-````
+`````
 
-## `test_components/COMMANDS.md`
+### `test_components/COMMANDS.md`
 
-````markdown
+`````md
 # Component Test Commands
 
 Run these before trusting the real mission on the aircraft.
@@ -8752,11 +8948,11 @@ configured waypoint.
 During an active target, the real config keeps the target lock through
 `GUIDED -> AUTO` bounces and keeps requesting GUIDED. It should not RTL just
 because AUTO appears briefly during centering.
-````
+`````
 
-## `test_components/README.md`
+### `test_components/README.md`
 
-````markdown
+`````md
 # Test Components
 
 This folder is for bench tests and health checks. It is not the mission flight
@@ -8779,11 +8975,11 @@ and what a good result looks like.
 ## Safety Rule
 
 Never run servo, arm, or motor tests with propellers installed.
-````
+`````
 
-## `test_components/camera/check_on_pi.sh`
+### `test_components/camera/check_on_pi.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -8791,11 +8987,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 exec ./scripts/pi_camera_check.sh --config "$ROOT/real_mission/parameter_config/mission2_target_payload.json" "$@"
-````
+`````
 
-## `test_components/camera/live_from_laptop.sh`
+### `test_components/camera/live_from_laptop.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -8803,11 +8999,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 exec ./real_mission/open_laptop_camera_window.sh "$@"
-````
+`````
 
-## `test_components/mavlink/MOTOR_MAPPING.md`
+### `test_components/mavlink/MOTOR_MAPPING.md`
 
-````markdown
+`````md
 # Motor Mapping Fix
 
 Use this when the motor test spins the wrong physical motor.
@@ -8877,11 +9073,11 @@ After rewiring or changing frame type, retest with propellers removed:
 
 Do not continue to propeller testing until motor position and spin direction are
 both correct.
-````
+`````
 
-## `test_components/mavlink/bench_sequence.sh`
+### `test_components/mavlink/bench_sequence.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -8889,11 +9085,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 exec ./scripts/pi_mavlink_bench_sequence.sh "$@"
-````
+`````
 
-## `test_components/mavlink/health.sh`
+### `test_components/mavlink/health.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -8901,11 +9097,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 exec ./scripts/mavlink_bench.sh health --connection /dev/serial0 --baud 921600 --seconds "${SECONDS_TO_RUN:-10}"
-````
+`````
 
-## `test_components/mavlink/motor_test.sh`
+### `test_components/mavlink/motor_test.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -8918,11 +9114,11 @@ exec ./scripts/mavlink_bench.sh motor-test \
     --i-understand-props-off \
     --i-accept-motor-spin \
     "$@"
-````
+`````
 
-## `test_components/mavlink/rc_channels.sh`
+### `test_components/mavlink/rc_channels.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -8930,11 +9126,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 exec ./scripts/mavlink_bench.sh rc-channels --connection /dev/serial0 --baud 921600 "$@"
-````
+`````
 
-## `test_components/mavlink/servo_payload_test.sh`
+### `test_components/mavlink/servo_payload_test.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -8960,11 +9156,11 @@ exec ./scripts/mavlink_bench.sh servo \
     --reset-pwm "$reset_pwm" \
     --hold "$hold_s" \
     --i-understand-props-off
-````
+`````
 
-## `test_components/mavlink/status.sh`
+### `test_components/mavlink/status.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -8972,11 +9168,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 exec ./scripts/mavlink_bench.sh status --connection /dev/serial0 --baud 921600 --seconds "${SECONDS_TO_RUN:-10}"
-````
+`````
 
-## `test_components/preflight/full_check.sh`
+### `test_components/preflight/full_check.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -9041,6 +9237,7 @@ checks = [
     ("navigation.search_speed_source", cfg["navigation"]["search_speed_source"] == "qgc_mission"),
     ("safety.active_target_abort_mode", cfg["safety"]["active_target_abort_mode"] == "AUTO"),
     ("safety.max_guided_auto_bounces_per_target", cfg["safety"]["max_guided_auto_bounces_per_target"] is None),
+    ("safety.camera_frame_timeout_s", float(cfg["safety"]["camera_frame_timeout_s"]) > 0.0),
 ]
 
 failed = False
@@ -9054,11 +9251,11 @@ PY
 
 echo
 echo "[PREFLIGHT OK] read-only checks completed"
-````
+`````
 
-## `test_components/software/run_all_checks.sh`
+### `test_components/software/run_all_checks.sh`
 
-````bash
+`````sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -9066,11 +9263,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 exec ./scripts/check_project.sh
-````
+`````
 
-## `tests/README.md`
+### `tests/README.md`
 
-````markdown
+`````md
 # Tests
 
 This folder tests the read-only observer package in `src/wd_drone/`.
@@ -9087,11 +9284,11 @@ Run all tests:
 cd ~/FOR_COMP/wd-drone-autonomous-mission
 ./scripts/check_project.sh
 ```
-````
+`````
 
-## `tests/test_config.py`
+### `tests/test_config.py`
 
-````python
+`````py
 import json
 from pathlib import Path
 import tempfile
@@ -9144,11 +9341,11 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-````
+`````
 
-## `tests/test_mavlink_bench.py`
+### `tests/test_mavlink_bench.py`
 
-````python
+`````py
 import unittest
 
 from tools.mavlink_bench import format_rc_channels
@@ -9163,11 +9360,11 @@ class MavlinkBenchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-````
+`````
 
-## `tests/test_mission_state.py`
+### `tests/test_mission_state.py`
 
-````python
+`````py
 from dataclasses import dataclass
 import unittest
 
@@ -9255,11 +9452,11 @@ class MissionObserverTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-````
+`````
 
-## `tools/README.md`
+### `tools/README.md`
 
-````markdown
+`````md
 # Tools
 
 Developer and bench helper programs live here.
@@ -9269,11 +9466,11 @@ Current tool:
 - `mavlink_bench.py`: implementation behind `scripts/mavlink_bench.sh`.
 
 Most users should run the script wrapper instead of calling Python directly.
-````
+`````
 
-## `tools/mavlink_bench.py`
+### `tools/mavlink_bench.py`
 
-````python
+`````py
 #!/usr/bin/env python3
 """Bench-safe MAVLink tools for Cube/Pixhawk and Raspberry Pi tests.
 
@@ -9920,11 +10117,11 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-````
+`````
 
-## `tools/pi_camera_check.py`
+### `tools/pi_camera_check.py`
 
-````python
+`````py
 #!/usr/bin/env python3
 """Lightweight Raspberry Pi camera health and FPS checker.
 
@@ -10062,11 +10259,11 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-````
+`````
 
-## `tools/pi_camera_live_view.py`
+### `tools/pi_camera_live_view.py`
 
-````python
+`````py
 #!/usr/bin/env python3
 """Live Raspberry Pi Camera Module 3 viewer for the Ubuntu laptop.
 
@@ -10338,4 +10535,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-````
+`````

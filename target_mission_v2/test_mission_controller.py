@@ -7,6 +7,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from pymavlink import mavutil
 
 from vision import Detection, HitTracker, StrictShapeDetector
 from control import altitude_velocity_down
@@ -14,12 +15,63 @@ from camera_sources import build_rpicam_mjpeg_command
 from mission_controller import (
     Controller,
     State,
+    Vehicle,
     enforce_parameters,
+    heartbeat_is_vehicle,
     optional_seconds_label,
     payload_colour_for_target,
     required_ardupilot_parameters,
     validate_config,
 )
+
+
+class FakeHeartbeat:
+    def __init__(self, system, component, vehicle_type, autopilot, mode="STABILIZE", armed=False):
+        self._system = system
+        self._component = component
+        self.type = vehicle_type
+        self.autopilot = autopilot
+        self.base_mode = mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
+        if armed:
+            self.base_mode |= mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
+        self.custom_mode = {
+            "STABILIZE": 0,
+            "AUTO": 3,
+            "GUIDED": 4,
+            "LOITER": 5,
+            "RTL": 6,
+        }.get(mode, 0)
+
+    def get_srcSystem(self):
+        return self._system
+
+    def get_srcComponent(self):
+        return self._component
+
+    def get_type(self):
+        return "HEARTBEAT"
+
+
+class MavlinkFilteringTests(unittest.TestCase):
+    def test_heartbeat_filter_accepts_autopilot_only(self):
+        vehicle_hb = FakeHeartbeat(1, mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, mavutil.mavlink.MAV_TYPE_QUADROTOR, mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA)
+        gcs_hb = FakeHeartbeat(255, 190, mavutil.mavlink.MAV_TYPE_GCS, mavutil.mavlink.MAV_AUTOPILOT_INVALID)
+        onboard_hb = FakeHeartbeat(1, 0, mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER, mavutil.mavlink.MAV_AUTOPILOT_INVALID)
+        self.assertTrue(heartbeat_is_vehicle(vehicle_hb))
+        self.assertFalse(heartbeat_is_vehicle(gcs_hb))
+        self.assertFalse(heartbeat_is_vehicle(onboard_hb))
+
+    def test_vehicle_ignores_non_vehicle_heartbeat_for_mode_state(self):
+        vehicle = Vehicle.__new__(Vehicle)
+        vehicle.target_system = 1
+        vehicle.mode = "GUIDED"
+        vehicle.armed = False
+        vehicle.last_heartbeat = 123.0
+        ignored = FakeHeartbeat(255, 190, mavutil.mavlink.MAV_TYPE_GCS, mavutil.mavlink.MAV_AUTOPILOT_INVALID, mode="AUTO", armed=True)
+        vehicle._handle_message(ignored)
+        self.assertEqual(vehicle.mode, "GUIDED")
+        self.assertFalse(vehicle.armed)
+        self.assertEqual(vehicle.last_heartbeat, 123.0)
 
 
 class VisionTests(unittest.TestCase):
@@ -251,6 +303,7 @@ class MissionConfigTests(unittest.TestCase):
                 "max_guided_auto_bounces_per_target": None,
                 "active_target_abort_mode": "AUTO",
                 "mode_retry_interval_s": 0.2,
+                "camera_frame_timeout_s": 2.0,
                 "payload_requires_guided": True,
                 "payload_min_altitude_m": None,
                 "payload_max_altitude_m": None,
@@ -401,6 +454,12 @@ class MissionConfigTests(unittest.TestCase):
     def test_validate_config_rejects_bad_active_target_abort_mode(self):
         config = self.config()
         config["safety"]["active_target_abort_mode"] = "DRIFT"
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_validate_config_rejects_bad_camera_frame_timeout(self):
+        config = self.config()
+        config["safety"]["camera_frame_timeout_s"] = 0
         with self.assertRaises(ValueError):
             validate_config(config)
 
@@ -633,6 +692,21 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(ctrl.current_target, "blue_hexagon")
         self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
 
+    def test_waiting_for_guided_stands_down_on_external_mode(self):
+        vehicle = FakeVehicle()
+        vehicle.mode = "LOITER"
+        ctrl = self.controller(vehicle=vehicle)
+        ctrl.state = State.WAITING_FOR_GUIDED
+        ctrl.current_target = "blue_hexagon"
+        ctrl.last_detection = Detection("blue_hexagon", 480, 270, 500.0, 0.9, 6, 0, 0, 6, 0.8, 0.7, 0.9, 460, 250, 40, 40)
+
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO)
+        self.assertIsNone(ctrl.current_target)
+        self.assertEqual(vehicle.mode_requests, [])
+        self.assertEqual(vehicle.velocities[-1], (0.0, 0.0, 0.0))
+
     def test_center_holds_guided_while_target_is_temporarily_lost(self):
         vehicle = FakeVehicle()
         config = self.config()
@@ -701,6 +775,23 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(ctrl.current_target, "red_triangle")
         self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
 
+    def test_center_stands_down_on_external_mode_instead_of_forcing_auto(self):
+        vehicle = FakeVehicle()
+        vehicle.mode = "STABILIZE"
+        ctrl = self.controller(vehicle=vehicle)
+        ctrl.state = State.CENTER
+        ctrl.current_target = "red_triangle"
+        ctrl.last_detection = Detection("red_triangle", 450, 260, 400.0, 0.8, 3, 3, 0, 0, 0.5, 0.6, 0.9, 430, 240, 40, 40)
+        ctrl.last_seen_at = time.monotonic()
+        ctrl.center_started_at = time.monotonic()
+
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO)
+        self.assertIsNone(ctrl.current_target)
+        self.assertEqual(vehicle.mode_requests, [])
+        self.assertEqual(vehicle.velocities[-1], (0.0, 0.0, 0.0))
+
     def test_center_timeout_keeps_guided_target_lock(self):
         vehicle = FakeVehicle()
         config = self.config()
@@ -742,6 +833,37 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
         self.assertEqual(vehicle.servos, [])
         self.assertNotIn("red_triangle", ctrl.completed_targets)
+
+    def test_payload_stands_down_on_external_mode(self):
+        vehicle = FakeVehicle()
+        vehicle.mode = "LOITER"
+        ctrl = self.controller(vehicle=vehicle)
+        ctrl.state = State.PAYLOAD
+        ctrl.current_target = "red_triangle"
+
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO)
+        self.assertIsNone(ctrl.current_target)
+        self.assertEqual(vehicle.mode_requests, [])
+        self.assertEqual(vehicle.servos, [])
+
+    def test_camera_timeout_holds_guided_position_during_active_target(self):
+        vehicle = FakeVehicle()
+        vehicle.mode = "GUIDED"
+        config = self.config()
+        config["control"]["altitude_control"] = "off"
+        ctrl = self.controller(config, vehicle)
+        ctrl.state = State.CENTER
+        ctrl.current_target = "red_triangle"
+        ctrl.last_frame_at = time.monotonic() - 3.0
+
+        ctrl.handle_camera_frame_miss(time.monotonic())
+
+        self.assertEqual(ctrl.state, State.CENTER)
+        self.assertEqual(ctrl.current_target, "red_triangle")
+        self.assertEqual(vehicle.velocities[-1], (0.0, 0.0, 0.0))
+        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
 
     def test_complete_state_resets_for_next_auto_run(self):
         vehicle = FakeVehicle()

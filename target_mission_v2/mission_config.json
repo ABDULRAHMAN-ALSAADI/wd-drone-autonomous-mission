@@ -73,6 +73,7 @@
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
+    "camera_frame_timeout_s": 2.0,
     "payload_requires_guided": true,
     "payload_min_altitude_m": null,
     "payload_max_altitude_m": null

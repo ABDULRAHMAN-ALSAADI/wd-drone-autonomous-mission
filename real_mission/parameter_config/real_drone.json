@@ -13,7 +13,9 @@
     "vision.search_min_area_px": "Lower this carefully if real targets are too small at higher altitude.",
     "payload.simulate_only": "Keep true until servo and payload bench tests pass. Set false only for physical payload output.",
     "payload.servo_channel": "Pixhawk output channel for payload. Use 5 when the payload servo signal wire is on MAIN OUT / signal 5.",
-    "display.show_main_window": "Keep false on Raspberry Pi OS Lite. Use real_mission/open_laptop_camera_window.sh on the Ubuntu laptop for live viewing."
+    "display.show_main_window": "Keep false on Raspberry Pi OS Lite. Use real_mission/open_laptop_camera_window.sh on the Ubuntu laptop for live viewing.",
+    "safety.camera_frame_timeout_s": "If camera frames stop during active target work, hold position after this many seconds. Set null to disable.",
+    "safety.manual_override_behavior": "If the pilot/failsafe changes to a non-AUTO/non-GUIDED mode, the Pi stops commanding and waits for AUTO instead of fighting the pilot."
   },
   "mavlink": {
     "connection": "/dev/serial0",
@@ -97,6 +99,7 @@
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
+    "camera_frame_timeout_s": 2.0,
     "payload_requires_guided": true,
     "payload_min_altitude_m": null,
     "payload_max_altitude_m": null

@@ -13,7 +13,9 @@
     "safety.mode_retry_interval_s": "How often the companion retries mode requests while waiting. Unexpected AUTO during centering always forces GUIDED immediately.",
     "camera.source": "SITL uses udp_h264. The Raspberry Pi Camera Module 3 profile uses rpicam_mjpeg because it does not depend on H.264 encoding.",
     "display.overlay_font_scale": "Camera-window text size.",
-    "parameters.enforce": "Keep false unless you intentionally want the companion computer to change ArduPilot parameters."
+    "parameters.enforce": "Keep false unless you intentionally want the companion computer to change ArduPilot parameters.",
+    "safety.camera_frame_timeout_s": "If camera frames stop during active target work, hold position after this many seconds. Set null to disable.",
+    "safety.manual_override_behavior": "If the pilot/failsafe changes to a non-AUTO/non-GUIDED mode, the Pi stops commanding and waits for AUTO instead of fighting the pilot."
   },
   "mavlink": {
     "connection": "udpin:0.0.0.0:14551",
@@ -89,6 +91,7 @@
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.2,
+    "camera_frame_timeout_s": 2.0,
     "payload_requires_guided": true,
     "payload_min_altitude_m": null,
     "payload_max_altitude_m": null

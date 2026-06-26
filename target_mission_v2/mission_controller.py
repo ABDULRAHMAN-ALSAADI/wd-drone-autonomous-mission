@@ -29,6 +29,10 @@ from vision import Detection, HitTracker, SUPPORTED_VISION_BACKENDS, create_dete
 from control import altitude_velocity_down, clamp
 
 
+AUTOPILOT_COMPONENTS = {mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1}
+MISSION_OWNED_MODES = {"AUTO", "GUIDED"}
+
+
 class State(str, Enum):
     WAITING_FOR_AUTO = "WAITING_FOR_AUTO"
     SEARCH = "SEARCH"
@@ -52,6 +56,7 @@ DEFAULT_SAFETY = {
     "max_guided_auto_bounces_per_target": None,
     "active_target_abort_mode": "AUTO",
     "mode_retry_interval_s": 0.5,
+    "camera_frame_timeout_s": 2.0,
     "payload_requires_guided": True,
     "payload_min_altitude_m": None,
     "payload_max_altitude_m": None,
@@ -85,6 +90,23 @@ def optional_seconds_label(value: Any) -> str:
     if value is None:
         return "inf"
     return f"{float(value):.1f}s"
+
+
+def heartbeat_is_vehicle(message: Any) -> bool:
+    if message.get_srcSystem() <= 0:
+        return False
+    if message.get_srcComponent() not in AUTOPILOT_COMPONENTS:
+        return False
+    if message.type in (
+        mavutil.mavlink.MAV_TYPE_GCS,
+        mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER,
+    ):
+        return False
+    return message.autopilot != mavutil.mavlink.MAV_AUTOPILOT_INVALID
+
+
+def heartbeat_is_target_vehicle(message: Any, target_system: int) -> bool:
+    return message.get_srcSystem() == target_system and heartbeat_is_vehicle(message)
 
 
 def required_ardupilot_parameters(config: dict[str, Any]) -> dict[str, float]:
@@ -189,6 +211,9 @@ def validate_config(config: dict[str, Any]) -> None:
     mode_retry_interval_s = safety.get("mode_retry_interval_s")
     if mode_retry_interval_s is not None and float(mode_retry_interval_s) <= 0:
         raise ValueError("safety.mode_retry_interval_s must be positive or null")
+    camera_frame_timeout_s = safety.get("camera_frame_timeout_s")
+    if camera_frame_timeout_s is not None and float(camera_frame_timeout_s) <= 0:
+        raise ValueError("safety.camera_frame_timeout_s must be positive or null")
     min_alt = safety.get("payload_min_altitude_m")
     max_alt = safety.get("payload_max_altitude_m")
     if min_alt is not None and max_alt is not None and float(min_alt) > float(max_alt):
@@ -216,11 +241,13 @@ class Vehicle:
         if baud is not None:
             kwargs["baud"] = int(baud)
         self.master = mavutil.mavlink_connection(connection, **kwargs)
-        hb = self.master.wait_heartbeat(timeout=30)
+        hb = self._wait_vehicle_heartbeat(timeout_s=30.0)
         if hb is None:
             raise RuntimeError("No ArduPilot heartbeat")
-        self.target_system = self.master.target_system
-        self.target_component = self.master.target_component or 1
+        self.target_system = hb.get_srcSystem()
+        self.target_component = hb.get_srcComponent()
+        self.master.target_system = self.target_system
+        self.master.target_component = self.target_component
         self.mode = mavutil.mode_string_v10(hb)
         self.armed = bool(hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
         self.relative_alt_m: Optional[float] = None
@@ -239,6 +266,18 @@ class Vehicle:
         self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_RC_CHANNELS, 4.0)
         print(f"[MAVLINK] Connected system={self.target_system} component={self.target_component}")
 
+    def _wait_vehicle_heartbeat(self, timeout_s: float) -> Optional[Any]:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            message = self.master.recv_match(type="HEARTBEAT", blocking=True, timeout=0.5)
+            if message is None:
+                continue
+            if heartbeat_is_vehicle(message):
+                return message
+            source = f"{message.get_srcSystem()}:{message.get_srcComponent()}"
+            print(f"[MAVLINK] Ignoring non-vehicle heartbeat src={source} mode={mavutil.mode_string_v10(message)}")
+        return None
+
     def _request_interval(self, message_id: int, hz: float) -> None:
         self.master.mav.command_long_send(
             self.target_system, self.target_component,
@@ -255,7 +294,11 @@ class Vehicle:
 
     def _handle_message(self, msg: Any) -> None:
         kind = msg.get_type()
+        if kind != "BAD_DATA" and msg.get_srcSystem() not in (0, self.target_system):
+            return
         if kind == "HEARTBEAT":
+            if not heartbeat_is_target_vehicle(msg, self.target_system):
+                return
             self.mode = mavutil.mode_string_v10(msg)
             self.armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
             self.last_heartbeat = time.monotonic()
@@ -439,6 +482,8 @@ class Controller:
         self.last_center_error_px: Optional[float] = None
         self.last_center_forward: Optional[float] = None
         self.last_center_right: Optional[float] = None
+        self.last_frame_at = time.monotonic()
+        self.last_camera_timeout_print_at = 0.0
         self.status_message = "Waiting for AUTO at search waypoint"
         self.payload_started = False
         self.payload_reset = False
@@ -493,9 +538,9 @@ class Controller:
             float(c["altitude_max_speed_m_s"]),
         )
 
-    def send_velocity(self, forward: float, right: float, down: float) -> None:
+    def send_velocity(self, forward: float, right: float, down: float, force: bool = False) -> None:
         now = time.monotonic()
-        if now - self.last_velocity_at >= 1.0 / float(self.config["control"]["command_rate_hz"]):
+        if force or now - self.last_velocity_at >= 1.0 / float(self.config["control"]["command_rate_hz"]):
             max_guided_speed = self.safety.get("max_guided_speed_m_s")
             if max_guided_speed is not None:
                 forward = clamp(forward, float(max_guided_speed))
@@ -547,6 +592,36 @@ class Controller:
         if self.navigation["search_speed_source"] == "companion_do_change_speed":
             return f"companion {float(self.navigation['search_speed_m_s']):.1f}m/s"
         return "QGC mission"
+
+    def active_target_phase(self) -> bool:
+        return self.state in {State.WAITING_FOR_GUIDED, State.CENTER, State.PAYLOAD} and self.current_target is not None
+
+    def stand_down_for_external_mode(self, reason: str) -> None:
+        print(f"[EXTERNAL MODE] {reason}; standing down and waiting for AUTO")
+        self.send_velocity(0.0, 0.0, 0.0, force=True)
+        self.current_target = None
+        self.last_detection = None
+        self.last_seen_at = 0.0
+        self.centered_since = None
+        self.center_started_at = None
+        self.guided_mode_lost_since = None
+        self.tracker.reset()
+        self.transition(State.WAITING_FOR_AUTO, f"{reason}; waiting for AUTO")
+
+    def handle_camera_frame_miss(self, now: float) -> None:
+        timeout_s = self.safety.get("camera_frame_timeout_s")
+        if timeout_s is None or not self.active_target_phase():
+            return
+        missed_for = now - self.last_frame_at
+        if missed_for < float(timeout_s):
+            return
+        self.status_message = f"Camera frame timeout {missed_for:.1f}s; holding position"
+        if self.vehicle.mode in MISSION_OWNED_MODES:
+            self.send_velocity(0.0, 0.0, self.altitude_down(), force=True)
+            self.request_mode_repeated("GUIDED", force=True)
+        if now - self.last_camera_timeout_print_at >= 1.0:
+            print(f"[CAMERA TIMEOUT] no frame for {missed_for:.1f}s during {self.state.value}; holding")
+            self.last_camera_timeout_print_at = now
 
     def search_gate_status(self) -> tuple[bool, str]:
         mission = self.config["mission"]
@@ -701,18 +776,12 @@ class Controller:
                     self.transition(State.WAITING_FOR_GUIDED, "target confirmed")
 
         elif self.state == State.WAITING_FOR_GUIDED:
-            enabled, reason = self.search_gate_status()
-            if not enabled:
-                self.current_target = None
-                self.last_detection = None
-                self.tracker.reset()
-                self.vehicle.set_mode("AUTO")
-                self.last_mode_request_at = now
-                self.transition(State.WAITING_FOR_AUTO, reason)
-                return detections, masks
             if self.vehicle.mode == "GUIDED":
                 self.send_velocity(0.0, 0.0, self.altitude_down())
                 self.transition(State.CENTER, "GUIDED confirmed; centering target")
+            elif self.vehicle.mode != "AUTO":
+                self.stand_down_for_external_mode(f"external mode {self.vehicle.mode} before GUIDED lock")
+                return detections, masks
             elif now - self.state_started_at > float(m["mode_change_timeout_s"]):
                 self.status_message = "Target locked; still forcing GUIDED"
                 self.request_mode_repeated("GUIDED", force=True)
@@ -720,10 +789,6 @@ class Controller:
                 self.request_mode_repeated("GUIDED")
 
         elif self.state == State.CENTER:
-            enabled, reason = self.search_gate_status()
-            if not enabled:
-                self.abandon_active_target(now, reason)
-                return detections, masks
             if self.vehicle.mode != "GUIDED":
                 if self.vehicle.mode == "AUTO":
                     if self.guided_mode_lost_since is None:
@@ -747,7 +812,7 @@ class Controller:
                         self.last_guided_bounce_print_at = now
                     self.request_mode_repeated("GUIDED", force=True)
                     return detections, masks
-                self.abandon_active_target(now, f"left GUIDED: {self.vehicle.mode}")
+                self.stand_down_for_external_mode(f"external mode {self.vehicle.mode} during centering")
                 return detections, masks
             self.guided_mode_lost_since = None
             self.request_mode_repeated("GUIDED")
@@ -834,9 +899,8 @@ class Controller:
             self.send_velocity(forward, right, self.altitude_down())
 
         elif self.state == State.PAYLOAD:
-            enabled, reason = self.search_gate_status()
-            if not enabled:
-                self.abandon_active_target(now, reason)
+            if self.vehicle.mode not in MISSION_OWNED_MODES:
+                self.stand_down_for_external_mode(f"external mode {self.vehicle.mode} during payload")
                 return detections, masks
             self.request_mode_repeated("GUIDED")
             self.payload_action(now)
@@ -944,8 +1008,10 @@ class Controller:
                     return 3
                 ok, frame = self.camera.read()
                 if not ok or frame is None:
+                    self.handle_camera_frame_miss(time.monotonic())
                     time.sleep(0.02)
                     continue
+                self.last_frame_at = time.monotonic()
                 frame = self.resize(frame)
                 if self.state in {State.WAITING_FOR_AUTO, State.SEARCH, State.WAITING_FOR_GUIDED, State.WAITING_FOR_AUTO_RESUME, State.WAITING_FOR_RTL, State.COMPLETE}:
                     detections, masks = self.detector.search(frame)
@@ -975,7 +1041,7 @@ class Controller:
                     break
         finally:
             if self.vehicle.mode == "GUIDED":
-                self.vehicle.send_body_velocity(0.0, 0.0, 0.0)
+                self.send_velocity(0.0, 0.0, 0.0, force=True)
             self.camera.release()
             self.log_file.close()
             cv2.destroyAllWindows()

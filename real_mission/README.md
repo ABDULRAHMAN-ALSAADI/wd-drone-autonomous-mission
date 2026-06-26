@@ -136,6 +136,7 @@ The real config now uses:
 ```json
 "safety": {
   "max_guided_auto_bounces_per_target": null,
+  "camera_frame_timeout_s": 2.0,
   "active_target_abort_mode": "AUTO"
 }
 ```
@@ -143,6 +144,11 @@ The real config now uses:
 So `GUIDED -> AUTO -> GUIDED` bounces are retried without dropping the target
 lock. The Pi keeps requesting GUIDED until the target is centered and payload is
 finished.
+
+If the pilot or failsafe changes the vehicle to LOITER, STABILIZE, RTL, LAND, or
+another non-mission mode, the Pi stands down, sends zero velocity, clears the
+target lock, and waits for AUTO. That keeps the companion from overriding a real
+safety decision.
 
 ## Laptop Camera Window
 

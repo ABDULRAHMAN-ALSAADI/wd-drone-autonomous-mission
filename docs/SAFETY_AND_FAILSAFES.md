@@ -89,6 +89,17 @@ The default real mission profile keeps:
 }
 ```
 
+During Mission 2 the companion only treats AUTO and GUIDED as mission-owned
+modes. If ArduPilot briefly reports AUTO while the Pi is centering a confirmed
+target, the Pi keeps the target lock and requests GUIDED again. If the pilot or
+failsafe changes to LOITER, STABILIZE, RTL, LAND, or another non-mission mode,
+the Pi sends zero velocity, drops the active target lock, and waits for AUTO
+instead of fighting the aircraft.
+
+`safety.camera_frame_timeout_s` protects active target work if the camera feed
+stalls. After the timeout, the Pi holds position in GUIDED and reports a camera
+timeout in the overlay/log instead of continuing the route blindly.
+
 ## Before Real Payload Release
 
 Keep `payload.simulate_only` set to `true` until:

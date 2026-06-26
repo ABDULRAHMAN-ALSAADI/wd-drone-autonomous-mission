@@ -62,6 +62,7 @@ checks = [
     ("navigation.search_speed_source", cfg["navigation"]["search_speed_source"] == "qgc_mission"),
     ("safety.active_target_abort_mode", cfg["safety"]["active_target_abort_mode"] == "AUTO"),
     ("safety.max_guided_auto_bounces_per_target", cfg["safety"]["max_guided_auto_bounces_per_target"] is None),
+    ("safety.camera_frame_timeout_s", float(cfg["safety"]["camera_frame_timeout_s"]) > 0.0),
 ]
 
 failed = False
