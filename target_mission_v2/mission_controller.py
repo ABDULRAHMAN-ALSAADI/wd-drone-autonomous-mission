@@ -171,29 +171,6 @@ def validate_config(config: dict[str, Any]) -> None:
     if vision_backend not in SUPPORTED_VISION_BACKENDS:
         supported = ", ".join(sorted(SUPPORTED_VISION_BACKENDS))
         raise ValueError(f"vision.backend must be one of: {supported}")
-    if vision_backend == "yolo_ultralytics":
-        if not str(config["vision"].get("model_path", "")).strip():
-            raise ValueError("vision.model_path is required for yolo_ultralytics")
-        if float(config["vision"].get("yolo_confidence", 0.45)) <= 0:
-            raise ValueError("vision.yolo_confidence must be positive")
-        yolo_iou = float(config["vision"].get("yolo_iou", 0.45))
-        if not 0.0 < yolo_iou <= 1.0:
-            raise ValueError("vision.yolo_iou must be in (0, 1]")
-        if int(config["vision"].get("yolo_image_size", 640)) <= 0:
-            raise ValueError("vision.yolo_image_size must be positive")
-        if int(config["vision"].get("yolo_max_detections", 6)) <= 0:
-            raise ValueError("vision.yolo_max_detections must be positive")
-        if (
-            not bool(config["vision"].get("yolo_require_colour_sanity", True))
-            and not bool(config["vision"].get("yolo_require_strict_shape", True))
-        ):
-            raise ValueError("YOLO needs at least one safety gate: colour_sanity or strict_shape")
-        for source, target in config["vision"].get("yolo_class_map", {}).items():
-            if not str(source).strip() or target not in {"red_triangle", "blue_hexagon"}:
-                raise ValueError("vision.yolo_class_map must map class names to red_triangle or blue_hexagon")
-        for target in config["vision"].get("yolo_strict_fallback_targets", []):
-            if target not in {"red_triangle", "blue_hexagon"}:
-                raise ValueError("vision.yolo_strict_fallback_targets must contain red_triangle or blue_hexagon")
     if float(config["control"]["command_rate_hz"]) <= 0:
         raise ValueError("control.command_rate_hz must be positive")
     if float(config["control"].get("center_tolerance_px", 1.0)) <= 0:

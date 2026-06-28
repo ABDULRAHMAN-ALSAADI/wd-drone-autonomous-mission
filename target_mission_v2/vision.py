@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Target detection for the active mission.
 
-The default backend is intentionally strict classical computer vision. It looks
-for the competition shapes and rejects fixed-wing rectangle/square targets. The
-optional YOLO backend is added beside it and still keeps lightweight colour and
-geometry guard rails, because a neural model should not be allowed to turn a
-runway rectangle into a payload target by itself.
+The current backend is intentionally strict classical computer vision. It looks
+for the competition shapes and rejects fixed-wing rectangle/square targets. A
+future YOLO/AI-HAT backend should be added beside this code, not by removing the
+shape-safety checks.
 """
 from __future__ import annotations
 
@@ -13,7 +12,6 @@ import math
 import time
 from collections import deque
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Deque, Dict, Iterable, Optional
 
 import cv2
@@ -21,24 +19,7 @@ import numpy as np
 
 
 VISION_BACKEND_STRICT_SHAPE = "strict_shape"
-VISION_BACKEND_YOLO_ULTRALYTICS = "yolo_ultralytics"
-SUPPORTED_VISION_BACKENDS = {VISION_BACKEND_STRICT_SHAPE, VISION_BACKEND_YOLO_ULTRALYTICS}
-
-TARGET_RED_TRIANGLE = "red_triangle"
-TARGET_BLUE_HEXAGON = "blue_hexagon"
-TARGETS = {TARGET_RED_TRIANGLE, TARGET_BLUE_HEXAGON}
-
-DEFAULT_YOLO_CLASS_MAP = {
-    "kirmzi": TARGET_RED_TRIANGLE,
-    "kirmizi": TARGET_RED_TRIANGLE,
-    "red": TARGET_RED_TRIANGLE,
-    TARGET_RED_TRIANGLE: TARGET_RED_TRIANGLE,
-    "mavi": TARGET_BLUE_HEXAGON,
-    "blue": TARGET_BLUE_HEXAGON,
-    TARGET_BLUE_HEXAGON: TARGET_BLUE_HEXAGON,
-}
-
-ROOT = Path(__file__).resolve().parents[1]
+SUPPORTED_VISION_BACKENDS = {VISION_BACKEND_STRICT_SHAPE}
 
 
 @dataclass(frozen=True)
@@ -76,8 +57,8 @@ class HitTracker:
         self.window_s = window_s
         self.max_jump_px = max_jump_px
         self.history: Dict[str, Deque[tuple[float, Detection]]] = {
-            TARGET_RED_TRIANGLE: deque(),
-            TARGET_BLUE_HEXAGON: deque(),
+            "red_triangle": deque(),
+            "blue_hexagon": deque(),
         }
 
     def reset(self) -> None:
@@ -355,7 +336,7 @@ class StrictShapeDetector:
     def search(self, frame: np.ndarray) -> tuple[list[Detection], dict[str, np.ndarray]]:
         masks = self.masks(frame)
         detections: list[Detection] = []
-        for target, colour in ((TARGET_RED_TRIANGLE, "red"), (TARGET_BLUE_HEXAGON, "blue")):
+        for target, colour in (("red_triangle", "red"), ("blue_hexagon", "blue")):
             contours, _ = cv2.findContours(masks[colour], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             best: Optional[Detection] = None
             for contour in contours:
@@ -365,7 +346,7 @@ class StrictShapeDetector:
                 perimeter = float(cv2.arcLength(contour, True))
                 if perimeter <= 0:
                     continue
-                item = self._triangle(contour, area, perimeter) if target == TARGET_RED_TRIANGLE else self._hexagon(contour, area, perimeter)
+                item = self._triangle(contour, area, perimeter) if target == "red_triangle" else self._hexagon(contour, area, perimeter)
                 if item is not None and (best is None or item.confidence > best.confidence):
                     best = item
             if best is not None:
@@ -380,9 +361,9 @@ class StrictShapeDetector:
         max_jump_px: float = 220.0,
     ) -> tuple[Optional[Detection], dict[str, np.ndarray]]:
         masks = self.masks(frame)
-        if target not in TARGETS:
+        if target not in {"red_triangle", "blue_hexagon"}:
             return None, masks
-        colour = "red" if target == TARGET_RED_TRIANGLE else "blue"
+        colour = "red" if target == "red_triangle" else "blue"
         contours, _ = cv2.findContours(masks[colour], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         options: list[tuple[float, Detection]] = []
         fallback_options: list[tuple[float, Detection]] = []
@@ -393,7 +374,7 @@ class StrictShapeDetector:
             perimeter = float(cv2.arcLength(contour, True))
             if perimeter <= 0:
                 continue
-            item = self._triangle(contour, area, perimeter) if target == TARGET_RED_TRIANGLE else self._hexagon(contour, area, perimeter)
+            item = self._triangle(contour, area, perimeter) if target == "red_triangle" else self._hexagon(contour, area, perimeter)
             if item is None:
                 fallback = self._make_colour_lock(contour, target, area)
                 if fallback is not None:
@@ -412,389 +393,13 @@ class StrictShapeDetector:
         return item, masks
 
 
-class YoloUltralyticsDetector:
-    """YOLO detector with classical sanity checks around the model output.
-
-    This backend is intended for laptop/simulation and later Pi testing after
-    cooling is installed. It lazy-imports Ultralytics so the real Pi mission can
-    keep using ``strict_shape`` without carrying a Torch dependency.
-    """
-
-    def __init__(
-        self,
-        model_path: str,
-        confidence: float = 0.45,
-        iou: float = 0.45,
-        image_size: int = 640,
-        max_detections: int = 6,
-        require_colour_sanity: bool = True,
-        require_strict_shape: bool = True,
-        strict_fallback_targets: Optional[Iterable[str]] = None,
-        search_min_area_px: float = 220.0,
-        tracking_min_area_px: float = 120.0,
-        debug_rejects: bool = False,
-        class_map: Optional[dict[str, str]] = None,
-    ) -> None:
-        try:
-            from ultralytics import YOLO
-        except Exception as exc:  # pragma: no cover - depends on optional package
-            raise RuntimeError(
-                "vision.backend='yolo_ultralytics' needs the optional ultralytics package. "
-                "Use strict_shape on the Pi until YOLO/Hailo runtime is installed."
-            ) from exc
-
-        resolved_model_path = self._resolve_model_path(model_path)
-        if not resolved_model_path.exists():
-            raise FileNotFoundError(f"YOLO model file not found: {resolved_model_path}")
-
-        self.model_path = resolved_model_path
-        self.model = YOLO(str(resolved_model_path))
-        self.confidence = confidence
-        self.iou = iou
-        self.image_size = image_size
-        self.max_detections = max_detections
-        self.require_colour_sanity = require_colour_sanity
-        self.require_strict_shape = require_strict_shape
-        self.strict_fallback_targets = {
-            target for target in (strict_fallback_targets or []) if target in TARGETS
-        }
-        self.strict = StrictShapeDetector(search_min_area_px, tracking_min_area_px, debug_rejects)
-        self.debug_rejects = debug_rejects
-        self.class_map = dict(DEFAULT_YOLO_CLASS_MAP)
-        for source, target in (class_map or {}).items():
-            self.class_map[self._normalise_name(source)] = target
-
-    @staticmethod
-    def _resolve_model_path(model_path: str) -> Path:
-        path = Path(model_path).expanduser()
-        if path.is_absolute():
-            return path
-        for base in (Path.cwd(), ROOT, Path(__file__).resolve().parent):
-            candidate = base / path
-            if candidate.exists():
-                return candidate
-        return ROOT / path
-
-    @staticmethod
-    def _normalise_name(name: object) -> str:
-        return str(name).strip().lower().replace(" ", "_").replace("-", "_")
-
-    def _target_for_class(self, class_id: int) -> Optional[str]:
-        names = getattr(self.model, "names", {})
-        raw_name = names.get(class_id, class_id) if isinstance(names, dict) else class_id
-        target = self.class_map.get(self._normalise_name(raw_name))
-        return target if target in TARGETS else None
-
-    def masks(self, frame: np.ndarray) -> dict[str, np.ndarray]:
-        return self.strict.masks(frame)
-
-    def _debug(self, target: str, reason: str, confidence: float) -> None:
-        if self.debug_rejects:
-            print(f"[YOLO REJECT] {target}: {reason}; conf={confidence:.2f}")
-
-    @staticmethod
-    def _clip_box(frame: np.ndarray, xyxy: Iterable[float]) -> Optional[tuple[int, int, int, int]]:
-        h, w = frame.shape[:2]
-        x1, y1, x2, y2 = [int(round(float(value))) for value in xyxy]
-        x1 = max(0, min(w - 1, x1))
-        x2 = max(0, min(w, x2))
-        y1 = max(0, min(h - 1, y1))
-        y2 = max(0, min(h, y2))
-        if x2 <= x1 + 2 or y2 <= y1 + 2:
-            return None
-        return x1, y1, x2, y2
-
-    @staticmethod
-    def _largest_contour(mask: np.ndarray) -> Optional[np.ndarray]:
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return None
-        return max(contours, key=cv2.contourArea)
-
-    def _colour_contour_for_box(
-        self,
-        masks: dict[str, np.ndarray],
-        target: str,
-        box: tuple[int, int, int, int],
-    ) -> Optional[np.ndarray]:
-        x1, y1, x2, y2 = box
-        colour = "red" if target == TARGET_RED_TRIANGLE else "blue"
-        crop = masks[colour][y1:y2, x1:x2]
-        contour = self._largest_contour(crop)
-        if contour is None:
-            return None
-        return contour + np.array([[[x1, y1]]], dtype=contour.dtype)
-
-    def _passes_colour_sanity(
-        self,
-        contour: np.ndarray,
-        target: str,
-        confidence: float,
-        min_area_px: float,
-    ) -> tuple[bool, float, float, float, int, int, int]:
-        area = float(cv2.contourArea(contour))
-        if area < min_area_px:
-            self._debug(target, f"colour area too small {area:.0f}px", confidence)
-            return False, area, 0.0, 0.0, 0, 0, 0
-        perimeter = float(cv2.arcLength(contour, True))
-        if perimeter <= 0:
-            return False, area, 0.0, 0.0, 0, 0, 0
-
-        solidity, extent, circularity = StrictShapeDetector._metrics(contour, area, perimeter)
-        approximations = self.strict._approximations(contour, perimeter)
-        counts = [len(item) for item in approximations]
-        triangle_votes = sum(count == 3 for count in counts)
-        four_corner_votes = sum(count == 4 for count in counts)
-        hexagon_votes = sum(5 <= count <= 8 for count in counts)
-        rect_w, rect_h = cv2.minAreaRect(contour)[1]
-        shortest = max(1e-6, min(rect_w, rect_h))
-        rotated_aspect = max(rect_w, rect_h) / shortest
-
-        if target == TARGET_BLUE_HEXAGON:
-            if rotated_aspect > 1.80:
-                self._debug(target, f"too long aspect={rotated_aspect:.2f}", confidence)
-                return False, area, extent, circularity, triangle_votes, four_corner_votes, hexagon_votes
-            if extent > 0.84:
-                self._debug(target, f"rectangle-like extent={extent:.2f}", confidence)
-                return False, area, extent, circularity, triangle_votes, four_corner_votes, hexagon_votes
-            if solidity < 0.70 or circularity < 0.45:
-                return False, area, extent, circularity, triangle_votes, four_corner_votes, hexagon_votes
-        elif target == TARGET_RED_TRIANGLE:
-            if extent > 0.86:
-                self._debug(target, f"rectangle-like extent={extent:.2f}", confidence)
-                return False, area, extent, circularity, triangle_votes, four_corner_votes, hexagon_votes
-            if four_corner_votes >= 3 and triangle_votes == 0:
-                self._debug(target, f"four-corner votes={counts}", confidence)
-                return False, area, extent, circularity, triangle_votes, four_corner_votes, hexagon_votes
-            if solidity < 0.60 or not 0.18 <= circularity <= 0.95:
-                return False, area, extent, circularity, triangle_votes, four_corner_votes, hexagon_votes
-
-        return True, area, extent, circularity, triangle_votes, four_corner_votes, hexagon_votes
-
-    def _strict_shape_detection(self, contour: np.ndarray, target: str) -> Optional[Detection]:
-        """Confirm a YOLO colour class with the mission's real shape checks."""
-        area = float(cv2.contourArea(contour))
-        perimeter = float(cv2.arcLength(contour, True))
-        if perimeter <= 0:
-            return None
-        if target == TARGET_RED_TRIANGLE:
-            strict_item = self.strict._triangle(contour, area, perimeter)
-            if strict_item is not None:
-                return strict_item
-            return self._soft_yolo_triangle(contour, area, perimeter)
-        if target == TARGET_BLUE_HEXAGON:
-            return self.strict._hexagon(contour, area, perimeter)
-        return None
-
-    def _soft_yolo_triangle(self, contour: np.ndarray, area: float, perimeter: float) -> Optional[Detection]:
-        """Accept noisy YOLO red triangles while still rejecting red squares.
-
-        The YOLO model labels colour, so the final shape decision still happens
-        here. A true triangle fills most of its minimum enclosing triangle; a
-        square/diamond/rectangle fills roughly half, which makes this a useful
-        fallback when polygon votes wobble on small Gazebo/real targets.
-        """
-        if area <= 0 or perimeter <= 0:
-            return None
-        try:
-            enclosing_area, enclosing_triangle = cv2.minEnclosingTriangle(contour.astype(np.float32))
-        except cv2.error:
-            return None
-        if enclosing_area <= 0:
-            return None
-
-        solidity, extent, circularity = StrictShapeDetector._metrics(contour, area, perimeter)
-        approximations = self.strict._approximations(contour, perimeter)
-        counts = [len(item) for item in approximations]
-        triangle_votes = sum(count == 3 for count in counts)
-        four_corner_votes = sum(count == 4 for count in counts)
-        hexagon_votes = sum(5 <= count <= 8 for count in counts)
-        triangle_fit = area / float(enclosing_area)
-
-        if triangle_fit < 0.72:
-            return None
-        if extent > 0.80 or solidity < 0.68 or not 0.22 <= circularity <= 0.86:
-            return None
-        if four_corner_votes >= 3 and triangle_votes == 0:
-            return None
-
-        approx = np.rint(enclosing_triangle.reshape(-1, 1, 2)).astype(np.int32)
-        confidence = (
-            0.40 * min(1.0, triangle_fit)
-            + 0.25 * max(0.0, 1.0 - abs(extent - 0.50) / 0.30)
-            + 0.20 * max(0.0, 1.0 - abs(circularity - 0.58) / 0.30)
-            + 0.15 * min(1.0, solidity)
-        )
-        if confidence < 0.52:
-            return None
-        return self.strict._make(
-            contour,
-            approx,
-            TARGET_RED_TRIANGLE,
-            area,
-            confidence,
-            triangle_votes,
-            four_corner_votes,
-            hexagon_votes,
-            extent,
-            circularity,
-            solidity,
-        )
-
-    def _detection_from_box(
-        self,
-        frame: np.ndarray,
-        masks: dict[str, np.ndarray],
-        target: str,
-        confidence: float,
-        box: tuple[int, int, int, int],
-        min_area_px: float,
-    ) -> Optional[Detection]:
-        x1, y1, x2, y2 = box
-        contour = self._colour_contour_for_box(masks, target, box)
-        if contour is None:
-            if self.require_colour_sanity:
-                self._debug(target, "no matching colour inside YOLO box", confidence)
-                return None
-            center_x = (x1 + x2) // 2
-            center_y = (y1 + y2) // 2
-            return Detection(target, center_x, center_y, float((x2 - x1) * (y2 - y1)), confidence, 0, 0, 0, 0, 0.0, 0.0, 0.0, x1, y1, x2 - x1, y2 - y1)
-
-        ok, area, extent, circularity, triangle_votes, four_corner_votes, hexagon_votes = self._passes_colour_sanity(
-            contour, target, confidence, min_area_px
-        )
-        if self.require_colour_sanity and not ok:
-            return None
-        if self.require_strict_shape:
-            strict_item = self._strict_shape_detection(contour, target)
-            if strict_item is None:
-                self._debug(target, "YOLO box failed strict shape confirmation", confidence)
-                return None
-            return Detection(
-                target=strict_item.target,
-                center_x=strict_item.center_x,
-                center_y=strict_item.center_y,
-                area_px=strict_item.area_px,
-                confidence=round(min(1.0, 0.65 * confidence + 0.35 * strict_item.confidence), 3),
-                vertices=strict_item.vertices,
-                triangle_votes=strict_item.triangle_votes,
-                four_corner_votes=strict_item.four_corner_votes,
-                hexagon_votes=strict_item.hexagon_votes,
-                extent=strict_item.extent,
-                circularity=strict_item.circularity,
-                solidity=strict_item.solidity,
-                bbox_x=strict_item.bbox_x,
-                bbox_y=strict_item.bbox_y,
-                bbox_w=strict_item.bbox_w,
-                bbox_h=strict_item.bbox_h,
-            )
-
-        moments = cv2.moments(contour)
-        if abs(moments["m00"]) < 1e-9:
-            return None
-        cx = int(moments["m10"] / moments["m00"])
-        cy = int(moments["m01"] / moments["m00"])
-        bx, by, bw, bh = cv2.boundingRect(contour)
-        vertices = 3 if target == TARGET_RED_TRIANGLE else 6
-        return Detection(
-            target=target,
-            center_x=cx,
-            center_y=cy,
-            area_px=round(area, 1),
-            confidence=round(confidence, 3),
-            vertices=vertices,
-            triangle_votes=triangle_votes,
-            four_corner_votes=four_corner_votes,
-            hexagon_votes=hexagon_votes,
-            extent=round(extent, 3),
-            circularity=round(circularity, 3),
-            solidity=round(StrictShapeDetector._metrics(contour, area, float(cv2.arcLength(contour, True)))[0], 3),
-            bbox_x=bx,
-            bbox_y=by,
-            bbox_w=bw,
-            bbox_h=bh,
-        )
-
-    def _predict(self, frame: np.ndarray, min_area_px: float) -> tuple[list[Detection], dict[str, np.ndarray]]:
-        masks = self.masks(frame)
-        result = self.model.predict(
-            frame,
-            imgsz=self.image_size,
-            conf=self.confidence,
-            iou=self.iou,
-            max_det=self.max_detections,
-            verbose=False,
-        )[0]
-        detections: list[Detection] = []
-        for box in result.boxes:
-            target = self._target_for_class(int(box.cls[0]))
-            if target is None:
-                continue
-            clipped = self._clip_box(frame, box.xyxy[0])
-            if clipped is None:
-                continue
-            item = self._detection_from_box(frame, masks, target, float(box.conf[0]), clipped, min_area_px)
-            if item is not None:
-                detections.append(item)
-        detections.sort(key=lambda item: item.confidence, reverse=True)
-        best_by_target: dict[str, Detection] = {}
-        for item in detections:
-            best_by_target.setdefault(item.target, item)
-        if self.strict_fallback_targets:
-            strict_detections, masks = self.strict.search(frame)
-            for item in strict_detections:
-                if item.target in self.strict_fallback_targets and item.target not in best_by_target:
-                    best_by_target[item.target] = item
-        return list(best_by_target.values()), masks
-
-    def search(self, frame: np.ndarray) -> tuple[list[Detection], dict[str, np.ndarray]]:
-        return self._predict(frame, self.strict.search_min_area_px)
-
-    def track_colour(
-        self,
-        frame: np.ndarray,
-        target: str,
-        previous_center: tuple[int, int],
-        max_jump_px: float = 220.0,
-    ) -> tuple[Optional[Detection], dict[str, np.ndarray]]:
-        if target not in TARGETS:
-            return None, self.masks(frame)
-        detections, masks = self._predict(frame, self.strict.tracking_min_area_px)
-        options = [
-            (math.hypot(item.center_x - previous_center[0], item.center_y - previous_center[1]), item)
-            for item in detections
-            if item.target == target
-        ]
-        if options:
-            distance, item = min(options, key=lambda value: value[0])
-            if distance <= max_jump_px:
-                return item, masks
-        return self.strict.track_colour(frame, target, previous_center, max_jump_px)
-
-
-def create_detector(vision_config: dict[str, Any]) -> Any:
+def create_detector(vision_config: dict[str, Any]) -> StrictShapeDetector:
     backend = vision_config.get("backend", VISION_BACKEND_STRICT_SHAPE)
-    if backend == VISION_BACKEND_STRICT_SHAPE:
-        return StrictShapeDetector(
-            search_min_area_px=float(vision_config["search_min_area_px"]),
-            tracking_min_area_px=float(vision_config["tracking_min_area_px"]),
-            debug_rejects=bool(vision_config.get("debug_rejects", False)),
-        )
-    if backend == VISION_BACKEND_YOLO_ULTRALYTICS:
-        return YoloUltralyticsDetector(
-            model_path=str(vision_config["model_path"]),
-            confidence=float(vision_config.get("yolo_confidence", 0.45)),
-            iou=float(vision_config.get("yolo_iou", 0.45)),
-            image_size=int(vision_config.get("yolo_image_size", 640)),
-            max_detections=int(vision_config.get("yolo_max_detections", 6)),
-            require_colour_sanity=bool(vision_config.get("yolo_require_colour_sanity", True)),
-            require_strict_shape=bool(vision_config.get("yolo_require_strict_shape", True)),
-            strict_fallback_targets=vision_config.get("yolo_strict_fallback_targets", []),
-            search_min_area_px=float(vision_config["search_min_area_px"]),
-            tracking_min_area_px=float(vision_config["tracking_min_area_px"]),
-            debug_rejects=bool(vision_config.get("debug_rejects", False)),
-            class_map=vision_config.get("yolo_class_map"),
-        )
-    else:
+    if backend != VISION_BACKEND_STRICT_SHAPE:
         supported = ", ".join(sorted(SUPPORTED_VISION_BACKENDS))
         raise ValueError(f"Unsupported vision.backend {backend!r}. Supported backends: {supported}")
+    return StrictShapeDetector(
+        search_min_area_px=float(vision_config["search_min_area_px"]),
+        tracking_min_area_px=float(vision_config["tracking_min_area_px"]),
+        debug_rejects=bool(vision_config.get("debug_rejects", False)),
+    )

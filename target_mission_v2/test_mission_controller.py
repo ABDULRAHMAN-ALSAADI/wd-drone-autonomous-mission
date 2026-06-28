@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 from pymavlink import mavutil
 
-from vision import Detection, HitTracker, StrictShapeDetector, create_detector
+from vision import Detection, HitTracker, StrictShapeDetector
 from control import altitude_velocity_down
 from camera_sources import build_rpicam_mjpeg_command
 from mission_controller import (
@@ -215,71 +215,6 @@ class VisionTests(unittest.TestCase):
         tracked, _ = self.detector.track_colour(image, "red_triangle", (480, 280), max_jump_px=220)
         self.assertIsNone(tracked)
 
-    def test_yolo_backend_detects_targets_and_rejects_rectangle_when_available(self):
-        try:
-            import ultralytics  # noqa: F401
-        except Exception:
-            self.skipTest("optional ultralytics package is not installed")
-        model_path = Path(__file__).resolve().parents[1] / "models/yolo_targets/best.pt"
-        if not model_path.exists():
-            self.skipTest("YOLO model file is not present")
-        detector = create_detector({
-            "backend": "yolo_ultralytics",
-            "model_path": str(model_path),
-            "search_min_area_px": 100.0,
-            "tracking_min_area_px": 80.0,
-            "yolo_confidence": 0.25,
-            "yolo_iou": 0.45,
-            "yolo_image_size": 640,
-            "yolo_max_detections": 4,
-            "yolo_require_colour_sanity": True,
-            "yolo_require_strict_shape": True,
-            "yolo_strict_fallback_targets": ["red_triangle"],
-            "yolo_class_map": {"kirmzi": "red_triangle", "mavi": "blue_hexagon"},
-        })
-
-        blue_hexagon = np.full((640, 640, 3), 210, np.uint8)
-        cv2.fillConvexPoly(
-            blue_hexagon,
-            np.array([[320, 120], [495, 220], [495, 420], [320, 520], [145, 420], [145, 220]], np.int32),
-            (255, 0, 0),
-        )
-        self.assertIn("blue_hexagon", {item.target for item in detector.search(blue_hexagon)[0]})
-
-        red_triangle = np.full((640, 640, 3), 210, np.uint8)
-        cv2.fillConvexPoly(red_triangle, np.array([[320, 110], [140, 500], [500, 500]], np.int32), (0, 0, 255))
-        self.assertIn("red_triangle", {item.target for item in detector.search(red_triangle)[0]})
-
-        blue_rectangle = np.full((640, 640, 3), 210, np.uint8)
-        box = cv2.boxPoints(((320, 320), (360, 70), -8)).astype(np.int32)
-        cv2.fillConvexPoly(blue_rectangle, box, (255, 0, 0))
-        self.assertNotIn("blue_hexagon", {item.target for item in detector.search(blue_rectangle)[0]})
-
-        red_diamond_square = np.full((640, 640, 3), 210, np.uint8)
-        cv2.fillConvexPoly(
-            red_diamond_square,
-            np.array([[320, 120], [520, 320], [320, 520], [120, 320]], np.int32),
-            (0, 0, 255),
-        )
-        self.assertNotIn("red_triangle", {item.target for item in detector.search(red_diamond_square)[0]})
-
-        fallback_detector = create_detector({
-            "backend": "yolo_ultralytics",
-            "model_path": str(model_path),
-            "search_min_area_px": 100.0,
-            "tracking_min_area_px": 80.0,
-            "yolo_confidence": 0.999,
-            "yolo_iou": 0.45,
-            "yolo_image_size": 640,
-            "yolo_max_detections": 4,
-            "yolo_require_colour_sanity": True,
-            "yolo_require_strict_shape": True,
-            "yolo_strict_fallback_targets": ["red_triangle"],
-            "yolo_class_map": {"kirmzi": "red_triangle", "mavi": "blue_hexagon"},
-        })
-        self.assertIn("red_triangle", {item.target for item in fallback_detector.search(red_triangle)[0]})
-        self.assertNotIn("red_triangle", {item.target for item in fallback_detector.search(red_diamond_square)[0]})
-
 
 class AltitudeTests(unittest.TestCase):
     def test_optional_seconds_label_accepts_null_for_unlimited(self):
@@ -477,41 +412,6 @@ class MissionConfigTests(unittest.TestCase):
     def test_validate_config_rejects_unknown_vision_backend(self):
         config = self.config()
         config["vision"]["backend"] = "yolo_experiment"
-        with self.assertRaises(ValueError):
-            validate_config(config)
-
-    def test_validate_config_accepts_yolo_ultralytics_backend(self):
-        config = self.config()
-        config["vision"].update({
-            "backend": "yolo_ultralytics",
-            "model_path": "models/yolo_targets/best.pt",
-            "yolo_confidence": 0.45,
-            "yolo_iou": 0.45,
-            "yolo_image_size": 640,
-            "yolo_max_detections": 6,
-            "yolo_require_strict_shape": True,
-            "yolo_strict_fallback_targets": ["red_triangle"],
-            "yolo_class_map": {"kirmzi": "red_triangle", "mavi": "blue_hexagon"},
-        })
-        validate_config(config)
-
-    def test_validate_config_rejects_bad_yolo_class_map(self):
-        config = self.config()
-        config["vision"].update({
-            "backend": "yolo_ultralytics",
-            "model_path": "models/yolo_targets/best.pt",
-            "yolo_class_map": {"mavi": "blue_rectangle"},
-        })
-        with self.assertRaises(ValueError):
-            validate_config(config)
-
-    def test_validate_config_rejects_bad_yolo_strict_fallback_target(self):
-        config = self.config()
-        config["vision"].update({
-            "backend": "yolo_ultralytics",
-            "model_path": "models/yolo_targets/best.pt",
-            "yolo_strict_fallback_targets": ["red_square"],
-        })
         with self.assertRaises(ValueError):
             validate_config(config)
 
