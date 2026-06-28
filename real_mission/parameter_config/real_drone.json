@@ -11,7 +11,7 @@
     "safety.max_guided_auto_bounces_per_target": "Diagnostic only; keep null so GUIDED lock has no time limit during active centering.",
     "safety.active_target_abort_mode": "Fallback mode for explicit abort paths only. Normal target loss and slow centering now hold GUIDED and keep trying.",
     "vision.search_min_area_px": "Lower this carefully if real targets are too small at higher altitude.",
-    "camera.camera_index": "Raspberry Pi Camera Module port used by rpicam-vid. Use 1 when the ribbon cable is on CAM/DISP 1.",
+    "camera.camera_index": "Logical rpicam camera number, not the physical connector. With one detected camera, keep 0 even if the ribbon is on CAM/DISP 1.",
     "payload.simulate_only": "Keep true until servo and payload bench tests pass. Set false only for physical payload output.",
     "payload.servo_channel": "Pixhawk output channel for payload. Use 5 when the payload servo signal wire is on MAIN OUT / signal 5.",
     "display.show_main_window": "Keep false on Raspberry Pi OS Lite. Use real_mission/open_laptop_camera_window.sh on the Ubuntu laptop for live viewing.",
@@ -25,7 +25,7 @@
   },
   "camera": {
     "source": "rpicam_mjpeg",
-    "camera_index": 1,
+    "camera_index": 0,
     "width": 1280,
     "height": 720,
     "framerate": 15,

@@ -366,7 +366,7 @@ class MissionConfigTests(unittest.TestCase):
         config = self.config()
         config["camera"] = {
             "source": "rpicam_mjpeg",
-            "camera_index": 1,
+            "camera_index": 0,
             "width": 1280,
             "height": 720,
             "framerate": 15,
@@ -403,7 +403,7 @@ class MissionConfigTests(unittest.TestCase):
     def test_rpicam_mjpeg_command_outputs_to_stdout(self):
         cmd = build_rpicam_mjpeg_command({
             "source": "rpicam_mjpeg",
-            "camera_index": 1,
+            "camera_index": 0,
             "width": 1280,
             "height": 720,
             "framerate": 15,
@@ -413,7 +413,7 @@ class MissionConfigTests(unittest.TestCase):
         })
         self.assertEqual(cmd[0], "rpicam-vid")
         self.assertIn("mjpeg", cmd)
-        self.assertEqual(cmd[cmd.index("--camera") + 1], "1")
+        self.assertEqual(cmd[cmd.index("--camera") + 1], "0")
         self.assertEqual(cmd[-2:], ["-o", "-"])
         self.assertIn("--flush", cmd)
 
