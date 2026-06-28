@@ -27,8 +27,16 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission
 ./simulation/run_target_mission.sh target_mission_v2/configs/sim_yolo_local.json
 ```
 
-The YOLO model classes are colour names, so the code still applies colour and
-geometry sanity checks before accepting mission targets.
+The YOLO model classes are colour names, so the code treats YOLO boxes as
+candidates only. `sim_yolo_local.json` keeps both safety gates enabled:
+
+```json
+"yolo_require_colour_sanity": true,
+"yolo_require_strict_shape": true
+```
+
+That means a detected red square/diamond is rejected unless the strict triangle
+checker also agrees.
 
 ## Real Profile Safety Defaults
 

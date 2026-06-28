@@ -183,6 +183,11 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError("vision.yolo_image_size must be positive")
         if int(config["vision"].get("yolo_max_detections", 6)) <= 0:
             raise ValueError("vision.yolo_max_detections must be positive")
+        if (
+            not bool(config["vision"].get("yolo_require_colour_sanity", True))
+            and not bool(config["vision"].get("yolo_require_strict_shape", True))
+        ):
+            raise ValueError("YOLO needs at least one safety gate: colour_sanity or strict_shape")
         for source, target in config["vision"].get("yolo_class_map", {}).items():
             if not str(source).strip() or target not in {"red_triangle", "blue_hexagon"}:
                 raise ValueError("vision.yolo_class_map must map class names to red_triangle or blue_hexagon")

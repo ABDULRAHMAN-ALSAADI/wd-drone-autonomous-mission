@@ -233,6 +233,7 @@ class VisionTests(unittest.TestCase):
             "yolo_image_size": 640,
             "yolo_max_detections": 4,
             "yolo_require_colour_sanity": True,
+            "yolo_require_strict_shape": True,
             "yolo_class_map": {"kirmzi": "red_triangle", "mavi": "blue_hexagon"},
         })
 
@@ -252,6 +253,14 @@ class VisionTests(unittest.TestCase):
         box = cv2.boxPoints(((320, 320), (360, 70), -8)).astype(np.int32)
         cv2.fillConvexPoly(blue_rectangle, box, (255, 0, 0))
         self.assertNotIn("blue_hexagon", {item.target for item in detector.search(blue_rectangle)[0]})
+
+        red_diamond_square = np.full((640, 640, 3), 210, np.uint8)
+        cv2.fillConvexPoly(
+            red_diamond_square,
+            np.array([[320, 120], [520, 320], [320, 520], [120, 320]], np.int32),
+            (0, 0, 255),
+        )
+        self.assertNotIn("red_triangle", {item.target for item in detector.search(red_diamond_square)[0]})
 
 
 class AltitudeTests(unittest.TestCase):
@@ -462,6 +471,7 @@ class MissionConfigTests(unittest.TestCase):
             "yolo_iou": 0.45,
             "yolo_image_size": 640,
             "yolo_max_detections": 6,
+            "yolo_require_strict_shape": True,
             "yolo_class_map": {"kirmzi": "red_triangle", "mavi": "blue_hexagon"},
         })
         validate_config(config)

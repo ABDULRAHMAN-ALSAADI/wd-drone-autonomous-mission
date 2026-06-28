@@ -37,6 +37,7 @@
     "yolo_image_size": 640,
     "yolo_max_detections": 6,
     "yolo_require_colour_sanity": true,
+    "yolo_require_strict_shape": true,
     "yolo_class_map": {
       "kirmzi": "red_triangle",
       "kirmizi": "red_triangle",

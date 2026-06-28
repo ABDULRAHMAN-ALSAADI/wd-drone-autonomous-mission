@@ -428,6 +428,7 @@ class YoloUltralyticsDetector:
         image_size: int = 640,
         max_detections: int = 6,
         require_colour_sanity: bool = True,
+        require_strict_shape: bool = True,
         search_min_area_px: float = 220.0,
         tracking_min_area_px: float = 120.0,
         debug_rejects: bool = False,
@@ -452,6 +453,7 @@ class YoloUltralyticsDetector:
         self.image_size = image_size
         self.max_detections = max_detections
         self.require_colour_sanity = require_colour_sanity
+        self.require_strict_shape = require_strict_shape
         self.strict = StrictShapeDetector(search_min_area_px, tracking_min_area_px, debug_rejects)
         self.debug_rejects = debug_rejects
         self.class_map = dict(DEFAULT_YOLO_CLASS_MAP)
@@ -565,6 +567,18 @@ class YoloUltralyticsDetector:
 
         return True, area, extent, circularity, triangle_votes, four_corner_votes, hexagon_votes
 
+    def _strict_shape_detection(self, contour: np.ndarray, target: str) -> Optional[Detection]:
+        """Confirm a YOLO colour class with the mission's real shape checks."""
+        area = float(cv2.contourArea(contour))
+        perimeter = float(cv2.arcLength(contour, True))
+        if perimeter <= 0:
+            return None
+        if target == TARGET_RED_TRIANGLE:
+            return self.strict._triangle(contour, area, perimeter)
+        if target == TARGET_BLUE_HEXAGON:
+            return self.strict._hexagon(contour, area, perimeter)
+        return None
+
     def _detection_from_box(
         self,
         frame: np.ndarray,
@@ -589,6 +603,29 @@ class YoloUltralyticsDetector:
         )
         if self.require_colour_sanity and not ok:
             return None
+        if self.require_strict_shape:
+            strict_item = self._strict_shape_detection(contour, target)
+            if strict_item is None:
+                self._debug(target, "YOLO box failed strict shape confirmation", confidence)
+                return None
+            return Detection(
+                target=strict_item.target,
+                center_x=strict_item.center_x,
+                center_y=strict_item.center_y,
+                area_px=strict_item.area_px,
+                confidence=round(min(1.0, 0.65 * confidence + 0.35 * strict_item.confidence), 3),
+                vertices=strict_item.vertices,
+                triangle_votes=strict_item.triangle_votes,
+                four_corner_votes=strict_item.four_corner_votes,
+                hexagon_votes=strict_item.hexagon_votes,
+                extent=strict_item.extent,
+                circularity=strict_item.circularity,
+                solidity=strict_item.solidity,
+                bbox_x=strict_item.bbox_x,
+                bbox_y=strict_item.bbox_y,
+                bbox_w=strict_item.bbox_w,
+                bbox_h=strict_item.bbox_h,
+            )
 
         moments = cv2.moments(contour)
         if abs(moments["m00"]) < 1e-9:
@@ -684,6 +721,7 @@ def create_detector(vision_config: dict[str, Any]) -> Any:
             image_size=int(vision_config.get("yolo_image_size", 640)),
             max_detections=int(vision_config.get("yolo_max_detections", 6)),
             require_colour_sanity=bool(vision_config.get("yolo_require_colour_sanity", True)),
+            require_strict_shape=bool(vision_config.get("yolo_require_strict_shape", True)),
             search_min_area_px=float(vision_config["search_min_area_px"]),
             tracking_min_area_px=float(vision_config["tracking_min_area_px"]),
             debug_rejects=bool(vision_config.get("debug_rejects", False)),

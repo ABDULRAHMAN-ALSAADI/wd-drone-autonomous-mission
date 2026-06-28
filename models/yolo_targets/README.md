@@ -30,9 +30,17 @@ kirmzi/kirmizi -> red_triangle
 mavi           -> blue_hexagon
 ```
 
-The YOLO backend still applies colour and geometry sanity checks before it
-returns a mission target. This is intentional: runway rectangles and other blue
-objects must not become payload targets.
+The YOLO backend treats the model output as a candidate only. Before it returns
+a mission target, it requires:
+
+```json
+"yolo_require_colour_sanity": true,
+"yolo_require_strict_shape": true
+```
+
+That second gate runs the same strict triangle/hexagon checks used by the
+classical detector. This is intentional: the model can confidently call a red
+square/diamond `kirmzi`, but the drone must not fly toward it as a triangle.
 
 ## Current Use
 
