@@ -146,6 +146,8 @@ def validate_config(config: dict[str, Any]) -> None:
     if camera_source == "device" and int(config["camera"].get("device_index", 0)) < 0:
         raise ValueError("camera.device_index must be zero or positive")
     if camera_source == "rpicam_mjpeg":
+        if int(config["camera"].get("camera_index", 0)) < 0:
+            raise ValueError("camera.camera_index must be zero or positive for rpicam_mjpeg")
         for key in ("width", "height", "quality"):
             if int(config["camera"].get(key, 1)) <= 0:
                 raise ValueError(f"camera.{key} must be positive for rpicam_mjpeg")

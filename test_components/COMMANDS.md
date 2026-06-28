@@ -39,7 +39,20 @@ DRY_RUN=1 ./scripts/sync_to_pi.sh
 The dry run shows what will copy. The real sync copies code to the Pi without
 deleting Pi files.
 
-## 3. Pi Camera Health Without Window
+## 3. Pi Camera And Hailo Hardware Status
+
+Run on the Ubuntu laptop:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./test_components/camera/pi_camera_hailo_status.sh
+```
+
+This is read-only. It checks Pi temperature, throttling, camera boot overlay,
+detected `rpicam` cameras, video devices, Hailo PCIe visibility, and HailoRT
+installation state.
+
+## 4. Pi Camera Health Without Window
 
 Run on the Raspberry Pi:
 
@@ -57,7 +70,7 @@ Good result:
 [CAMERA OK] frames=... avg_fps=...
 ```
 
-## 4. Laptop Live Camera Window
+## 5. Laptop Live Camera Window
 
 Run on the Ubuntu laptop, not inside `ssh pi5`:
 
@@ -76,7 +89,7 @@ Keys:
 - `s`: save snapshot;
 - `m`: toggle red/blue mask windows.
 
-## 5. MAVLink Heartbeat And Health
+## 6. MAVLink Heartbeat And Health
 
 Run on the Raspberry Pi after Cube TELEM is wired:
 
@@ -105,7 +118,7 @@ MAVLink participant on the wire, run:
 Extra heartbeats such as `src=255:190` are usually Mission Planner/GCS, and
 `src=1:0` is not the autopilot component used for mode/arm confirmation.
 
-## 6. Mode Authority Checks
+## 7. Mode Authority Checks
 
 Run on the Raspberry Pi:
 
