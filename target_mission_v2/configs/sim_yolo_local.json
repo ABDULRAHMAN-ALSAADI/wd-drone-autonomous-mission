@@ -1,0 +1,102 @@
+{
+  "mavlink": {
+    "connection": "udpin:0.0.0.0:14551",
+    "baud": null,
+    "heartbeat_timeout_s": 8.0
+  },
+  "camera": {
+    "source": "udp_h264",
+    "udp_port": 5600
+  },
+  "mission": {
+    "name": "sitl_gazebo_target_payload_yolo_local",
+    "search_enabled": true,
+    "search_start_wp": 2,
+    "search_enable_rc_channel": null,
+    "search_enable_pwm_min": 1700,
+    "mode_change_timeout_s": 5.0,
+    "max_flight_time_s": 600.0
+  },
+  "navigation": {
+    "search_speed_source": "qgc_mission",
+    "search_speed_m_s": 3.0
+  },
+  "parameters": {
+    "enforce": false,
+    "rtl_alt_cm": 500.0,
+    "rtl_climb_min_cm": 0.0,
+    "mis_restart": 0,
+    "read_timeout_s": 2.0,
+    "missing_action": "warn"
+  },
+  "vision": {
+    "backend": "yolo_ultralytics",
+    "model_path": "models/yolo_targets/best.pt",
+    "yolo_confidence": 0.45,
+    "yolo_iou": 0.45,
+    "yolo_image_size": 640,
+    "yolo_max_detections": 6,
+    "yolo_require_colour_sanity": true,
+    "yolo_class_map": {
+      "kirmzi": "red_triangle",
+      "kirmizi": "red_triangle",
+      "mavi": "blue_hexagon"
+    },
+    "process_width": 960,
+    "search_min_area_px": 220.0,
+    "tracking_min_area_px": 120.0,
+    "required_hits": 3,
+    "confirmation_window_s": 1.5,
+    "max_lock_jump_px": 160.0,
+    "debug_rejects": false
+  },
+  "control": {
+    "command_rate_hz": 10.0,
+    "center_kp": 0.55,
+    "center_max_speed_m_s": 0.35,
+    "center_tolerance_px": 16.0,
+    "center_tolerance_px_by_target": {
+      "red_triangle": 26.0,
+      "blue_hexagon": 16.0
+    },
+    "center_hold_s": 1.4,
+    "target_lost_timeout_s": 4.0,
+    "reacquire_after_lost_s": 0.25,
+    "altitude_control": "off",
+    "altitude_tolerance_m": 0.2,
+    "altitude_kp": 0.45,
+    "altitude_max_speed_m_s": 0.3,
+    "image_y_to_forward_sign": -1.0,
+    "image_x_to_right_sign": 1.0
+  },
+  "payload": {
+    "simulate_only": true,
+    "servo_channel": 9,
+    "release_pwm": 1900,
+    "reset_pwm": 1100,
+    "release_hold_s": 1.0,
+    "total_action_time_s": 1.5
+  },
+  "safety": {
+    "max_center_time_s": null,
+    "max_guided_speed_m_s": 0.35,
+    "guided_auto_bounce_grace_s": null,
+    "max_guided_auto_bounces_per_target": null,
+    "active_target_abort_mode": "AUTO",
+    "mode_retry_interval_s": 0.2,
+    "camera_frame_timeout_s": 2.0,
+    "payload_requires_guided": true,
+    "payload_min_altitude_m": null,
+    "payload_max_altitude_m": null
+  },
+  "display": {
+    "show_main_window": true,
+    "show_masks": false,
+    "overlay_font_scale": 0.46,
+    "overlay_background_alpha": 0.42
+  },
+  "logging": {
+    "directory": "logs/mission_v2",
+    "flush_interval_s": 0.5
+  }
+}

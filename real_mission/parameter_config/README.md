@@ -28,6 +28,7 @@ Do not edit Python code for normal tuning. Start here first.
 | `safety.camera_frame_timeout_s` | Active-target camera freeze timeout. | Start at `2.0`; set `null` only for debugging. |
 | `vision.required_hits` | Number of stable detections before target lock. | Higher is safer but slower. |
 | `vision.search_min_area_px` | Smallest target area accepted during search. | Lower for higher altitude, higher to reject noise. |
+| `vision.backend` | Active detector backend. | Keep `strict_shape` for real flight until YOLO/Hailo is bench-tested. |
 | `payload.simulate_only` | If `true`, no servo command is sent. | Keep `true` until servo bench passes. |
 | `payload.servo_channel` | Pixhawk output channel for payload. | `5` when the servo signal is on MAIN OUT / signal 5. |
 | `payload.release_pwm` | PWM sent to release payload. | Test on bench before flight. |
@@ -99,3 +100,29 @@ in `mission2_target_payload.json`:
 ```
 
 Keep Mission 1 on `mission1_no_search.json`, where `search_enabled` is `false`.
+
+## Optional YOLO Backend
+
+The first YOLO model is stored in:
+
+```text
+models/yolo_targets/
+```
+
+It has two classes:
+
+```text
+kirmzi/kirmizi -> red_triangle
+mavi           -> blue_hexagon
+```
+
+Do not switch the real mission to YOLO just because the file exists. First test
+it with the laptop camera window and SITL config:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./simulation/run_target_mission.sh target_mission_v2/configs/sim_yolo_local.json
+```
+
+The Raspberry Pi should only run neural inference after cooling and FPS/thermal
+tests pass. The strict detector remains the safe real-flight default.

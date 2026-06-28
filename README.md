@@ -16,6 +16,7 @@ START_HERE.md
 | `test_components/` | Bench commands for camera, MAVLink, servo, motor, and software checks. |
 | `simulation/` | Gazebo + ArduPilot SITL scripts for testing the mission on Ubuntu. |
 | `target_mission_v2/` | Internal tested mission engine used by `real_mission/`. |
+| `models/` | Optional trained vision models and model notes. |
 | `scripts/` and `tools/` | Internal helpers used by the test wrappers. |
 | `docs/` | Safety notes, wiring notes, and longer explanations. |
 
