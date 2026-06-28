@@ -191,6 +191,9 @@ def validate_config(config: dict[str, Any]) -> None:
         for source, target in config["vision"].get("yolo_class_map", {}).items():
             if not str(source).strip() or target not in {"red_triangle", "blue_hexagon"}:
                 raise ValueError("vision.yolo_class_map must map class names to red_triangle or blue_hexagon")
+        for target in config["vision"].get("yolo_strict_fallback_targets", []):
+            if target not in {"red_triangle", "blue_hexagon"}:
+                raise ValueError("vision.yolo_strict_fallback_targets must contain red_triangle or blue_hexagon")
     if float(config["control"]["command_rate_hz"]) <= 0:
         raise ValueError("control.command_rate_hz must be positive")
     if float(config["control"].get("center_tolerance_px", 1.0)) <= 0:

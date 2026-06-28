@@ -35,12 +35,15 @@ a mission target, it requires:
 
 ```json
 "yolo_require_colour_sanity": true,
-"yolo_require_strict_shape": true
+"yolo_require_strict_shape": true,
+"yolo_strict_fallback_targets": ["red_triangle"]
 ```
 
 That second gate runs the same strict triangle/hexagon checks used by the
 classical detector. This is intentional: the model can confidently call a red
 square/diamond `kirmzi`, but the drone must not fly toward it as a triangle.
+The fallback target list lets the classical detector rescue real red triangles
+that YOLO misses at distance.
 
 ## Current Use
 

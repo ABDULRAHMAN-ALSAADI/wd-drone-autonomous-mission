@@ -32,11 +32,14 @@ candidates only. `sim_yolo_local.json` keeps both safety gates enabled:
 
 ```json
 "yolo_require_colour_sanity": true,
-"yolo_require_strict_shape": true
+"yolo_require_strict_shape": true,
+"yolo_strict_fallback_targets": ["red_triangle"]
 ```
 
 That means a detected red square/diamond is rejected unless the strict triangle
-checker also agrees.
+checker also agrees. The red triangle fallback is enabled because the red target
+can be smaller/noisier than the blue hexagon in the Gazebo camera, so the proven
+classical red-triangle detector is allowed to rescue missed YOLO red detections.
 
 ## Real Profile Safety Defaults
 

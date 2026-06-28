@@ -234,6 +234,7 @@ class VisionTests(unittest.TestCase):
             "yolo_max_detections": 4,
             "yolo_require_colour_sanity": True,
             "yolo_require_strict_shape": True,
+            "yolo_strict_fallback_targets": ["red_triangle"],
             "yolo_class_map": {"kirmzi": "red_triangle", "mavi": "blue_hexagon"},
         })
 
@@ -261,6 +262,23 @@ class VisionTests(unittest.TestCase):
             (0, 0, 255),
         )
         self.assertNotIn("red_triangle", {item.target for item in detector.search(red_diamond_square)[0]})
+
+        fallback_detector = create_detector({
+            "backend": "yolo_ultralytics",
+            "model_path": str(model_path),
+            "search_min_area_px": 100.0,
+            "tracking_min_area_px": 80.0,
+            "yolo_confidence": 0.999,
+            "yolo_iou": 0.45,
+            "yolo_image_size": 640,
+            "yolo_max_detections": 4,
+            "yolo_require_colour_sanity": True,
+            "yolo_require_strict_shape": True,
+            "yolo_strict_fallback_targets": ["red_triangle"],
+            "yolo_class_map": {"kirmzi": "red_triangle", "mavi": "blue_hexagon"},
+        })
+        self.assertIn("red_triangle", {item.target for item in fallback_detector.search(red_triangle)[0]})
+        self.assertNotIn("red_triangle", {item.target for item in fallback_detector.search(red_diamond_square)[0]})
 
 
 class AltitudeTests(unittest.TestCase):
@@ -472,6 +490,7 @@ class MissionConfigTests(unittest.TestCase):
             "yolo_image_size": 640,
             "yolo_max_detections": 6,
             "yolo_require_strict_shape": True,
+            "yolo_strict_fallback_targets": ["red_triangle"],
             "yolo_class_map": {"kirmzi": "red_triangle", "mavi": "blue_hexagon"},
         })
         validate_config(config)
@@ -482,6 +501,16 @@ class MissionConfigTests(unittest.TestCase):
             "backend": "yolo_ultralytics",
             "model_path": "models/yolo_targets/best.pt",
             "yolo_class_map": {"mavi": "blue_rectangle"},
+        })
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_validate_config_rejects_bad_yolo_strict_fallback_target(self):
+        config = self.config()
+        config["vision"].update({
+            "backend": "yolo_ultralytics",
+            "model_path": "models/yolo_targets/best.pt",
+            "yolo_strict_fallback_targets": ["red_square"],
         })
         with self.assertRaises(ValueError):
             validate_config(config)

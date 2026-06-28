@@ -32,12 +32,15 @@
   "vision": {
     "backend": "yolo_ultralytics",
     "model_path": "models/yolo_targets/best.pt",
-    "yolo_confidence": 0.45,
+    "yolo_confidence": 0.30,
     "yolo_iou": 0.45,
     "yolo_image_size": 640,
     "yolo_max_detections": 6,
     "yolo_require_colour_sanity": true,
     "yolo_require_strict_shape": true,
+    "yolo_strict_fallback_targets": [
+      "red_triangle"
+    ],
     "yolo_class_map": {
       "kirmzi": "red_triangle",
       "kirmizi": "red_triangle",

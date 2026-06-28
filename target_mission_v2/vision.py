@@ -429,6 +429,7 @@ class YoloUltralyticsDetector:
         max_detections: int = 6,
         require_colour_sanity: bool = True,
         require_strict_shape: bool = True,
+        strict_fallback_targets: Optional[Iterable[str]] = None,
         search_min_area_px: float = 220.0,
         tracking_min_area_px: float = 120.0,
         debug_rejects: bool = False,
@@ -454,6 +455,9 @@ class YoloUltralyticsDetector:
         self.max_detections = max_detections
         self.require_colour_sanity = require_colour_sanity
         self.require_strict_shape = require_strict_shape
+        self.strict_fallback_targets = {
+            target for target in (strict_fallback_targets or []) if target in TARGETS
+        }
         self.strict = StrictShapeDetector(search_min_area_px, tracking_min_area_px, debug_rejects)
         self.debug_rejects = debug_rejects
         self.class_map = dict(DEFAULT_YOLO_CLASS_MAP)
@@ -574,10 +578,68 @@ class YoloUltralyticsDetector:
         if perimeter <= 0:
             return None
         if target == TARGET_RED_TRIANGLE:
-            return self.strict._triangle(contour, area, perimeter)
+            strict_item = self.strict._triangle(contour, area, perimeter)
+            if strict_item is not None:
+                return strict_item
+            return self._soft_yolo_triangle(contour, area, perimeter)
         if target == TARGET_BLUE_HEXAGON:
             return self.strict._hexagon(contour, area, perimeter)
         return None
+
+    def _soft_yolo_triangle(self, contour: np.ndarray, area: float, perimeter: float) -> Optional[Detection]:
+        """Accept noisy YOLO red triangles while still rejecting red squares.
+
+        The YOLO model labels colour, so the final shape decision still happens
+        here. A true triangle fills most of its minimum enclosing triangle; a
+        square/diamond/rectangle fills roughly half, which makes this a useful
+        fallback when polygon votes wobble on small Gazebo/real targets.
+        """
+        if area <= 0 or perimeter <= 0:
+            return None
+        try:
+            enclosing_area, enclosing_triangle = cv2.minEnclosingTriangle(contour.astype(np.float32))
+        except cv2.error:
+            return None
+        if enclosing_area <= 0:
+            return None
+
+        solidity, extent, circularity = StrictShapeDetector._metrics(contour, area, perimeter)
+        approximations = self.strict._approximations(contour, perimeter)
+        counts = [len(item) for item in approximations]
+        triangle_votes = sum(count == 3 for count in counts)
+        four_corner_votes = sum(count == 4 for count in counts)
+        hexagon_votes = sum(5 <= count <= 8 for count in counts)
+        triangle_fit = area / float(enclosing_area)
+
+        if triangle_fit < 0.72:
+            return None
+        if extent > 0.80 or solidity < 0.68 or not 0.22 <= circularity <= 0.86:
+            return None
+        if four_corner_votes >= 3 and triangle_votes == 0:
+            return None
+
+        approx = np.rint(enclosing_triangle.reshape(-1, 1, 2)).astype(np.int32)
+        confidence = (
+            0.40 * min(1.0, triangle_fit)
+            + 0.25 * max(0.0, 1.0 - abs(extent - 0.50) / 0.30)
+            + 0.20 * max(0.0, 1.0 - abs(circularity - 0.58) / 0.30)
+            + 0.15 * min(1.0, solidity)
+        )
+        if confidence < 0.52:
+            return None
+        return self.strict._make(
+            contour,
+            approx,
+            TARGET_RED_TRIANGLE,
+            area,
+            confidence,
+            triangle_votes,
+            four_corner_votes,
+            hexagon_votes,
+            extent,
+            circularity,
+            solidity,
+        )
 
     def _detection_from_box(
         self,
@@ -678,6 +740,11 @@ class YoloUltralyticsDetector:
         best_by_target: dict[str, Detection] = {}
         for item in detections:
             best_by_target.setdefault(item.target, item)
+        if self.strict_fallback_targets:
+            strict_detections, masks = self.strict.search(frame)
+            for item in strict_detections:
+                if item.target in self.strict_fallback_targets and item.target not in best_by_target:
+                    best_by_target[item.target] = item
         return list(best_by_target.values()), masks
 
     def search(self, frame: np.ndarray) -> tuple[list[Detection], dict[str, np.ndarray]]:
@@ -722,6 +789,7 @@ def create_detector(vision_config: dict[str, Any]) -> Any:
             max_detections=int(vision_config.get("yolo_max_detections", 6)),
             require_colour_sanity=bool(vision_config.get("yolo_require_colour_sanity", True)),
             require_strict_shape=bool(vision_config.get("yolo_require_strict_shape", True)),
+            strict_fallback_targets=vision_config.get("yolo_strict_fallback_targets", []),
             search_min_area_px=float(vision_config["search_min_area_px"]),
             tracking_min_area_px=float(vision_config["tracking_min_area_px"]),
             debug_rejects=bool(vision_config.get("debug_rejects", False)),
