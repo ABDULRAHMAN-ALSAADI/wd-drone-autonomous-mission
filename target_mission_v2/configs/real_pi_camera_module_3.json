@@ -53,8 +53,8 @@
     "center_max_speed_m_s": 0.35,
     "center_tolerance_px": 22.0,
     "center_tolerance_px_by_target": {
-      "red_triangle": 30.0,
-      "blue_hexagon": 22.0
+      "red_triangle": 18.0,
+      "blue_hexagon": 16.0
     },
     "center_hold_s": 1.2,
     "target_lost_timeout_s": 4.0,
@@ -90,7 +90,13 @@
     "show_main_window": true,
     "show_masks": false,
     "overlay_font_scale": 0.46,
-    "overlay_background_alpha": 0.42
+    "overlay_background_alpha": 0.42,
+    "mjpeg_stream_enabled": false,
+    "mjpeg_stream_bind": "127.0.0.1",
+    "mjpeg_stream_port": 5602,
+    "mjpeg_stream_fps": 10.0,
+    "mjpeg_stream_quality": 65,
+    "mjpeg_stream_width": 960
   },
   "logging": {
     "directory": "logs/mission_v2",

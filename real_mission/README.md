@@ -125,11 +125,12 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission
 
 Flip one switch at a time. The changed channel is marked with `*`.
 
-## Active Target Abort Safety
+## Active Target And Pilot Authority
 
-If Mission 2 has already confirmed a target and the vehicle repeatedly leaves
-GUIDED before the payload step is finished, the Pi should not quietly let AUTO
-continue the route.
+After Mission 2 confirms a target, an unexpected return to `AUTO` is treated as
+a mode bounce. The Pi requests `GUIDED` again and keeps the same target lock.
+Slow centering does not trigger `LOITER`, `RTL`, or `AUTO`; it only creates a
+warning in the overlay and log.
 
 The real config now uses:
 
@@ -146,26 +147,66 @@ lock. The Pi keeps requesting GUIDED until the target is centered and payload is
 finished.
 
 If the pilot or failsafe changes the vehicle to LOITER, STABILIZE, RTL, LAND, or
-another non-mission mode, the Pi stands down, sends zero velocity, clears the
-target lock, and waits for AUTO. That keeps the companion from overriding a real
-safety decision.
+another non-mission mode, the Pi immediately sends zero velocity, clears the
+target lock, and latches pilot ownership. It does not request AUTO or GUIDED
+again while the aircraft remains armed. The latch resets only after disarm, so
+the companion cannot fight an RC recovery command.
+
+The centering command is smoothed and clamped. If the aircraft moves farther
+than `safety.max_guided_displacement_m` from the point where centering began,
+the Pi sends zero velocity and waits for pilot action; it does not select a
+flight mode automatically.
+
+## Payload Command State
+
+When physical payload output is enabled, the profile must also enable
+`payload_state`. The controller then waits for ArduPilot's `COMMAND_ACK` before
+recording a release attempt. This ACK means the command was accepted, not that
+the payload physically left the aircraft.
+
+Show the state before an attempt:
+
+```bash
+python3 target_mission_v2/mission_controller.py \
+  --config real_mission/parameter_config/mission2_target_payload.json \
+  --show-payload-state
+```
+
+Reset it manually on the ground before an official new attempt:
+
+```bash
+python3 target_mission_v2/mission_controller.py \
+  --config real_mission/parameter_config/mission2_target_payload.json \
+  --reset-payload-state
+```
+
+It is never reset automatically on boot.
 
 ## Laptop Camera Window
 
 The camera window is not opened by the RC and it is not sent through RFD900x.
 RFD900x is for MAVLink telemetry, not video.
 
-To see what the drone camera sees, the laptop and Pi must be on the same Wi-Fi
-or hotspot network. Start this from the Ubuntu laptop before takeoff:
+To see what the mission controller sees, the laptop and Pi must be connected by
+Ethernet, Wi-Fi, or a hotspot. Start Mission 2 on the Pi first, then run this on
+the Ubuntu laptop:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
 ./real_mission/open_laptop_camera_window.sh
 ```
 
-This opens a laptop OpenCV window. The Pi only streams frames. The mission does
-not depend on the laptop window, so if the Wi-Fi video drops, the Pi can still
-continue the mission.
+This opens an SSH tunnel to the controller's local MJPEG endpoint. The laptop
+shows the exact annotated frame used in Gazebo: state, flight mode, waypoint,
+target error, accepted payload-lock error, telemetry, and detections. It does
+not open Camera Module 3 a second time, so it cannot compete with the mission
+for camera ownership. The mission does not depend on the laptop viewer.
+
+For a standalone camera/detector test when the mission is not running, use:
+
+```bash
+./scripts/pi_camera_live.sh
+```
 
 ## Tunable Parameters
 

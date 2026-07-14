@@ -156,9 +156,12 @@ def draw_overlay(
     target_names = ",".join(item.target for item in detections) if detections else "none"
     scale = 0.48
     lines = [
-        f"Pi Camera Live | {w}x{h} | mode {mode}",
-        f"FPS recent {fps_recent:.1f} | avg {fps_avg:.1f} | frames {frame_count}",
-        f"Detector targets: {target_names}",
+        "Mission TEST | Mode N/A | WP N/A",
+        "Action: standalone OpenCV camera and vision validation",
+        f"Target: {target_names}",
+        "Payload: disabled | Mission telemetry: not connected",
+        f"Vision: {mode} | FPS {fps_recent:.1f} recent / {fps_avg:.1f} avg | frames {frame_count}",
+        f"Camera: {w}x{h}",
         f"Mask px red {mask_counts.get('red', 0)} | blue {mask_counts.get('blue', 0)}",
         "Keys: q/esc quit | s snapshot | m masks",
     ]

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import math
 import tempfile
 import time
 import unittest
@@ -52,6 +53,19 @@ class FakeHeartbeat:
         return "HEARTBEAT"
 
 
+class FakeBadData:
+    def get_type(self):
+        return "BAD_DATA"
+
+
+class FakeReceiveQueue:
+    def __init__(self, messages):
+        self.messages = list(messages)
+
+    def recv_match(self, **_kwargs):
+        return self.messages.pop(0) if self.messages else None
+
+
 class MavlinkFilteringTests(unittest.TestCase):
     def test_heartbeat_filter_accepts_autopilot_only(self):
         vehicle_hb = FakeHeartbeat(1, mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, mavutil.mavlink.MAV_TYPE_QUADROTOR, mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA)
@@ -72,6 +86,29 @@ class MavlinkFilteringTests(unittest.TestCase):
         self.assertEqual(vehicle.mode, "GUIDED")
         self.assertFalse(vehicle.armed)
         self.assertEqual(vehicle.last_heartbeat, 123.0)
+
+    def test_stale_heartbeat_recovery_drains_beyond_normal_poll_limit(self):
+        heartbeat = FakeHeartbeat(
+            1,
+            mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
+            mavutil.mavlink.MAV_TYPE_QUADROTOR,
+            mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+            mode="AUTO",
+            armed=True,
+        )
+        vehicle = Vehicle.__new__(Vehicle)
+        vehicle.target_system = 1
+        vehicle.mode = "STABILIZE"
+        vehicle.armed = False
+        vehicle.last_heartbeat = 1.0
+        vehicle.master = FakeReceiveQueue([FakeBadData() for _ in range(150)] + [heartbeat])
+
+        vehicle.poll()
+        self.assertEqual(vehicle.last_heartbeat, 1.0)
+        self.assertTrue(vehicle.recover_vehicle_heartbeat(timeout_s=0.1))
+        self.assertEqual(vehicle.mode, "AUTO")
+        self.assertTrue(vehicle.armed)
+        self.assertGreater(vehicle.last_heartbeat, 1.0)
 
 
 class VisionTests(unittest.TestCase):
@@ -484,6 +521,18 @@ class MissionConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_config(config)
 
+    def test_physical_payload_requires_persistent_state(self):
+        config = self.config()
+        config["payload"]["simulate_only"] = False
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_physical_payload_accepts_enabled_persistent_state(self):
+        config = self.config()
+        config["payload"]["simulate_only"] = False
+        config["payload_state"] = {"enabled": True, "path": "payload-state.json"}
+        validate_config(config)
+
     def test_profile_configs_are_valid(self):
         paths = [Path(__file__).with_name("operator_config.json"), Path(__file__).with_name("parameter_config.json")]
         paths.extend(sorted(Path(__file__).with_name("configs").glob("*.json")))
@@ -566,6 +615,19 @@ class FakeVehicle:
         self.servos = []
         self.ground_speeds = []
         self.rc_channels = {}
+        now = time.monotonic()
+        self.last_heartbeat = now
+        self.last_position_at = now
+        self.last_mission_at = now
+        self.last_rc_at = now
+        self.latitude_deg = 37.0
+        self.longitude_deg = 32.0
+        self.gps_fix_type = 3
+        self.gps_satellites = 12
+        self.last_gps_at = now
+        self.battery_voltage_v = 20.0
+        self.ekf_flags = 51
+        self.command_acks = {}
 
     def send_body_velocity(self, forward, right, down):
         self.velocities.append((forward, right, down))
@@ -576,6 +638,18 @@ class FakeVehicle:
 
     def set_servo(self, channel, pwm):
         self.servos.append((channel, pwm))
+        sent_at = time.monotonic()
+        self.command_acks[mavutil.mavlink.MAV_CMD_DO_SET_SERVO] = (
+            sent_at,
+            mavutil.mavlink.MAV_RESULT_ACCEPTED,
+        )
+        return sent_at
+
+    def command_ack_after(self, command, sent_at):
+        ack = self.command_acks.get(command)
+        if ack is None or ack[0] < sent_at:
+            return None
+        return ack[1]
 
     def set_ground_speed(self, speed_m_s):
         self.ground_speeds.append(speed_m_s)
@@ -628,7 +702,7 @@ class ControllerFlowTests(unittest.TestCase):
         config["safety"]["max_guided_speed_m_s"] = 0.2
         ctrl = self.controller(config, vehicle)
         ctrl.send_velocity(1.0, -1.0, 0.0)
-        self.assertEqual(vehicle.velocities[-1], (0.2, -0.2, 0.0))
+        self.assertAlmostEqual(math.hypot(*vehicle.velocities[-1][:2]), 0.2)
 
     def test_qgc_owned_search_speed_sends_no_speed_command(self):
         vehicle = FakeVehicle()
@@ -736,7 +810,7 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.update(self.blank_frame(), [], self.blank_masks())
         self.assertEqual(ctrl.state, State.CENTER)
         self.assertEqual(ctrl.current_target, "red_triangle")
-        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
+        self.assertEqual(vehicle.mode_requests, [])
         self.assertEqual(vehicle.velocities[-1][:2], (0.0, 0.0))
 
     def test_center_reacquires_same_target_before_timeout(self):
@@ -805,19 +879,25 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertIsNone(ctrl.current_target)
         self.assertEqual(vehicle.mode_requests, [])
         self.assertEqual(vehicle.velocities[-1], (0.0, 0.0, 0.0))
+        self.assertTrue(ctrl.manual_override_latched)
 
-    def test_center_timeout_keeps_guided_target_lock(self):
+        vehicle.mode = "AUTO"
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO)
+        self.assertIn("Pilot override latched", ctrl.status_message)
+
+    def test_center_warning_keeps_guided_target_lock(self):
         vehicle = FakeVehicle()
         config = self.config()
-        config["safety"]["max_center_time_s"] = 0.1
+        config["safety"]["center_warning_time_s"] = 0.1
         ctrl = self.controller(config, vehicle)
         ctrl.state = State.CENTER
         ctrl.current_target = "red_triangle"
         ctrl.center_started_at = time.monotonic() - 1.0
         ctrl.update(self.blank_frame(), [], self.blank_masks())
         self.assertEqual(ctrl.state, State.CENTER)
-        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
         self.assertEqual(ctrl.current_target, "red_triangle")
+        self.assertTrue(ctrl.center_warning_printed)
 
     def test_target_lost_after_timeout_keeps_guided_and_searches(self):
         vehicle = FakeVehicle()
@@ -832,7 +912,6 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.center_started_at = time.monotonic()
         ctrl.update(self.blank_frame(), [], self.blank_masks())
         self.assertEqual(ctrl.state, State.CENTER)
-        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
         self.assertEqual(ctrl.current_target, "red_triangle")
 
     def test_payload_waits_for_guided_instead_of_aborting(self):
@@ -877,7 +956,7 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(ctrl.state, State.CENTER)
         self.assertEqual(ctrl.current_target, "red_triangle")
         self.assertEqual(vehicle.velocities[-1], (0.0, 0.0, 0.0))
-        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
+        self.assertEqual(vehicle.mode_requests, [])
 
     def test_complete_state_resets_for_next_auto_run(self):
         vehicle = FakeVehicle()
@@ -891,6 +970,51 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(ctrl.state, State.SEARCH)
         self.assertEqual(ctrl.completed_targets, set())
         self.assertEqual(ctrl.mission_done_count, 1)
+
+    def test_mission_duration_is_warning_only(self):
+        vehicle = FakeVehicle()
+        vehicle.mode = "AUTO"
+        config = self.config()
+        config["mission"]["max_flight_time_s"] = 0.1
+        ctrl = self.controller(config, vehicle)
+        ctrl.state = State.SEARCH
+        ctrl.mission_started_at = time.monotonic() - 1.0
+
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+
+        self.assertTrue(ctrl.mission_timeout_warned)
+        self.assertNotIn("RTL", vehicle.mode_requests)
+
+    def test_physical_payload_requires_ack_and_persists_attempt(self):
+        vehicle = FakeVehicle()
+        config = self.config()
+        config["payload"]["simulate_only"] = False
+        config["payload_state"] = {"enabled": True, "path": "placeholder.json"}
+        tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tempdir.cleanup)
+        config["payload_state"]["path"] = str(Path(tempdir.name) / "payload.json")
+        ctrl = self.controller(config, vehicle)
+        ctrl.state = State.PAYLOAD
+        ctrl.current_target = "red_triangle"
+        ctrl.completed_targets = {"blue_hexagon"}
+        started = time.monotonic()
+
+        ctrl.payload_action(started)
+        self.assertFalse(ctrl.payload_release_accepted)
+        state = json.loads(Path(config["payload_state"]["path"]).read_text(encoding="utf-8"))
+        self.assertFalse(state["targets"]["red_triangle"]["payload_command_accepted"])
+        self.assertTrue(state["targets"]["red_triangle"]["payload_release_attempted"])
+        ctrl.payload_action(started + 0.1)
+        self.assertTrue(ctrl.payload_release_accepted)
+        state = json.loads(Path(config["payload_state"]["path"]).read_text(encoding="utf-8"))
+        self.assertTrue(state["targets"]["red_triangle"]["payload_command_accepted"])
+        self.assertTrue(state["targets"]["red_triangle"]["payload_release_attempted"])
+
+        ctrl.payload_action(started + 1.1)
+        ctrl.payload_action(started + 1.2)
+        ctrl.payload_action(started + 2.0)
+        self.assertIn("red_triangle", ctrl.completed_targets)
+        self.assertIn("RTL", vehicle.mode_requests)
 
 
 if __name__ == "__main__":

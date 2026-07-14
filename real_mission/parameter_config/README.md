@@ -22,6 +22,10 @@ Do not edit Python code for normal tuning. Start here first.
 | `control.center_max_speed_m_s` | Max GUIDED centering speed. | Start low, around `0.25` to `0.35`. |
 | `control.center_tolerance_px` | How close the target must be to camera center. | Larger is safer, smaller is more precise. |
 | `control.center_hold_s` | How long the target must stay centered before payload. | `1.0` to `1.5` seconds. |
+| `safety.center_warning_time_s` | Time before a slow-centering warning; it does not abort or change mode. | Start at `30`. |
+| `safety.max_guided_displacement_m` | Maximum horizontal travel from the point GUIDED centering began. | Start conservatively and verify in SITL. |
+| `safety.center_filter_alpha` | Smooths noisy target-center measurements. | `0.35`; lower is smoother but slower. |
+| `safety.max_command_accel_m_s2` | Limits abrupt horizontal command changes. | Start at `0.8`. |
 | `safety.guided_auto_bounce_grace_s` | Time label for AUTO bounce diagnostics. | Keep `null` so active target GUIDED lock has no time limit. |
 | `safety.max_guided_auto_bounces_per_target` | Diagnostic counter for repeated `GUIDED -> AUTO` bounces. | Keep `null`; active target bounces should not abort centering. |
 | `safety.active_target_abort_mode` | Fallback mode for explicit abort paths, not normal target tracking. | Use `AUTO` only when you intentionally want the mission to continue after abort. |
@@ -32,7 +36,11 @@ Do not edit Python code for normal tuning. Start here first.
 | `payload.servo_channel` | Pixhawk output channel for payload. | `5` when the servo signal is on MAIN OUT / signal 5. |
 | `payload.release_pwm` | PWM sent to release payload. | Test on bench before flight. |
 | `payload.reset_pwm` | PWM sent after release hold time. | Test on bench before flight. |
+| `payload.command_ack_timeout_s` | How long to wait for ArduPilot to accept a servo command. | `2.0`. |
+| `payload_state.enabled` | Prevents a restarted Pi from repeating an attempted physical release. | Required when `simulate_only` is `false`. |
 | `display.show_main_window` | Opens local OpenCV window on the Pi. | Keep `false` on Pi OS Lite. |
+| `display.mjpeg_stream_enabled` | Streams the exact mission overlay to the laptop through SSH. | `true` for Mission 2 on the Pi. |
+| `display.mjpeg_stream_fps` | Laptop monitoring rate; it does not change vision/control rate. | `10` keeps CPU/network use modest. |
 
 ## Camera Window
 

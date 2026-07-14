@@ -14,8 +14,10 @@
     "search_start_wp": 2,
     "search_enable_rc_channel": null,
     "search_enable_pwm_min": 1700,
+    "rc_timeout_s": 2.0,
     "mode_change_timeout_s": 5.0,
-    "max_flight_time_s": 600.0
+    "max_flight_time_s": 600.0,
+    "final_mode": "RTL"
   },
   "navigation": {
     "search_speed_source": "qgc_mission",
@@ -41,14 +43,14 @@
   },
   "control": {
     "command_rate_hz": 10.0,
-    "center_kp": 0.55,
-    "center_max_speed_m_s": 0.35,
+    "center_kp": 1.4,
+    "center_max_speed_m_s": 0.75,
     "center_tolerance_px": 16.0,
     "center_tolerance_px_by_target": {
-      "red_triangle": 26.0,
+      "red_triangle": 14.0,
       "blue_hexagon": 16.0
     },
-    "center_hold_s": 1.4,
+    "center_hold_s": 0.8,
     "target_lost_timeout_s": 4.0,
     "reacquire_after_lost_s": 0.25,
     "altitude_control": "off",
@@ -63,12 +65,23 @@
     "servo_channel": 9,
     "release_pwm": 1900,
     "reset_pwm": 1100,
+    "command_ack_timeout_s": 2.0,
     "release_hold_s": 1.0,
     "total_action_time_s": 1.5
   },
+  "payload_state": {
+    "enabled": false,
+    "path": "logs/payload_state/sitl.json"
+  },
   "safety": {
     "max_center_time_s": null,
-    "max_guided_speed_m_s": 0.35,
+    "center_warning_time_s": 30.0,
+    "max_guided_speed_m_s": 0.75,
+    "max_guided_displacement_m": 12.0,
+    "center_progress_window_s": 15.0,
+    "center_min_progress_px": 8.0,
+    "center_filter_alpha": 0.65,
+    "max_command_accel_m_s2": 1.8,
     "guided_auto_bounce_grace_s": null,
     "max_guided_auto_bounces_per_target": null,
     "active_target_abort_mode": "AUTO",
@@ -76,13 +89,30 @@
     "camera_frame_timeout_s": 2.0,
     "payload_requires_guided": true,
     "payload_min_altitude_m": null,
-    "payload_max_altitude_m": null
+    "payload_max_altitude_m": null,
+    "heartbeat_recent_s": 3.0,
+    "position_recent_s": 3.0,
+    "gps_recent_s": 4.0,
+    "require_position": false,
+    "require_gps": false,
+    "min_gps_fix_type": 3,
+    "min_gps_satellites": 6,
+    "require_ekf_status": false,
+    "ekf_required_flags": 51,
+    "require_battery": false,
+    "min_battery_voltage_v": null
   },
   "display": {
     "show_main_window": true,
     "show_masks": false,
     "overlay_font_scale": 0.46,
-    "overlay_background_alpha": 0.42
+    "overlay_background_alpha": 0.42,
+    "mjpeg_stream_enabled": false,
+    "mjpeg_stream_bind": "127.0.0.1",
+    "mjpeg_stream_port": 5602,
+    "mjpeg_stream_fps": 10.0,
+    "mjpeg_stream_quality": 65,
+    "mjpeg_stream_width": 960
   },
   "logging": {
     "directory": "logs/mission_v2",

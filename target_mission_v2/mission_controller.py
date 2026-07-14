@@ -15,9 +15,11 @@ import argparse
 import json
 import math
 import signal
+import threading
 import time
 from dataclasses import asdict
 from enum import Enum
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Optional
 
@@ -50,8 +52,14 @@ TARGET_PAYLOAD_COLOUR = {
 }
 
 DEFAULT_SAFETY = {
-    "max_center_time_s": 25.0,
+    "max_center_time_s": None,
+    "center_warning_time_s": 30.0,
     "max_guided_speed_m_s": 0.45,
+    "max_guided_displacement_m": 6.0,
+    "center_progress_window_s": 12.0,
+    "center_min_progress_px": 8.0,
+    "center_filter_alpha": 0.35,
+    "max_command_accel_m_s2": 0.8,
     "guided_auto_bounce_grace_s": None,
     "max_guided_auto_bounces_per_target": None,
     "active_target_abort_mode": "AUTO",
@@ -60,6 +68,17 @@ DEFAULT_SAFETY = {
     "payload_requires_guided": True,
     "payload_min_altitude_m": None,
     "payload_max_altitude_m": None,
+    "heartbeat_recent_s": 3.0,
+    "position_recent_s": 3.0,
+    "gps_recent_s": 4.0,
+    "require_position": False,
+    "require_gps": False,
+    "min_gps_fix_type": 3,
+    "min_gps_satellites": 6,
+    "require_ekf_status": False,
+    "ekf_required_flags": 51,
+    "require_battery": False,
+    "min_battery_voltage_v": None,
 }
 
 DEFAULT_NAVIGATION = {
@@ -90,6 +109,25 @@ def optional_seconds_label(value: Any) -> str:
     if value is None:
         return "inf"
     return f"{float(value):.1f}s"
+
+
+def clamp_vector(x: float, y: float, limit: float) -> tuple[float, float]:
+    magnitude = math.hypot(x, y)
+    if magnitude <= limit or magnitude <= 1e-9:
+        return x, y
+    scale = limit / magnitude
+    return x * scale, y * scale
+
+
+def horizontal_distance_m(
+    start: tuple[float, float], current: tuple[float, float]
+) -> float:
+    lat1, lon1 = map(math.radians, start)
+    lat2, lon2 = map(math.radians, current)
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = math.sin(dlat / 2.0) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2.0) ** 2
+    return 6_371_000.0 * 2.0 * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1.0 - a)))
 
 
 def heartbeat_is_vehicle(message: Any) -> bool:
@@ -201,6 +239,18 @@ def validate_config(config: dict[str, Any]) -> None:
     max_guided_speed_m_s = safety.get("max_guided_speed_m_s")
     if max_guided_speed_m_s is not None and float(max_guided_speed_m_s) <= 0:
         raise ValueError("safety.max_guided_speed_m_s must be positive or null")
+    for key in ("center_warning_time_s", "max_guided_displacement_m", "center_progress_window_s"):
+        value = safety.get(key)
+        if value is not None and float(value) <= 0:
+            raise ValueError(f"safety.{key} must be positive or null")
+    if float(safety.get("center_min_progress_px", 0.0)) < 0:
+        raise ValueError("safety.center_min_progress_px must be zero or positive")
+    alpha = float(safety.get("center_filter_alpha", 0.35))
+    if not 0.0 < alpha <= 1.0:
+        raise ValueError("safety.center_filter_alpha must be in (0, 1]")
+    accel_limit = safety.get("max_command_accel_m_s2")
+    if accel_limit is not None and float(accel_limit) <= 0:
+        raise ValueError("safety.max_command_accel_m_s2 must be positive or null")
     guided_auto_bounce_grace_s = safety.get("guided_auto_bounce_grace_s")
     if guided_auto_bounce_grace_s is not None and float(guided_auto_bounce_grace_s) < 0:
         raise ValueError("safety.guided_auto_bounce_grace_s must be zero, positive, or null")
@@ -220,6 +270,16 @@ def validate_config(config: dict[str, Any]) -> None:
     max_alt = safety.get("payload_max_altitude_m")
     if min_alt is not None and max_alt is not None and float(min_alt) > float(max_alt):
         raise ValueError("safety.payload_min_altitude_m cannot exceed payload_max_altitude_m")
+    for key in ("heartbeat_recent_s", "position_recent_s", "gps_recent_s"):
+        if float(safety.get(key, 1.0)) <= 0:
+            raise ValueError(f"safety.{key} must be positive")
+    if int(safety.get("min_gps_fix_type", 3)) < 0:
+        raise ValueError("safety.min_gps_fix_type must be zero or positive")
+    if int(safety.get("min_gps_satellites", 0)) < 0:
+        raise ValueError("safety.min_gps_satellites must be zero or positive")
+    battery_min = safety.get("min_battery_voltage_v")
+    if battery_min is not None and float(battery_min) <= 0:
+        raise ValueError("safety.min_battery_voltage_v must be positive or null")
     navigation = navigation_config(config)
     if navigation["search_speed_source"] not in {"qgc_mission", "companion_do_change_speed"}:
         raise ValueError("navigation.search_speed_source must be 'qgc_mission' or 'companion_do_change_speed'")
@@ -231,7 +291,33 @@ def validate_config(config: dict[str, Any]) -> None:
     overlay_alpha = float(config["display"].get("overlay_background_alpha", 0.42))
     if not 0.0 <= overlay_alpha <= 1.0:
         raise ValueError("display.overlay_background_alpha must be between 0 and 1")
+    if bool(config["display"].get("mjpeg_stream_enabled", False)):
+        if not 1 <= int(config["display"].get("mjpeg_stream_port", 5602)) <= 65535:
+            raise ValueError("display.mjpeg_stream_port must be between 1 and 65535")
+        if float(config["display"].get("mjpeg_stream_fps", 10.0)) <= 0:
+            raise ValueError("display.mjpeg_stream_fps must be positive")
+        quality = int(config["display"].get("mjpeg_stream_quality", 65))
+        if not 20 <= quality <= 95:
+            raise ValueError("display.mjpeg_stream_quality must be between 20 and 95")
+        if int(config["display"].get("mjpeg_stream_width", 960)) <= 0:
+            raise ValueError("display.mjpeg_stream_width must be positive")
     required_ardupilot_parameters(config)
+    payload = config["payload"]
+    if not bool(payload.get("simulate_only", True)):
+        if int(payload.get("servo_channel", 0)) <= 0:
+            raise ValueError("payload.servo_channel must be positive for physical payload")
+        state_cfg = config.get("payload_state", {})
+        if not bool(state_cfg.get("enabled", False)) or not str(state_cfg.get("path", "")).strip():
+            raise ValueError("physical payload requires enabled payload_state with a path")
+    for key in ("release_pwm", "reset_pwm"):
+        pwm = int(payload.get(key, 0))
+        if not 800 <= pwm <= 2200:
+            raise ValueError(f"payload.{key} must be between 800 and 2200")
+    for key in ("release_hold_s", "total_action_time_s"):
+        if float(payload.get(key, 0.0)) <= 0:
+            raise ValueError(f"payload.{key} must be positive")
+    if float(payload.get("command_ack_timeout_s", 2.0)) <= 0:
+        raise ValueError("payload.command_ack_timeout_s must be positive")
 
 
 class Vehicle:
@@ -253,6 +339,8 @@ class Vehicle:
         self.mode = mavutil.mode_string_v10(hb)
         self.armed = bool(hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
         self.relative_alt_m: Optional[float] = None
+        self.latitude_deg: Optional[float] = None
+        self.longitude_deg: Optional[float] = None
         self.mission_seq: Optional[int] = None
         self.velocity_north_m_s: Optional[float] = None
         self.velocity_east_m_s: Optional[float] = None
@@ -263,9 +351,24 @@ class Vehicle:
         self._last_velocity_sample: Optional[tuple[float, float, float, float]] = None
         self.rc_channels: dict[int, int] = {}
         self.last_heartbeat = time.monotonic()
+        self.last_position_at: Optional[float] = None
+        self.last_mission_at: Optional[float] = None
+        self.last_rc_at: Optional[float] = None
+        self.gps_fix_type: Optional[int] = None
+        self.gps_satellites: Optional[int] = None
+        self.last_gps_at: Optional[float] = None
+        self.battery_voltage_v: Optional[float] = None
+        self.battery_remaining_pct: Optional[int] = None
+        self.last_battery_at: Optional[float] = None
+        self.ekf_flags: Optional[int] = None
+        self.last_ekf_at: Optional[float] = None
+        self.command_acks: dict[int, tuple[float, int]] = {}
         self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT, 10.0)
         self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_MISSION_CURRENT, 4.0)
         self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_RC_CHANNELS, 4.0)
+        self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_GPS_RAW_INT, 4.0)
+        self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_SYS_STATUS, 2.0)
+        self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT, 2.0)
         print(f"[MAVLINK] Connected system={self.target_system} component={self.target_component}")
 
     def _wait_vehicle_heartbeat(self, timeout_s: float) -> Optional[Any]:
@@ -294,6 +397,18 @@ class Vehicle:
                 return
             self._handle_message(msg)
 
+    def recover_vehicle_heartbeat(self, timeout_s: float = 1.0) -> bool:
+        """Drain a telemetry backlog before declaring the vehicle heartbeat lost."""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            msg = self.master.recv_match(blocking=True, timeout=min(0.1, max(0.0, deadline - time.monotonic())))
+            if msg is None:
+                continue
+            self._handle_message(msg)
+            if msg.get_type() == "HEARTBEAT" and heartbeat_is_target_vehicle(msg, self.target_system):
+                return True
+        return False
+
     def _handle_message(self, msg: Any) -> None:
         kind = msg.get_type()
         if kind != "BAD_DATA" and msg.get_srcSystem() not in (0, self.target_system):
@@ -305,8 +420,11 @@ class Vehicle:
             self.armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
             self.last_heartbeat = time.monotonic()
         elif kind == "GLOBAL_POSITION_INT":
-            self.relative_alt_m = msg.relative_alt / 1000.0
             now = time.monotonic()
+            self.relative_alt_m = msg.relative_alt / 1000.0
+            self.latitude_deg = float(msg.lat) / 1e7
+            self.longitude_deg = float(msg.lon) / 1e7
+            self.last_position_at = now
             vn = float(msg.vx) / 100.0
             ve = float(msg.vy) / 100.0
             vd = float(msg.vz) / 100.0
@@ -323,11 +441,26 @@ class Vehicle:
             self._last_velocity_sample = (now, vn, ve, vd)
         elif kind == "MISSION_CURRENT":
             self.mission_seq = int(msg.seq)
+            self.last_mission_at = time.monotonic()
         elif kind == "RC_CHANNELS":
             for channel in range(1, 19):
                 value = int(getattr(msg, f"chan{channel}_raw", 0))
                 if value > 0:
                     self.rc_channels[channel] = value
+            self.last_rc_at = time.monotonic()
+        elif kind == "GPS_RAW_INT":
+            self.gps_fix_type = int(msg.fix_type)
+            self.gps_satellites = int(msg.satellites_visible)
+            self.last_gps_at = time.monotonic()
+        elif kind == "SYS_STATUS":
+            voltage_mv = int(getattr(msg, "voltage_battery", 0))
+            self.battery_voltage_v = voltage_mv / 1000.0 if voltage_mv not in (0, 65535) else None
+            remaining = int(getattr(msg, "battery_remaining", -1))
+            self.battery_remaining_pct = remaining if remaining >= 0 else None
+            self.last_battery_at = time.monotonic()
+        elif kind == "EKF_STATUS_REPORT":
+            self.ekf_flags = int(msg.flags)
+            self.last_ekf_at = time.monotonic()
         elif kind == "STATUSTEXT":
             text = msg.text.decode(errors="replace") if isinstance(msg.text, bytes) else msg.text
             if int(msg.severity) <= mavutil.mavlink.MAV_SEVERITY_WARNING:
@@ -335,6 +468,7 @@ class Vehicle:
         elif kind == "COMMAND_ACK":
             result = mavutil.mavlink.enums["MAV_RESULT"].get(msg.result)
             print(f"[COMMAND ACK] command={msg.command} result={result.name if result else msg.result}")
+            self.command_acks[int(msg.command)] = (time.monotonic(), int(msg.result))
 
     def set_mode(self, name: str) -> None:
         mapping = self.master.mode_mapping()
@@ -360,12 +494,20 @@ class Vehicle:
             0, 0,
         )
 
-    def set_servo(self, channel: int, pwm: int) -> None:
+    def set_servo(self, channel: int, pwm: int) -> float:
+        sent_at = time.monotonic()
         self.master.mav.command_long_send(
             self.target_system, self.target_component,
             mavutil.mavlink.MAV_CMD_DO_SET_SERVO, 0,
             float(channel), float(pwm), 0, 0, 0, 0, 0,
         )
+        return sent_at
+
+    def command_ack_after(self, command: int, sent_at: float) -> Optional[int]:
+        ack = self.command_acks.get(int(command))
+        if ack is None or ack[0] < sent_at:
+            return None
+        return ack[1]
 
     def set_ground_speed(self, speed_m_s: float) -> None:
         print(f"[SPEED REQUEST] AUTO ground speed {speed_m_s:.2f} m/s")
@@ -453,6 +595,156 @@ def enforce_parameters(vehicle: Vehicle, config: dict[str, Any]) -> None:
             print(f"[PARAMETER VERIFIED] {name}={current}")
 
 
+class LatestFrameCamera:
+    """Capture in the background so camera stalls do not block MAVLink polling."""
+
+    def __init__(self, camera: CameraLike) -> None:
+        self.camera = camera
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._frame: Any = None
+        self._sequence = 0
+        self._captured_at = 0.0
+        self._failed = False
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, name="camera-capture", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                ok, frame = self.camera.read()
+            except Exception as exc:
+                print(f"[CAMERA ERROR] {exc}")
+                self._failed = True
+                return
+            if not ok or frame is None:
+                time.sleep(0.01)
+                continue
+            with self._lock:
+                self._frame = frame
+                self._sequence += 1
+                self._captured_at = time.monotonic()
+
+    def latest(self) -> tuple[int, float, Any]:
+        with self._lock:
+            return self._sequence, self._captured_at, self._frame
+
+    @property
+    def failed(self) -> bool:
+        return self._failed
+
+    def stop(self) -> None:
+        self._stop.set()
+        self.camera.release()
+        if self._thread is not None:
+            self._thread.join(timeout=2.5)
+
+
+class MjpegFrameServer:
+    """Serve the exact mission overlay through an SSH-forwarded MJPEG stream."""
+
+    def __init__(self, display_config: dict[str, Any]) -> None:
+        self.enabled = bool(display_config.get("mjpeg_stream_enabled", False))
+        self.bind = str(display_config.get("mjpeg_stream_bind", "127.0.0.1"))
+        self.port = int(display_config.get("mjpeg_stream_port", 5602))
+        self.max_fps = float(display_config.get("mjpeg_stream_fps", 10.0))
+        self.quality = int(display_config.get("mjpeg_stream_quality", 65))
+        self.width = int(display_config.get("mjpeg_stream_width", 960))
+        self._condition = threading.Condition()
+        self._jpeg: Optional[bytes] = None
+        self._sequence = 0
+        self._stopping = False
+        self._last_publish_at = 0.0
+        self._server: Optional[ThreadingHTTPServer] = None
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        if not self.enabled:
+            return
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                if self.path not in {"/", "/stream.mjpg"}:
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+                self.end_headers()
+                sequence = -1
+                try:
+                    while True:
+                        with owner._condition:
+                            owner._condition.wait_for(
+                                lambda: owner._stopping or owner._sequence != sequence,
+                                timeout=1.0,
+                            )
+                            if owner._stopping:
+                                return
+                            if owner._jpeg is None or owner._sequence == sequence:
+                                continue
+                            jpeg = owner._jpeg
+                            sequence = owner._sequence
+                        self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n")
+                        self.wfile.write(f"Content-Length: {len(jpeg)}\r\n\r\n".encode("ascii"))
+                        self.wfile.write(jpeg)
+                        self.wfile.write(b"\r\n")
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+
+            def log_message(self, _format: str, *_args: Any) -> None:
+                return
+
+        try:
+            self._server = ThreadingHTTPServer((self.bind, self.port), Handler)
+            self._server.daemon_threads = True
+        except OSError as exc:
+            self.enabled = False
+            print(f"[VIDEO STREAM WARNING] disabled: {exc}")
+            return
+        self._thread = threading.Thread(target=self._server.serve_forever, name="mission-video", daemon=True)
+        self._thread.start()
+        print(f"[VIDEO STREAM] http://{self.bind}:{self.port}/stream.mjpg via SSH tunnel")
+
+    def publish(self, frame: Any) -> None:
+        if not self.enabled:
+            return
+        now = time.monotonic()
+        if now - self._last_publish_at < 1.0 / self.max_fps:
+            return
+        output = frame
+        if output.shape[1] > self.width:
+            scale = self.width / output.shape[1]
+            output = cv2.resize(
+                output,
+                (self.width, max(1, round(output.shape[0] * scale))),
+                interpolation=cv2.INTER_AREA,
+            )
+        ok, encoded = cv2.imencode(".jpg", output, [int(cv2.IMWRITE_JPEG_QUALITY), self.quality])
+        if not ok:
+            return
+        with self._condition:
+            self._jpeg = encoded.tobytes()
+            self._sequence += 1
+            self._condition.notify_all()
+        self._last_publish_at = now
+
+    def stop(self) -> None:
+        if self._server is None:
+            return
+        with self._condition:
+            self._stopping = True
+            self._condition.notify_all()
+        self._server.shutdown()
+        self._server.server_close()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+
+
 class Controller:
     def __init__(self, config: dict[str, Any], vehicle: Vehicle, camera: CameraLike) -> None:
         self.config = config
@@ -467,11 +759,13 @@ class Controller:
         self.state_started_at = time.monotonic()
         self.last_mode_request_at = 0.0
         self.last_velocity_at = 0.0
+        self.last_velocity_command = (0.0, 0.0)
         self.last_search_speed_request_at = 0.0
         self.mission_started_at: Optional[float] = None
         self.last_log_flush_at = time.monotonic()
         self.stop_requested = False
         self.completed_targets: set[str] = set()
+        self.completed_center_errors: dict[str, float] = {}
         self.current_target: Optional[str] = None
         self.last_detection: Optional[Detection] = None
         self.last_seen_at = 0.0
@@ -486,13 +780,85 @@ class Controller:
         self.last_center_right: Optional[float] = None
         self.last_frame_at = time.monotonic()
         self.last_camera_timeout_print_at = 0.0
+        self.manual_override_latched = False
+        self.manual_override_reason = ""
+        self.mission_timeout_warned = False
+        self.filtered_center: Optional[tuple[float, float]] = None
+        self.center_origin: Optional[tuple[float, float]] = None
+        self.center_best_error_px: Optional[float] = None
+        self.center_last_progress_at: Optional[float] = None
+        self.center_warning_printed = False
         self.status_message = "Waiting for AUTO at search waypoint"
         self.payload_started = False
         self.payload_reset = False
+        self.payload_release_sent_at: Optional[float] = None
+        self.payload_release_accepted = False
+        self.payload_reset_sent_at: Optional[float] = None
+        self.payload_reset_accepted = False
+        self.payload_failed = False
+        self.last_payload_block_reason = ""
         self.mission_done_count = 0
         log_dir = Path(config["logging"]["directory"])
         log_dir.mkdir(parents=True, exist_ok=True)
         self.log_file = (log_dir / f"mission-v2-{time.strftime('%Y%m%d-%H%M%S')}.jsonl").open("a", encoding="utf-8")
+        self.payload_state_config = config.get("payload_state", {"enabled": False})
+        self.payload_state_path: Optional[Path] = None
+        if bool(self.payload_state_config.get("enabled", False)):
+            self.payload_state_path = Path(str(self.payload_state_config["path"]))
+            self._load_payload_state()
+
+    def event(self, name: str, **details: Any) -> None:
+        print(f"[EVENT] {name}" + (f" {details}" if details else ""))
+        self.log_file.write(json.dumps({
+            "time": time.time(),
+            "event": name,
+            "state": self.state.value,
+            "mode": self.vehicle.mode,
+            **details,
+        }, sort_keys=True) + "\n")
+
+    def _load_payload_state(self) -> None:
+        assert self.payload_state_path is not None
+        if not self.payload_state_path.exists():
+            print(f"[PAYLOAD STATE] empty: {self.payload_state_path}")
+            return
+        data = json.loads(self.payload_state_path.read_text(encoding="utf-8"))
+        profile = str(self.config["mission"].get("name", ""))
+        if data.get("mission_profile") != profile:
+            raise RuntimeError(
+                f"Payload state profile mismatch: file={data.get('mission_profile')} config={profile}. "
+                "Reset the state explicitly before this attempt."
+            )
+        targets = data.get("targets", {})
+        self.completed_targets.update(
+            target for target, record in targets.items()
+            if bool(record.get("payload_release_attempted", False))
+        )
+        print(f"[PAYLOAD STATE] loaded completed={sorted(self.completed_targets)} path={self.payload_state_path}")
+
+    def _persist_payload_release(self, target: str, payload_colour: str, accepted: bool) -> None:
+        if self.payload_state_path is None:
+            return
+        data: dict[str, Any] = {
+            "mission_profile": self.config["mission"].get("name"),
+            "targets": {},
+        }
+        if self.payload_state_path.exists():
+            data = json.loads(self.payload_state_path.read_text(encoding="utf-8"))
+        data.setdefault("targets", {})[target] = {
+            "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "waypoint": self.vehicle.mission_seq,
+            "payload_colour": payload_colour,
+            "servo_channel": int(self.config["payload"]["servo_channel"]),
+            "release_pwm": int(self.config["payload"]["release_pwm"]),
+            "payload_command_accepted": bool(accepted),
+            "payload_release_attempted": True,
+            "physical_release_confirmed": False,
+        }
+        self.payload_state_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.payload_state_path.with_suffix(self.payload_state_path.suffix + ".tmp")
+        temporary.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        temporary.replace(self.payload_state_path)
 
     def transition(self, state: State, reason: str) -> None:
         print(f"[STATE] {self.state.value} -> {state.value}: {reason}")
@@ -502,6 +868,16 @@ class Controller:
         self.center_started_at = self.state_started_at if state == State.CENTER else None
         self.guided_mode_lost_since = None
         self.status_message = reason
+        if state == State.CENTER:
+            self.filtered_center = None
+            self.center_best_error_px = None
+            self.center_last_progress_at = self.state_started_at
+            self.center_warning_printed = False
+            lat = getattr(self.vehicle, "latitude_deg", None)
+            lon = getattr(self.vehicle, "longitude_deg", None)
+            self.center_origin = (lat, lon) if lat is not None and lon is not None else None
+        elif state not in {State.PAYLOAD}:
+            self.center_origin = None
         if state == State.SEARCH and self.mission_started_at is None:
             self.mission_started_at = self.state_started_at
         if state == State.SEARCH:
@@ -512,6 +888,7 @@ class Controller:
 
     def reset_for_next_mission(self, reason: str) -> None:
         self.completed_targets.clear()
+        self.completed_center_errors.clear()
         self.current_target = None
         self.last_detection = None
         self.last_seen_at = 0.0
@@ -524,7 +901,16 @@ class Controller:
         self.last_center_right = None
         self.payload_started = False
         self.payload_reset = False
+        self.payload_release_sent_at = None
+        self.payload_release_accepted = False
+        self.payload_reset_sent_at = None
+        self.payload_reset_accepted = False
+        self.payload_failed = False
+        self.last_payload_block_reason = ""
         self.mission_started_at = time.monotonic()
+        self.mission_timeout_warned = False
+        self.manual_override_latched = False
+        self.manual_override_reason = ""
         self.tracker.reset()
         self.transition(State.SEARCH, reason)
 
@@ -545,12 +931,23 @@ class Controller:
         if force or now - self.last_velocity_at >= 1.0 / float(self.config["control"]["command_rate_hz"]):
             max_guided_speed = self.safety.get("max_guided_speed_m_s")
             if max_guided_speed is not None:
-                forward = clamp(forward, float(max_guided_speed))
-                right = clamp(right, float(max_guided_speed))
+                forward, right = clamp_vector(forward, right, float(max_guided_speed))
+            accel_limit = self.safety.get("max_command_accel_m_s2")
+            if not force and accel_limit is not None and self.last_velocity_at > 0.0:
+                dt = max(1e-3, now - self.last_velocity_at)
+                max_delta = float(accel_limit) * dt
+                delta_f = forward - self.last_velocity_command[0]
+                delta_r = right - self.last_velocity_command[1]
+                delta_f, delta_r = clamp_vector(delta_f, delta_r, max_delta)
+                forward = self.last_velocity_command[0] + delta_f
+                right = self.last_velocity_command[1] + delta_r
             self.vehicle.send_body_velocity(forward, right, down)
             self.last_velocity_at = now
+            self.last_velocity_command = (forward, right)
 
     def request_mode_repeated(self, mode: str, force: bool = False) -> None:
+        if self.vehicle.mode == mode:
+            return
         now = time.monotonic()
         interval = self.safety.get("mode_retry_interval_s")
         retry_interval_s = 1.0 if interval is None else float(interval)
@@ -576,12 +973,22 @@ class Controller:
 
     def centre_velocity(self, detection: Detection, width: int, height: int) -> tuple[float, float, float]:
         c = self.config["control"]
-        ex = detection.center_x - width / 2.0
-        ey = detection.center_y - height / 2.0
+        alpha = float(self.safety.get("center_filter_alpha", 0.35))
+        observed = (float(detection.center_x), float(detection.center_y))
+        if self.filtered_center is None:
+            self.filtered_center = observed
+        else:
+            self.filtered_center = (
+                alpha * observed[0] + (1.0 - alpha) * self.filtered_center[0],
+                alpha * observed[1] + (1.0 - alpha) * self.filtered_center[1],
+            )
+        ex = self.filtered_center[0] - width / 2.0
+        ey = self.filtered_center[1] - height / 2.0
         forward = float(c["image_y_to_forward_sign"]) * float(c["center_kp"]) * ey / (height / 2.0)
         right = float(c["image_x_to_right_sign"]) * float(c["center_kp"]) * ex / (width / 2.0)
         maximum = float(c["center_max_speed_m_s"])
-        return clamp(forward, maximum), clamp(right, maximum), math.hypot(ex, ey)
+        forward, right = clamp_vector(forward, right, maximum)
+        return forward, right, math.hypot(ex, ey)
 
     def center_tolerance_px(self) -> float:
         target = self.current_target or ""
@@ -598,8 +1005,82 @@ class Controller:
     def active_target_phase(self) -> bool:
         return self.state in {State.WAITING_FOR_GUIDED, State.CENTER, State.PAYLOAD} and self.current_target is not None
 
-    def stand_down_for_external_mode(self, reason: str) -> None:
-        print(f"[EXTERNAL MODE] {reason}; standing down and waiting for AUTO")
+    @staticmethod
+    def _age(now: float, timestamp: Optional[float]) -> Optional[float]:
+        return None if timestamp is None else now - timestamp
+
+    def guidance_health_errors(self, expected_mode: str, now: Optional[float] = None) -> list[str]:
+        now = time.monotonic() if now is None else now
+        errors: list[str] = []
+        if not self.vehicle.armed:
+            errors.append("vehicle is disarmed")
+        if self.vehicle.mode != expected_mode:
+            errors.append(f"mode is {self.vehicle.mode}, expected {expected_mode}")
+
+        heartbeat_age = now - float(getattr(self.vehicle, "last_heartbeat", 0.0))
+        if heartbeat_age > float(self.safety.get("heartbeat_recent_s", 3.0)):
+            errors.append(f"heartbeat stale ({heartbeat_age:.1f}s)")
+
+        position_age = self._age(now, getattr(self.vehicle, "last_position_at", None))
+        if self.vehicle.relative_alt_m is None:
+            errors.append("altitude unknown")
+        elif position_age is not None and position_age > float(self.safety.get("position_recent_s", 3.0)):
+            errors.append(f"position/altitude stale ({position_age:.1f}s)")
+        elif bool(self.safety.get("require_position", False)) and position_age is None:
+            errors.append("position timestamp unavailable")
+
+        min_alt = self.safety.get("payload_min_altitude_m")
+        max_alt = self.safety.get("payload_max_altitude_m")
+        if self.vehicle.relative_alt_m is not None:
+            if min_alt is not None and self.vehicle.relative_alt_m < float(min_alt):
+                errors.append(f"altitude {self.vehicle.relative_alt_m:.2f}m below {float(min_alt):.2f}m")
+            if max_alt is not None and self.vehicle.relative_alt_m > float(max_alt):
+                errors.append(f"altitude {self.vehicle.relative_alt_m:.2f}m above {float(max_alt):.2f}m")
+
+        if bool(self.safety.get("require_gps", False)):
+            gps_age = self._age(now, getattr(self.vehicle, "last_gps_at", None))
+            if gps_age is None or gps_age > float(self.safety.get("gps_recent_s", 4.0)):
+                errors.append("GPS status unavailable or stale")
+            fix = getattr(self.vehicle, "gps_fix_type", None)
+            satellites = getattr(self.vehicle, "gps_satellites", None)
+            if fix is None or fix < int(self.safety.get("min_gps_fix_type", 3)):
+                errors.append(f"GPS fix {fix} below required {int(self.safety.get('min_gps_fix_type', 3))}")
+            if satellites is None or satellites < int(self.safety.get("min_gps_satellites", 6)):
+                errors.append(f"GPS satellites {satellites} below required {int(self.safety.get('min_gps_satellites', 6))}")
+
+        if bool(self.safety.get("require_ekf_status", False)):
+            flags = getattr(self.vehicle, "ekf_flags", None)
+            required = int(self.safety.get("ekf_required_flags", 51))
+            if flags is None:
+                errors.append("EKF status unavailable")
+            elif flags & required != required:
+                errors.append(f"EKF flags 0x{flags:x} missing required 0x{required:x}")
+
+        battery = getattr(self.vehicle, "battery_voltage_v", None)
+        minimum_battery = self.safety.get("min_battery_voltage_v")
+        if bool(self.safety.get("require_battery", False)) and battery is None:
+            errors.append("battery voltage unavailable")
+        if minimum_battery is not None and battery is not None and battery < float(minimum_battery):
+            errors.append(f"battery {battery:.2f}V below {float(minimum_battery):.2f}V")
+
+        enabled, reason = self.search_gate_status(now=now)
+        if not enabled:
+            errors.append(f"autonomy gate disabled: {reason}")
+        return errors
+
+    def latch_pilot_override(self, reason: str) -> None:
+        if not self.manual_override_latched:
+            self.event("PILOT_OVERRIDE_LATCHED", reason=reason)
+        self.manual_override_latched = True
+        self.manual_override_reason = reason
+        self.stand_down_for_external_mode(reason, latch=False)
+
+    def stand_down_for_external_mode(self, reason: str, latch: bool = True) -> None:
+        if latch:
+            self.manual_override_latched = True
+            self.manual_override_reason = reason
+            self.event("PILOT_OVERRIDE_LATCHED", reason=reason)
+        print(f"[EXTERNAL MODE] {reason}; standing down")
         self.send_velocity(0.0, 0.0, 0.0, force=True)
         self.current_target = None
         self.last_detection = None
@@ -608,7 +1089,7 @@ class Controller:
         self.center_started_at = None
         self.guided_mode_lost_since = None
         self.tracker.reset()
-        self.transition(State.WAITING_FOR_AUTO, f"{reason}; waiting for AUTO")
+        self.transition(State.WAITING_FOR_AUTO, f"{reason}; pilot owns vehicle")
 
     def handle_camera_frame_miss(self, now: float) -> None:
         timeout_s = self.safety.get("camera_frame_timeout_s")
@@ -625,21 +1106,32 @@ class Controller:
             print(f"[CAMERA TIMEOUT] no frame for {missed_for:.1f}s during {self.state.value}; holding")
             self.last_camera_timeout_print_at = now
 
-    def search_gate_status(self) -> tuple[bool, str]:
+    def search_gate_status(self, now: Optional[float] = None) -> tuple[bool, str]:
         mission = self.config["mission"]
         if not bool(mission.get("search_enabled", True)):
             return False, "search disabled by mission profile"
         rc_channel = mission.get("search_enable_rc_channel")
         if rc_channel is not None:
+            timestamp = time.monotonic() if now is None else now
             channel = int(rc_channel)
             value = self.vehicle.rc_channels.get(channel)
             threshold = int(mission.get("search_enable_pwm_min", 1700))
+            rc_age = self._age(timestamp, getattr(self.vehicle, "last_rc_at", None))
+            if rc_age is not None and rc_age > float(mission.get("rc_timeout_s", 2.0)):
+                return False, f"RC channel data stale ({rc_age:.1f}s)"
             if value is None:
                 return False, f"waiting for RC{channel} mission-enable PWM"
             if value < threshold:
                 return False, f"RC{channel}={value} below enable threshold {threshold}"
             return True, f"RC{channel}={value} enabled"
         return True, "enabled by config"
+
+    def guided_displacement_m(self) -> Optional[float]:
+        lat = getattr(self.vehicle, "latitude_deg", None)
+        lon = getattr(self.vehicle, "longitude_deg", None)
+        if self.center_origin is None or lat is None or lon is None:
+            return None
+        return horizontal_distance_m(self.center_origin, (lat, lon))
 
     def auto_search_start_ready(self) -> tuple[bool, str]:
         m = self.config["mission"]
@@ -691,46 +1183,115 @@ class Controller:
 
     def payload_action(self, now: float) -> None:
         p = self.config["payload"]
-        safety_error = self.payload_safety_error()
-        if (
-            safety_error
-            and bool(self.safety.get("payload_requires_guided", True))
-            and self.vehicle.mode != "GUIDED"
-        ):
-            self.status_message = f"Payload locked; waiting for GUIDED instead of {self.vehicle.mode}"
-            self.send_velocity(0.0, 0.0, self.altitude_down())
-            self.request_mode_repeated("GUIDED", force=True)
+        health_errors = self.guidance_health_errors("GUIDED", now)
+        if self.current_target in self.completed_targets:
+            health_errors.append(f"payload already attempted for {self.current_target}")
+        if health_errors:
+            reason = "; ".join(health_errors)
+            self.status_message = f"Payload blocked: {reason}"
+            self.send_velocity(0.0, 0.0, self.altitude_down(), force=True)
+            if reason != self.last_payload_block_reason:
+                self.event("PAYLOAD_BLOCKED", target=self.current_target, reason=reason)
+                self.last_payload_block_reason = reason
             return
-        if safety_error:
-            self.abandon_active_target(now, f"payload blocked: {safety_error}")
-            return
+        self.last_payload_block_reason = ""
         self.send_velocity(0.0, 0.0, self.altitude_down())
-        if not self.payload_started:
-            altitude = self.vehicle.relative_alt_m if self.vehicle.relative_alt_m is not None else float("nan")
-            payload_colour = payload_colour_for_target(self.current_target or "")
-            self.status_message = f"Dropping {payload_colour} payload on {self.current_target}"
-            if p["simulate_only"]:
-                print(f"[PAYLOAD] SIMULATED {payload_colour} DROP over {self.current_target} at {altitude:.2f} m")
+        altitude = self.vehicle.relative_alt_m if self.vehicle.relative_alt_m is not None else float("nan")
+        target = self.current_target or ""
+        payload_colour = payload_colour_for_target(target)
+        simulate_only = bool(p["simulate_only"])
+        ack_timeout_s = float(p.get("command_ack_timeout_s", 2.0))
+
+        if self.payload_release_sent_at is None:
+            self.status_message = f"Releasing {payload_colour} payload on {target}"
+            if simulate_only:
+                self.payload_release_sent_at = now
+                self.payload_release_accepted = True
+                self.payload_started = True
+                self.event("PAYLOAD_SIMULATED", target=target, payload_colour=payload_colour, altitude_m=altitude)
             else:
-                print(f"[PAYLOAD] {payload_colour} DROP servo={p['servo_channel']} pwm={p['release_pwm']} over {self.current_target}")
-                self.vehicle.set_servo(int(p["servo_channel"]), int(p["release_pwm"]))
-            self.payload_started = True
-        elapsed = now - self.state_started_at
-        if not p["simulate_only"] and not self.payload_reset and elapsed >= float(p["release_hold_s"]):
-            self.vehicle.set_servo(int(p["servo_channel"]), int(p["reset_pwm"]))
-            self.payload_reset = True
-        if elapsed >= float(p["total_action_time_s"]):
+                sent_at = self.vehicle.set_servo(int(p["servo_channel"]), int(p["release_pwm"]))
+                self.payload_release_sent_at = now if sent_at is None else float(sent_at)
+                # Record the attempt before waiting for ACK so a process
+                # restart cannot repeat a release that may have reached the servo.
+                self._persist_payload_release(target, payload_colour, accepted=False)
+                self.event(
+                    "PAYLOAD_RELEASE_COMMAND_SENT",
+                    target=target,
+                    payload_colour=payload_colour,
+                    servo_channel=int(p["servo_channel"]),
+                    pwm=int(p["release_pwm"]),
+                )
+            return
+
+        if not simulate_only and not self.payload_release_accepted:
+            ack_reader = getattr(self.vehicle, "command_ack_after", None)
+            result = ack_reader(mavutil.mavlink.MAV_CMD_DO_SET_SERVO, self.payload_release_sent_at) if callable(ack_reader) else None
+            if result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+                self.payload_release_accepted = True
+                self.payload_started = True
+                self._persist_payload_release(target, payload_colour, accepted=True)
+                self.event("PAYLOAD_COMMAND_ACCEPTED", target=target, physical_release_confirmed=False)
+            elif result is not None:
+                self.payload_failed = True
+                self.status_message = f"Payload command rejected: MAV_RESULT={result}; pilot action required"
+                self.event("PAYLOAD_COMMAND_REJECTED", target=target, mav_result=result)
+                return
+            elif now - self.payload_release_sent_at > ack_timeout_s:
+                self.payload_failed = True
+                self.status_message = "Payload ACK timeout; pilot action required"
+                self.event("PAYLOAD_ACK_TIMEOUT", target=target)
+                return
+            else:
+                self.status_message = f"Waiting for payload command ACK on {target}"
+                return
+
+        if self.payload_failed:
+            self.send_velocity(0.0, 0.0, self.altitude_down(), force=True)
+            return
+
+        elapsed = now - self.payload_release_sent_at
+        if not simulate_only and self.payload_reset_sent_at is None and elapsed >= float(p["release_hold_s"]):
+            sent_at = self.vehicle.set_servo(int(p["servo_channel"]), int(p["reset_pwm"]))
+            self.payload_reset_sent_at = now if sent_at is None else float(sent_at)
+            self.event("PAYLOAD_RESET_COMMAND_SENT", target=target, pwm=int(p["reset_pwm"]))
+            return
+
+        if not simulate_only and self.payload_reset_sent_at is not None and not self.payload_reset_accepted:
+            ack_reader = getattr(self.vehicle, "command_ack_after", None)
+            result = ack_reader(mavutil.mavlink.MAV_CMD_DO_SET_SERVO, self.payload_reset_sent_at) if callable(ack_reader) else None
+            if result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+                self.payload_reset_accepted = True
+                self.payload_reset = True
+                self.event("PAYLOAD_RESET_ACCEPTED", target=target)
+            elif result is not None or now - self.payload_reset_sent_at > ack_timeout_s:
+                self.payload_failed = True
+                self.status_message = "Payload reset not confirmed; pilot action required"
+                self.event("PAYLOAD_RESET_FAILED", target=target, mav_result=result)
+                return
+            else:
+                self.status_message = f"Waiting for payload reset ACK on {target}"
+                return
+
+        action_ready = elapsed >= float(p["total_action_time_s"])
+        reset_ready = simulate_only or self.payload_reset_accepted
+        if action_ready and reset_ready:
             if self.current_target:
+                if self.last_center_error_px is not None:
+                    self.completed_center_errors[self.current_target] = self.last_center_error_px
                 self.completed_targets.add(self.current_target)
-                print(f"[TARGET COMPLETE] {self.current_target}; done={sorted(self.completed_targets)}")
+                print(
+                    f"[TARGET COMPLETE] {self.current_target}; "
+                    f"lock_error={self.last_center_error_px}; done={sorted(self.completed_targets)}"
+                )
             self.current_target = None
             self.last_detection = None
             self.tracker.reset()
-            next_mode = "AUTO" if self.incomplete_targets() else "RTL"
+            next_mode = "AUTO" if self.incomplete_targets() else str(self.config["mission"].get("final_mode", "RTL"))
             self.vehicle.set_mode(next_mode)
             self.last_mode_request_at = now
-            self.transition(State.WAITING_FOR_AUTO_RESUME if next_mode == "AUTO" else State.WAITING_FOR_RTL,
-                            "payload complete")
+            next_state = State.WAITING_FOR_AUTO_RESUME if next_mode == "AUTO" else State.WAITING_FOR_RTL
+            self.transition(next_state, "payload complete")
 
     def update(self, frame, detections, masks):
         now = time.monotonic()
@@ -738,19 +1299,29 @@ class Controller:
         c = self.config["control"]
         height, width = frame.shape[:2]
 
+        if self.manual_override_latched:
+            if not self.vehicle.armed:
+                self.manual_override_latched = False
+                self.manual_override_reason = ""
+                self.mission_started_at = None
+                self.tracker.reset()
+                self.transition(State.WAITING_FOR_AUTO, "pilot override reset after disarm")
+            else:
+                self.status_message = f"Pilot override latched: {self.manual_override_reason}"
+            return detections, masks
+
         if (
             self.mission_started_at is not None
             and self.state not in {State.WAITING_FOR_RTL, State.COMPLETE}
             and now - self.mission_started_at > float(m.get("max_flight_time_s", 600.0))
+            and not self.mission_timeout_warned
         ):
-            print("[MISSION TIMEOUT] Requesting RTL")
-            self.current_target = None
-            self.last_detection = None
-            self.tracker.reset()
-            self.vehicle.set_mode("RTL")
-            self.last_mode_request_at = now
-            self.transition(State.WAITING_FOR_RTL, "mission time limit reached")
-            return detections, masks
+            self.mission_timeout_warned = True
+            self.event(
+                "MISSION_DURATION_WARNING",
+                elapsed_s=round(now - self.mission_started_at, 1),
+                note="warning only; pilot and ArduPilot retain recovery authority",
+            )
 
         if self.state == State.WAITING_FOR_AUTO:
             ready, reason = self.auto_search_start_ready()
@@ -768,6 +1339,13 @@ class Controller:
             else:
                 confirmed = self.tracker.update(detections, self.incomplete_targets(), now)
                 if confirmed:
+                    health_errors = self.guidance_health_errors("AUTO", now)
+                    if health_errors:
+                        reason = "; ".join(health_errors)
+                        self.status_message = f"Target seen but GUIDED blocked: {reason}"
+                        self.event("GUIDED_ENTRY_BLOCKED", target=confirmed.target, reason=reason)
+                        self.tracker.reset()
+                        return detections, masks
                     self.current_target = confirmed.target
                     self.last_detection = next(x for x in detections if x.target == confirmed.target)
                     self.last_seen_at = now
@@ -818,18 +1396,38 @@ class Controller:
                 return detections, masks
             self.guided_mode_lost_since = None
             self.request_mode_repeated("GUIDED")
-            max_center_time_s = self.safety.get("max_center_time_s")
+            enabled, gate_reason = self.search_gate_status(now=now)
+            if not enabled:
+                self.latch_pilot_override(f"autonomy enable removed: {gate_reason}")
+                return detections, masks
+            health_errors = self.guidance_health_errors("GUIDED", now)
+            if health_errors:
+                reason = "; ".join(health_errors)
+                self.status_message = f"GUIDED health hold: {reason}; pilot action available"
+                self.send_velocity(0.0, 0.0, self.altitude_down(), force=True)
+                return detections, masks
+            warning_s = self.safety.get("center_warning_time_s")
             if (
-                max_center_time_s is not None
+                warning_s is not None
                 and self.center_started_at is not None
-                and now - self.center_started_at > float(max_center_time_s)
+                and now - self.center_started_at > float(warning_s)
+                and not self.center_warning_printed
             ):
-                self.status_message = (
-                    f"Centering {self.current_target} is slow; holding GUIDED "
-                    f"after {float(max_center_time_s):.1f}s timeout"
+                self.center_warning_printed = True
+                self.event(
+                    "CENTERING_SLOW_WARNING",
+                    target=self.current_target,
+                    elapsed_s=round(now - self.center_started_at, 1),
+                    note="warning only; centering continues",
                 )
-                self.send_velocity(0.0, 0.0, self.altitude_down())
-                self.request_mode_repeated("GUIDED", force=True)
+            displacement = self.guided_displacement_m()
+            max_displacement = self.safety.get("max_guided_displacement_m")
+            if displacement is not None and max_displacement is not None and displacement > float(max_displacement):
+                self.status_message = (
+                    f"GUIDED displacement {displacement:.1f}m exceeds {float(max_displacement):.1f}m; "
+                    "holding for pilot"
+                )
+                self.send_velocity(0.0, 0.0, self.altitude_down(), force=True)
                 return detections, masks
             fresh_detection = False
             if self.last_detection:
@@ -875,6 +1473,13 @@ class Controller:
                 self.send_velocity(0.0, 0.0, self.altitude_down())
                 return detections, masks
             forward, right, distance = self.centre_velocity(self.last_detection, width, height)
+            minimum_progress = float(self.safety.get("center_min_progress_px", 8.0))
+            if self.center_best_error_px is None or distance <= self.center_best_error_px - minimum_progress:
+                self.center_best_error_px = distance
+                self.center_last_progress_at = now
+            progress_window = self.safety.get("center_progress_window_s")
+            stagnant_for = 0.0 if self.center_last_progress_at is None else now - self.center_last_progress_at
+            slow_progress = progress_window is not None and stagnant_for > float(progress_window)
             self.last_center_error_px = distance
             self.last_center_forward = forward
             self.last_center_right = right
@@ -886,6 +1491,12 @@ class Controller:
                     self.status_message = f"Center lock started on {self.current_target}: err={distance:.0f}px"
                 elif now - self.centered_since >= float(c["center_hold_s"]):
                     self.status_message = f"Centering complete on {self.current_target}: err={distance:.0f}px"
+                    self.event(
+                        "CENTER_LOCK_ACCEPTED",
+                        target=self.current_target,
+                        error_px=round(distance, 1),
+                        tolerance_px=round(tolerance_px, 1),
+                    )
                     self.payload_started = False
                     self.payload_reset = False
                     self.transition(State.PAYLOAD, "centred; payload")
@@ -898,6 +1509,8 @@ class Controller:
                     f"Centering {self.current_target}: err={distance:.0f}px "
                     f"tol={tolerance_px:.0f}px fwd={forward:.2f} right={right:.2f}"
                 )
+                if slow_progress:
+                    self.status_message += f" | slow progress {stagnant_for:.0f}s"
             self.send_velocity(forward, right, self.altitude_down())
 
         elif self.state == State.PAYLOAD:
@@ -910,6 +1523,8 @@ class Controller:
         elif self.state == State.WAITING_FOR_AUTO_RESUME:
             if self.vehicle.mode == "AUTO":
                 self.transition(State.SEARCH, f"AUTO resumed item {self.vehicle.mission_seq}")
+            elif self.vehicle.mode not in {"GUIDED", "AUTO"}:
+                self.latch_pilot_override(f"external mode {self.vehicle.mode} while resuming AUTO")
             else:
                 self.request_mode_repeated("AUTO")
 
@@ -917,13 +1532,17 @@ class Controller:
             if self.vehicle.mode == "RTL":
                 self.mission_done_count += 1
                 self.transition(State.COMPLETE, "RTL confirmed")
+            elif self.vehicle.mode not in {"GUIDED", "AUTO", "RTL"}:
+                self.latch_pilot_override(f"external mode {self.vehicle.mode} while waiting for RTL")
             else:
                 self.request_mode_repeated("RTL")
 
         elif self.state == State.COMPLETE:
             ready, reason = self.auto_search_start_ready()
-            if ready:
+            if ready and self.payload_state_path is None:
                 self.reset_for_next_mission(f"new AUTO run at waypoint {self.vehicle.mission_seq}; {reason}")
+            elif ready:
+                self.status_message = "Payload state retained; explicit reset required for another attempt"
 
         return detections, masks
 
@@ -932,6 +1551,8 @@ class Controller:
         h, w = out.shape[:2]
         image_center = (w // 2, h // 2)
         cv2.drawMarker(out, image_center, (255, 255, 255), cv2.MARKER_CROSS, 26, 1)
+        if self.current_target:
+            cv2.circle(out, image_center, round(self.center_tolerance_px()), (0, 255, 255), 1, cv2.LINE_AA)
         draw_items = list(detections)
         if self.last_detection and all(item.target != self.last_detection.target for item in draw_items):
             draw_items.append(self.last_detection)
@@ -943,7 +1564,6 @@ class Controller:
             error = math.hypot(item.center_x - image_center[0], item.center_y - image_center[1])
             cv2.putText(out, f"{item.target} {item.confidence:.2f} err {error:.0f}px",
                         (item.bbox_x, max(18, item.bbox_y - 7)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, colour, 1, cv2.LINE_AA)
-        hits = self.tracker.status()
         alt = "unknown" if self.vehicle.relative_alt_m is None else f"{self.vehicle.relative_alt_m:.2f} m"
         centered_for = 0.0 if self.centered_since is None else time.monotonic() - self.centered_since
         center_error = "none" if self.last_center_error_px is None else f"{self.last_center_error_px:.0f}px"
@@ -951,6 +1571,10 @@ class Controller:
             return "n/a" if value is None else f"{value:.2f}{unit}"
 
         done = ",".join(sorted(self.completed_targets)) if self.completed_targets else "none"
+        drop_locks = ", ".join(
+            f"{target.replace('_', ' ')} {error:.0f}px"
+            for target, error in sorted(self.completed_center_errors.items())
+        ) or "none"
         gate_enabled, gate_reason = self.search_gate_status()
         gate = "enabled" if gate_enabled else f"blocked: {gate_reason}"
         font_scale = float(self.config["display"].get("overlay_font_scale", 0.46))
@@ -969,9 +1593,8 @@ class Controller:
             f"Action: {self.status_message}",
             f"Target: {self.current_target or 'none'} | Err {center_error} | Hold {centered_for:.1f}s",
             f"Search gate: {gate}",
-            f"Hits: triangle {hits['red_triangle']}/{self.config['vision']['required_hits']} | hexagon {hits['blue_hexagon']}/{self.config['vision']['required_hits']}",
             f"Done: {done} | Runs {self.mission_done_count} | Guided bounces {self.guided_bounce_count}",
-            f"Abort {self.active_target_abort_mode()} | Search speed {self.search_speed_label()} | Retry {float(self.safety.get('mode_retry_interval_s') or 1.0):.1f}s",
+            f"Accepted payload locks: {drop_locks}",
             f"Alt {alt} | Hspd {fmt(self.vehicle.horizontal_speed_m_s, 'm/s')} | Vspd {fmt(None if self.vehicle.velocity_down_m_s is None else -self.vehicle.velocity_down_m_s, 'm/s')} | Acc {fmt(self.vehicle.acceleration_m_s2, 'm/s2')}",
         ]]
         line_height = max(16, int(38 * font_scale))
@@ -998,22 +1621,46 @@ class Controller:
         print(
             f"GUIDED HOLD: {optional_seconds_label(self.safety.get('guided_auto_bounce_grace_s'))} | "
             f"MAX AUTO BOUNCES/TARGET: {self.safety.get('max_guided_auto_bounces_per_target')} | "
-            f"ACTIVE TARGET ABORT: {self.active_target_abort_mode()} | "
             f"TARGET LOST TIMEOUT: {float(self.config['control']['target_lost_timeout_s']):.1f}s"
         )
         print("=" * 72)
+        camera_worker = LatestFrameCamera(self.camera)
+        video_stream = MjpegFrameServer(self.config["display"])
+        camera_worker.start()
+        video_stream.start()
+        last_frame_sequence = 0
         try:
             while not self.stop_requested:
                 self.vehicle.poll()
-                if time.monotonic() - self.vehicle.last_heartbeat > float(self.config["mavlink"].get("heartbeat_timeout_s", 8.0)):
-                    print("[FATAL] Heartbeat lost")
-                    return 3
-                ok, frame = self.camera.read()
-                if not ok or frame is None:
-                    self.handle_camera_frame_miss(time.monotonic())
-                    time.sleep(0.02)
+                heartbeat_timeout_s = float(self.config["mavlink"].get("heartbeat_timeout_s", 8.0))
+                heartbeat_age = time.monotonic() - self.vehicle.last_heartbeat
+                if heartbeat_age > heartbeat_timeout_s:
+                    print(
+                        f"[MAVLINK WARNING] Vehicle heartbeat is {heartbeat_age:.1f}s old; "
+                        "checking the queued telemetry backlog"
+                    )
+                    if not self.vehicle.recover_vehicle_heartbeat(timeout_s=1.0):
+                        heartbeat_age = time.monotonic() - self.vehicle.last_heartbeat
+                        print(f"[FATAL] Heartbeat lost; last vehicle heartbeat was {heartbeat_age:.1f}s ago")
+                        return 3
+                    print("[MAVLINK] Vehicle heartbeat recovered from telemetry backlog")
+                now = time.monotonic()
+                if self.active_target_phase() and self.vehicle.mode not in MISSION_OWNED_MODES:
+                    self.latch_pilot_override(f"external mode {self.vehicle.mode} while camera/control active")
+                sequence, captured_at, frame = camera_worker.latest()
+                if sequence == last_frame_sequence or frame is None:
+                    if camera_worker.failed:
+                        print("[FATAL] Camera capture thread stopped")
+                        return 4
+                    self.handle_camera_frame_miss(now)
+                    if self.state == State.PAYLOAD and self.vehicle.mode in MISSION_OWNED_MODES:
+                        self.payload_action(now)
+                    if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                        break
+                    time.sleep(0.01)
                     continue
-                self.last_frame_at = time.monotonic()
+                last_frame_sequence = sequence
+                self.last_frame_at = captured_at
                 frame = self.resize(frame)
                 if self.state in {State.WAITING_FOR_AUTO, State.SEARCH, State.WAITING_FOR_GUIDED, State.WAITING_FOR_AUTO_RESUME, State.WAITING_FOR_RTL, State.COMPLETE}:
                     detections, masks = self.detector.search(frame)
@@ -1027,6 +1674,7 @@ class Controller:
                     "mission_done_count": self.mission_done_count,
                     "mission_profile": self.config["mission"].get("name"),
                     "search_gate": self.search_gate_status()[1],
+                    "accepted_payload_locks_px": self.completed_center_errors,
                     "payload_colour": payload_colour_for_target(self.current_target) if self.current_target else None,
                     "detections": [asdict(x) for x in detections],
                 }, sort_keys=True) + "\n")
@@ -1034,8 +1682,11 @@ class Controller:
                 if now - self.last_log_flush_at >= float(self.config["logging"].get("flush_interval_s", 0.5)):
                     self.log_file.flush()
                     self.last_log_flush_at = now
-                if self.config["display"]["show_main_window"]:
-                    cv2.imshow("WD DRONE Target Mission V2", self.draw(frame, detections))
+                if self.config["display"]["show_main_window"] or video_stream.enabled:
+                    view = self.draw(frame, detections)
+                    video_stream.publish(view)
+                    if self.config["display"]["show_main_window"]:
+                        cv2.imshow("WD DRONE Target Mission V2", view)
                 if self.config["display"]["show_masks"]:
                     cv2.imshow("Red mask", masks["red"])
                     cv2.imshow("Blue mask", masks["blue"])
@@ -1044,18 +1695,47 @@ class Controller:
         finally:
             if self.vehicle.mode == "GUIDED":
                 self.send_velocity(0.0, 0.0, 0.0, force=True)
-            self.camera.release()
+            camera_worker.stop()
+            video_stream.stop()
+            close_detector = getattr(self.detector, "close", None)
+            if callable(close_detector):
+                close_detector()
             self.log_file.close()
             cv2.destroyAllWindows()
         return 0
 
 
+def manage_payload_state(config: dict[str, Any], reset: bool) -> int:
+    state_cfg = config.get("payload_state", {})
+    if not bool(state_cfg.get("enabled", False)):
+        print("[PAYLOAD STATE] disabled in this profile")
+        return 0
+    path = Path(str(state_cfg["path"]))
+    if reset:
+        if path.exists():
+            path.unlink()
+            print(f"[PAYLOAD STATE] reset: {path}")
+        else:
+            print(f"[PAYLOAD STATE] already empty: {path}")
+        return 0
+    if not path.exists():
+        print(f"[PAYLOAD STATE] empty: {path}")
+        return 0
+    print(path.read_text(encoding="utf-8"), end="")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=Path(__file__).with_name("mission_config.json"))
+    state_actions = parser.add_mutually_exclusive_group()
+    state_actions.add_argument("--show-payload-state", action="store_true")
+    state_actions.add_argument("--reset-payload-state", action="store_true")
     args = parser.parse_args()
     config = json.loads(args.config.read_text(encoding="utf-8"))
     validate_config(config)
+    if args.show_payload_state or args.reset_payload_state:
+        return manage_payload_state(config, reset=args.reset_payload_state)
     vehicle = Vehicle(config["mavlink"]["connection"], config["mavlink"].get("baud"))
     enforce_parameters(vehicle, config)
     camera = open_camera(config["camera"])

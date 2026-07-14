@@ -13,6 +13,15 @@ folders.
 
 ## Real Mission
 
+Deploy the current laptop source to the Pi without copying virtual
+environments, logs, model files, or captured images:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+DRY_RUN=1 ./scripts/sync_to_pi.sh
+./scripts/sync_to_pi.sh
+```
+
 Run on the Raspberry Pi:
 
 ```bash
@@ -77,8 +86,8 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission
 ./real_mission/open_laptop_camera_window.sh
 ```
 
-The laptop and Pi must be on the same Wi-Fi/hotspot network. RFD900x carries
-MAVLink telemetry, not video.
+The laptop and Pi must share an Ethernet, Wi-Fi, or hotspot network. RFD900x
+carries MAVLink telemetry, not video.
 
 The mission does not depend on this window. It is only for you to watch what the
 camera sees.
