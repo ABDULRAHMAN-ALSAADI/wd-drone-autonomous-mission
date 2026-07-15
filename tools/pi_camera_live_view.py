@@ -18,6 +18,7 @@ import subprocess
 import sys
 import time
 from collections import deque
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
@@ -29,7 +30,7 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
 from camera_sources import build_rpicam_mjpeg_command  # noqa: E402
-from vision import Detection, create_detector  # noqa: E402
+from vision import Detection, HitTracker, create_detector  # noqa: E402
 
 
 class RemoteMjpegCamera:
@@ -130,6 +131,28 @@ def fit_text(text: str, max_width: int, scale: float) -> str:
     return clipped + "..."
 
 
+def resize_for_vision(frame: np.ndarray, process_width: int) -> np.ndarray:
+    if process_width <= 0 or frame.shape[1] == process_width:
+        return frame
+    scale = process_width / frame.shape[1]
+    return cv2.resize(frame, (process_width, max(1, round(frame.shape[0] * scale))), interpolation=cv2.INTER_AREA)
+
+
+def scale_detection(item: Detection, source_shape: tuple[int, ...], destination_shape: tuple[int, ...]) -> Detection:
+    scale_x = destination_shape[1] / source_shape[1]
+    scale_y = destination_shape[0] / source_shape[0]
+    return replace(
+        item,
+        center_x=round(item.center_x * scale_x),
+        center_y=round(item.center_y * scale_y),
+        area_px=round(item.area_px * scale_x * scale_y, 1),
+        bbox_x=round(item.bbox_x * scale_x),
+        bbox_y=round(item.bbox_y * scale_y),
+        bbox_w=round(item.bbox_w * scale_x),
+        bbox_h=round(item.bbox_h * scale_y),
+    )
+
+
 def draw_overlay(
     frame: np.ndarray,
     detections: list[Detection],
@@ -137,7 +160,9 @@ def draw_overlay(
     fps_avg: float,
     frame_count: int,
     mode: str,
-    mask_counts: dict[str, int],
+    mask_coverage: dict[str, float],
+    hit_status: dict[str, int],
+    required_hits: int,
 ) -> np.ndarray:
     out = frame.copy()
     h, w = out.shape[:2]
@@ -154,15 +179,17 @@ def draw_overlay(
         cv2.putText(out, label, (item.bbox_x, max(18, item.bbox_y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, colour, 1, cv2.LINE_AA)
 
     target_names = ",".join(item.target for item in detections) if detections else "none"
+    confirmed = ",".join(target for target, hits in hit_status.items() if hits >= required_hits) or "none"
     scale = 0.48
     lines = [
         "Mission TEST | Mode N/A | WP N/A",
         "Action: standalone OpenCV camera and vision validation",
-        f"Target: {target_names}",
+        f"Candidate: {target_names} | Confirmed: {confirmed}",
+        f"Evidence: triangle {min(required_hits, hit_status.get('red_triangle', 0))}/{required_hits} | hexagon {min(required_hits, hit_status.get('blue_hexagon', 0))}/{required_hits}",
         "Payload: disabled | Mission telemetry: not connected",
         f"Vision: {mode} | FPS {fps_recent:.1f} recent / {fps_avg:.1f} avg | frames {frame_count}",
         f"Camera: {w}x{h}",
-        f"Mask px red {mask_counts.get('red', 0)} | blue {mask_counts.get('blue', 0)}",
+        f"Mask coverage: red {100.0 * mask_coverage.get('red', 0.0):.1f}% | blue {100.0 * mask_coverage.get('blue', 0.0):.1f}%",
         "Keys: q/esc quit | s snapshot | m masks",
     ]
     lines = [fit_text(line, w - 40, scale) for line in lines]
@@ -207,6 +234,12 @@ def main() -> int:
     read_timeout_s = max(0.02, args.read_timeout)
     camera = RemoteMjpegCamera(args.ssh_alias, config["camera"], args.remote_dir)
     detector = None if args.raw_only else create_detector(config["vision"])
+    required_hits = int(config["vision"].get("required_hits", 3))
+    tracker = HitTracker(
+        required_hits=required_hits,
+        window_s=float(config["vision"].get("confirmation_window_s", 1.5)),
+        max_jump_px=float(config["vision"].get("max_lock_jump_px", 160.0)),
+    )
     started_at = time.monotonic()
     frame_times: deque[float] = deque(maxlen=240)
     frames = 0
@@ -236,11 +269,16 @@ def main() -> int:
             avg_fps = frames / max(1e-6, now - started_at)
             detections: list[Detection] = []
             masks = {"red": np.zeros(frame.shape[:2], dtype=np.uint8), "blue": np.zeros(frame.shape[:2], dtype=np.uint8)}
+            hit_status = {"red_triangle": 0, "blue_hexagon": 0}
             if detector is not None:
-                detections, masks = detector.search(frame)
-            mask_counts = {name: int(cv2.countNonZero(mask)) for name, mask in masks.items()}
+                process_frame = resize_for_vision(frame, int(config["vision"].get("process_width", frame.shape[1])))
+                process_detections, masks = detector.search(process_frame)
+                tracker.update(process_detections, {"red_triangle", "blue_hexagon"}, now)
+                hit_status = tracker.status(now)
+                detections = [scale_detection(item, process_frame.shape, frame.shape) for item in process_detections]
+            mask_coverage = {name: cv2.countNonZero(mask) / float(mask.size) for name, mask in masks.items()}
             mode = "raw" if detector is None else str(config["vision"].get("backend", "vision"))
-            view = draw_overlay(frame, detections, recent_fps, avg_fps, frames, mode, mask_counts)
+            view = draw_overlay(frame, detections, recent_fps, avg_fps, frames, mode, mask_coverage, hit_status, required_hits)
             cv2.imshow("WD Drone Pi Camera Live Vision", view)
             if masks_visible:
                 cv2.imshow("Pi Camera Red Mask", masks["red"])

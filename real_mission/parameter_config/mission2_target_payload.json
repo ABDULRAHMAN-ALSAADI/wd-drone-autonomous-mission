@@ -11,6 +11,9 @@
     "safety.max_guided_auto_bounces_per_target": "Diagnostic only; keep null so GUIDED lock has no time limit during active centering.",
     "safety.active_target_abort_mode": "Fallback mode for explicit abort paths only. Normal target loss and slow centering now hold GUIDED and keep trying.",
     "vision.search_min_area_px": "Lower this carefully if real targets are too small at higher altitude.",
+    "vision.red_hsv_ranges / blue_hsv_range": "Target color ranges in OpenCV HSV. Tune only from raw Pi-camera images under representative outdoor light.",
+    "vision.search_max_area_fraction": "Reject a search contour that fills an implausibly large part of the frame.",
+    "vision.search_border_margin_px": "Require the complete target to be visible before initial confirmation; active tracking may still follow it near an edge.",
     "camera.camera_index": "Logical rpicam camera number, not the physical connector. With one detected camera, keep 0 even if the ribbon is on CAM/DISP 1.",
     "payload.simulate_only": "Keep true until servo and payload bench tests pass. Set false only for physical payload output.",
     "payload.servo_channel": "Pixhawk output channel for payload. Use 5 when the payload servo signal wire is on MAIN OUT / signal 5.",
@@ -63,6 +66,13 @@
     "process_width": 960,
     "search_min_area_px": 180.0,
     "tracking_min_area_px": 100.0,
+    "red_hsv_ranges": [
+      [[0, 80, 45], [13, 255, 255]],
+      [[168, 80, 45], [180, 255, 255]]
+    ],
+    "blue_hsv_range": [[88, 60, 35], [145, 255, 255]],
+    "search_max_area_fraction": 0.45,
+    "search_border_margin_px": 2,
     "required_hits": 4,
     "confirmation_window_s": 1.8,
     "max_lock_jump_px": 180.0,

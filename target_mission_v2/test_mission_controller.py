@@ -197,6 +197,26 @@ class VisionTests(unittest.TestCase):
         cv2.fillConvexPoly(image, np.array([[300, 70], [465, 235], [300, 400], [135, 235]], np.int32), (255, 0, 0))
         self.assertNotIn("blue_hexagon", self.targets(image))
 
+    def test_rejects_low_saturation_cyan_hexagon(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        points = np.array([[300, 185], [388, 135], [480, 188], [478, 295], [392, 355], [298, 300]], np.int32)
+        cv2.fillConvexPoly(image, points, (205, 220, 210))
+        self.assertNotIn("blue_hexagon", self.targets(image))
+
+    def test_search_rejects_partial_target_at_frame_border(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        points = np.array([[-35, 185], [45, 125], [145, 180], [145, 300], [45, 355], [-35, 300]], np.int32)
+        cv2.fillConvexPoly(image, points, (255, 0, 0))
+        self.assertNotIn("blue_hexagon", self.targets(image))
+
+    def test_search_rejects_implausibly_large_target(self):
+        detector = StrictShapeDetector(search_min_area_px=100, search_max_area_fraction=0.30)
+        image = np.zeros((540, 960, 3), np.uint8)
+        points = np.array([[60, 270], [220, 25], [740, 25], [900, 270], [740, 515], [220, 515]], np.int32)
+        cv2.fillConvexPoly(image, points, (255, 0, 0))
+        detections, _ = detector.search(image)
+        self.assertNotIn("blue_hexagon", {item.target for item in detections})
+
     def test_three_hit_confirmation(self):
         image = np.zeros((540, 960, 3), np.uint8)
         cv2.fillConvexPoly(image, np.array([[220, 70], [70, 370], [370, 370]], np.int32), (0, 0, 255))

@@ -112,12 +112,47 @@ class HitTracker:
 
 
 class StrictShapeDetector:
-    def __init__(self, search_min_area_px: float = 220.0, tracking_min_area_px: float = 120.0, debug_rejects: bool = False) -> None:
+    DEFAULT_RED_HSV_RANGES = (
+        ((0, 80, 45), (13, 255, 255)),
+        ((168, 80, 45), (180, 255, 255)),
+    )
+    DEFAULT_BLUE_HSV_RANGE = ((88, 60, 35), (145, 255, 255))
+
+    def __init__(
+        self,
+        search_min_area_px: float = 220.0,
+        tracking_min_area_px: float = 120.0,
+        debug_rejects: bool = False,
+        red_hsv_ranges: Optional[Iterable[Iterable[Iterable[int]]]] = None,
+        blue_hsv_range: Optional[Iterable[Iterable[int]]] = None,
+        search_max_area_fraction: float = 0.45,
+        search_border_margin_px: int = 2,
+    ) -> None:
         self.search_min_area_px = search_min_area_px
         self.tracking_min_area_px = tracking_min_area_px
         self.debug_rejects = debug_rejects
+        self.red_hsv_ranges = self._parse_hsv_ranges(red_hsv_ranges or self.DEFAULT_RED_HSV_RANGES, expected=2)
+        self.blue_hsv_range = self._parse_hsv_ranges((blue_hsv_range or self.DEFAULT_BLUE_HSV_RANGE,), expected=1)[0]
+        self.search_max_area_fraction = float(search_max_area_fraction)
+        self.search_border_margin_px = max(0, int(search_border_margin_px))
+        if not 0.0 < self.search_max_area_fraction <= 1.0:
+            raise ValueError("vision.search_max_area_fraction must be in (0, 1]")
         self.kernel = np.ones((3, 3), dtype=np.uint8)
         self.epsilons = (0.008, 0.012, 0.016, 0.021, 0.027, 0.034)
+
+    @staticmethod
+    def _parse_hsv_ranges(values: Iterable[Iterable[Iterable[int]]], expected: int) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+        parsed: list[tuple[np.ndarray, np.ndarray]] = []
+        for value in values:
+            endpoints = list(value)
+            if len(endpoints) != 2 or any(len(list(endpoint)) != 3 for endpoint in endpoints):
+                raise ValueError("HSV ranges must contain lower and upper three-value endpoints")
+            lower = np.asarray(endpoints[0], dtype=np.uint8)
+            upper = np.asarray(endpoints[1], dtype=np.uint8)
+            parsed.append((lower, upper))
+        if len(parsed) != expected:
+            raise ValueError(f"Expected {expected} HSV range(s), received {len(parsed)}")
+        return tuple(parsed)
 
     def _debug(self, target: str, reason: str, area: float) -> None:
         if self.debug_rejects:
@@ -125,11 +160,8 @@ class StrictShapeDetector:
 
     def masks(self, frame: np.ndarray) -> dict[str, np.ndarray]:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        red = cv2.bitwise_or(
-            cv2.inRange(hsv, np.array([0, 65, 45], np.uint8), np.array([13, 255, 255], np.uint8)),
-            cv2.inRange(hsv, np.array([168, 65, 45], np.uint8), np.array([180, 255, 255], np.uint8)),
-        )
-        blue = cv2.inRange(hsv, np.array([82, 35, 30], np.uint8), np.array([158, 255, 255], np.uint8))
+        red = cv2.bitwise_or(*(cv2.inRange(hsv, lower, upper) for lower, upper in self.red_hsv_ranges))
+        blue = cv2.inRange(hsv, *self.blue_hsv_range)
         for mask_name, mask in (("red", red), ("blue", blue)):
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self.kernel, iterations=1)
             mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self.kernel, iterations=1)
@@ -138,6 +170,21 @@ class StrictShapeDetector:
             else:
                 blue = mask
         return {"red": red, "blue": blue}
+
+    def _valid_search_contour(self, contour: np.ndarray, area: float, mask_shape: tuple[int, ...]) -> bool:
+        height, width = mask_shape[:2]
+        frame_area = float(max(1, width * height))
+        if area / frame_area > self.search_max_area_fraction:
+            self._debug("search", f"area fraction={area / frame_area:.2f}", area)
+            return False
+        margin = self.search_border_margin_px
+        if margin <= 0:
+            return True
+        x, y, box_w, box_h = cv2.boundingRect(contour)
+        if x <= margin or y <= margin or x + box_w >= width - margin or y + box_h >= height - margin:
+            self._debug("search", "contour touches frame border", area)
+            return False
+        return True
 
     @staticmethod
     def _metrics(contour: np.ndarray, area: float, perimeter: float) -> tuple[float, float, float]:
@@ -341,7 +388,7 @@ class StrictShapeDetector:
             best: Optional[Detection] = None
             for contour in contours:
                 area = float(cv2.contourArea(contour))
-                if area < self.search_min_area_px:
+                if area < self.search_min_area_px or not self._valid_search_contour(contour, area, masks[colour].shape):
                     continue
                 perimeter = float(cv2.arcLength(contour, True))
                 if perimeter <= 0:
@@ -402,4 +449,8 @@ def create_detector(vision_config: dict[str, Any]) -> StrictShapeDetector:
         search_min_area_px=float(vision_config["search_min_area_px"]),
         tracking_min_area_px=float(vision_config["tracking_min_area_px"]),
         debug_rejects=bool(vision_config.get("debug_rejects", False)),
+        red_hsv_ranges=vision_config.get("red_hsv_ranges"),
+        blue_hsv_range=vision_config.get("blue_hsv_range"),
+        search_max_area_fraction=float(vision_config.get("search_max_area_fraction", 0.45)),
+        search_border_margin_px=int(vision_config.get("search_border_margin_px", 2)),
     )
