@@ -227,18 +227,50 @@ def main() -> int:
         default=0.25,
         help="maximum seconds to wait for a frame before refreshing the GUI",
     )
+    parser.add_argument("--camera-width", type=int, default=None)
+    parser.add_argument("--camera-height", type=int, default=None)
+    parser.add_argument("--camera-fps", type=float, default=None)
+    parser.add_argument("--process-width", type=int, default=None)
+    parser.add_argument(
+        "--autofocus-mode",
+        choices=("manual", "auto", "continuous"),
+        default=None,
+    )
     parser.add_argument("--snapshot-dir", type=Path, default=ROOT / "data/camera_snapshots")
     args = parser.parse_args()
 
     config = load_config(args.config)
+    camera_config = dict(config["camera"])
+    vision_config = dict(config["vision"])
+    if args.camera_width is not None:
+        camera_config["width"] = args.camera_width
+    if args.camera_height is not None:
+        camera_config["height"] = args.camera_height
+    if args.camera_fps is not None:
+        camera_config["framerate"] = args.camera_fps
+    if args.process_width is not None:
+        vision_config["process_width"] = args.process_width
+    if args.autofocus_mode is not None:
+        camera_config["autofocus_mode"] = args.autofocus_mode
+        if args.autofocus_mode != "manual":
+            camera_config.pop("lens_position", None)
+
+    for name in ("width", "height"):
+        if int(camera_config.get(name, 0)) <= 0:
+            raise ValueError(f"camera {name} must be positive")
+    if float(camera_config.get("framerate", 0.0)) <= 0:
+        raise ValueError("camera FPS must be positive")
+    if int(vision_config.get("process_width", 0)) <= 0:
+        raise ValueError("vision process width must be positive")
+
     read_timeout_s = max(0.02, args.read_timeout)
-    camera = RemoteMjpegCamera(args.ssh_alias, config["camera"], args.remote_dir)
-    detector = None if args.raw_only else create_detector(config["vision"])
-    required_hits = int(config["vision"].get("required_hits", 3))
+    camera = RemoteMjpegCamera(args.ssh_alias, camera_config, args.remote_dir)
+    detector = None if args.raw_only else create_detector(vision_config)
+    required_hits = int(vision_config.get("required_hits", 3))
     tracker = HitTracker(
         required_hits=required_hits,
-        window_s=float(config["vision"].get("confirmation_window_s", 1.5)),
-        max_jump_px=float(config["vision"].get("max_lock_jump_px", 160.0)),
+        window_s=float(vision_config.get("confirmation_window_s", 1.5)),
+        max_jump_px=float(vision_config.get("max_lock_jump_px", 160.0)),
     )
     started_at = time.monotonic()
     frame_times: deque[float] = deque(maxlen=240)
@@ -271,13 +303,13 @@ def main() -> int:
             masks = {"red": np.zeros(frame.shape[:2], dtype=np.uint8), "blue": np.zeros(frame.shape[:2], dtype=np.uint8)}
             hit_status = {"red_triangle": 0, "blue_hexagon": 0}
             if detector is not None:
-                process_frame = resize_for_vision(frame, int(config["vision"].get("process_width", frame.shape[1])))
+                process_frame = resize_for_vision(frame, int(vision_config.get("process_width", frame.shape[1])))
                 process_detections, masks = detector.search(process_frame)
                 tracker.update(process_detections, {"red_triangle", "blue_hexagon"}, now)
                 hit_status = tracker.status(now)
                 detections = [scale_detection(item, process_frame.shape, frame.shape) for item in process_detections]
             mask_coverage = {name: cv2.countNonZero(mask) / float(mask.size) for name, mask in masks.items()}
-            mode = "raw" if detector is None else str(config["vision"].get("backend", "vision"))
+            mode = "raw" if detector is None else str(vision_config.get("backend", "vision"))
             view = draw_overlay(frame, detections, recent_fps, avg_fps, frames, mode, mask_coverage, hit_status, required_hits)
             cv2.imshow("WD Drone Pi Camera Live Vision", view)
             if masks_visible:
