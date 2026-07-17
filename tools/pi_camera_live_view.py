@@ -138,6 +138,20 @@ def resize_for_vision(frame: np.ndarray, process_width: int) -> np.ndarray:
     return cv2.resize(frame, (process_width, max(1, round(frame.shape[0] * scale))), interpolation=cv2.INTER_AREA)
 
 
+def fit_for_display(frame: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Scale without stretching and center the frame in the requested window."""
+    scale = min(width / frame.shape[1], height / frame.shape[0])
+    output_width = max(1, round(frame.shape[1] * scale))
+    output_height = max(1, round(frame.shape[0] * scale))
+    interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    resized = cv2.resize(frame, (output_width, output_height), interpolation=interpolation)
+    canvas = np.zeros((height, width, 3), dtype=np.uint8)
+    offset_x = (width - output_width) // 2
+    offset_y = (height - output_height) // 2
+    canvas[offset_y:offset_y + output_height, offset_x:offset_x + output_width] = resized
+    return canvas
+
+
 def scale_detection(item: Detection, source_shape: tuple[int, ...], destination_shape: tuple[int, ...]) -> Detection:
     scale_x = destination_shape[1] / source_shape[1]
     scale_y = destination_shape[0] / source_shape[0]
@@ -231,6 +245,8 @@ def main() -> int:
     parser.add_argument("--camera-height", type=int, default=None)
     parser.add_argument("--camera-fps", type=float, default=None)
     parser.add_argument("--process-width", type=int, default=None)
+    parser.add_argument("--display-width", type=int, default=1280)
+    parser.add_argument("--display-height", type=int, default=720)
     parser.add_argument(
         "--autofocus-mode",
         choices=("manual", "auto", "continuous"),
@@ -262,6 +278,8 @@ def main() -> int:
         raise ValueError("camera FPS must be positive")
     if int(vision_config.get("process_width", 0)) <= 0:
         raise ValueError("vision process width must be positive")
+    if args.display_width <= 0 or args.display_height <= 0:
+        raise ValueError("display width and height must be positive")
 
     read_timeout_s = max(0.02, args.read_timeout)
     camera = RemoteMjpegCamera(args.ssh_alias, camera_config, args.remote_dir)
@@ -278,6 +296,8 @@ def main() -> int:
     masks_visible = bool(args.show_masks)
     masks_open = False
     print("[LIVE CAMERA] opening window; press q or esc to quit, s to save a snapshot, m to toggle masks")
+    cv2.namedWindow("WD Drone Pi Camera Live Vision", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow("WD Drone Pi Camera Live Vision", args.display_width, args.display_height)
 
     try:
         while args.seconds <= 0 or time.monotonic() - started_at < args.seconds:
@@ -311,7 +331,10 @@ def main() -> int:
             mask_coverage = {name: cv2.countNonZero(mask) / float(mask.size) for name, mask in masks.items()}
             mode = "raw" if detector is None else str(vision_config.get("backend", "vision"))
             view = draw_overlay(frame, detections, recent_fps, avg_fps, frames, mode, mask_coverage, hit_status, required_hits)
-            cv2.imshow("WD Drone Pi Camera Live Vision", view)
+            cv2.imshow(
+                "WD Drone Pi Camera Live Vision",
+                fit_for_display(view, args.display_width, args.display_height),
+            )
             if masks_visible:
                 cv2.imshow("Pi Camera Red Mask", masks["red"])
                 cv2.imshow("Pi Camera Blue Mask", masks["blue"])
