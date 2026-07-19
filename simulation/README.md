@@ -11,6 +11,28 @@ simulation dependencies already installed on the Ubuntu laptop:
 ~/ardupilot_gazebo
 ```
 
+## Fresh Computer Setup
+
+The repository includes the small project patch that adds the competition
+poles, target area, red triangle, blue hexagon, false-positive squares,
+takeoff pad, and downward-facing gimbal camera to `ardupilot_gazebo`.
+
+Read the full installation sequence in:
+
+```text
+docs/BEGINNER_GUIDE.md
+```
+
+After cloning and building the tested `ardupilot_gazebo` revision:
+
+```bash
+./simulation/setup_external_assets.sh --check
+./simulation/setup_external_assets.sh --apply
+```
+
+This is intentionally a patch instead of a copy of the complete third-party
+Gazebo source and build directory.
+
 ## One-Terminal-Per-Job Start Order
 
 Open four terminals on the Ubuntu laptop.
@@ -91,4 +113,3 @@ The detailed test matrix is in:
 ```text
 docs/SITL_TEST_PLAN.md
 ```
-

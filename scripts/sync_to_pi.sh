@@ -27,6 +27,7 @@ EXCLUDES=(
     --exclude="dist/"
     --exclude="logs/"
     --exclude="target_mission_v2/logs/"
+    --exclude="data/camera_snapshots/"
     --exclude="data/raw/"
     --exclude="data/processed/"
     --exclude="models/*.hef"
@@ -36,7 +37,19 @@ EXCLUDES=(
     --exclude=".env"
 )
 
-ssh "$PI_ALIAS" "mkdir -p $REMOTE_DIR"
+if [[ "$DRY_RUN" == "1" ]]; then
+    # REMOTE_DIR is intentionally expanded into the command run by the Pi shell.
+    # shellcheck disable=SC2029
+    if ! ssh "$PI_ALIAS" "test -d $REMOTE_DIR"; then
+        echo "[ERROR] Remote project directory does not exist: $REMOTE_DIR" >&2
+        echo "Run the first real sync without DRY_RUN=1; it will create the directory." >&2
+        exit 2
+    fi
+else
+    # shellcheck disable=SC2029
+    ssh "$PI_ALIAS" "mkdir -p $REMOTE_DIR"
+fi
+
 rsync "${RSYNC_FLAGS[@]}" "${EXCLUDES[@]}" ./ "$PI_ALIAS:$REMOTE_DIR/"
 
 if [[ "$DRY_RUN" == "1" ]]; then

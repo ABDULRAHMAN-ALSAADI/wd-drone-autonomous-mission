@@ -1,5 +1,14 @@
 # Start Here
 
+On a new laptop or for a new team member, read this first:
+
+```text
+docs/BEGINNER_GUIDE.md
+```
+
+It starts from installing Git and cloning the repository. This file is the
+short daily-use map after the computer is already prepared.
+
 This repo has three folders you should care about first:
 
 | Folder | Use it for |

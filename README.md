@@ -8,6 +8,16 @@ Start here:
 START_HERE.md
 ```
 
+New team member or fresh computer:
+
+```text
+docs/BEGINNER_GUIDE.md
+```
+
+That guide covers cloning both Git branches, Ubuntu setup, Raspberry Pi 5,
+Camera Module 3, OpenCV, YOLOv8/Hailo, Gazebo/SITL, testing, deployment, and
+the normal Git workflow.
+
 ## Simple Folder Map
 
 | Folder | Purpose |
@@ -18,6 +28,10 @@ START_HERE.md
 | `target_mission_v2/` | Internal tested mission engine used by `real_mission/`. |
 | `scripts/` and `tools/` | Internal helpers used by the test wrappers. |
 | `docs/` | Safety notes, wiring notes, and longer explanations. |
+
+The YOLOv8/Hailo implementation is maintained on branch
+`yolov8-mission-pi5`. The beginner guide shows how to clone it beside this
+OpenCV-only version.
 
 ## Run The Real Mission
 
