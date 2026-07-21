@@ -17,6 +17,9 @@ from pymavlink import mavutil
 DEFAULT_UART = "/dev/serial0"
 DEFAULT_BAUD = 921600
 AUTOPILOT_COMPONENTS = {mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1}
+VELOCITY_ONLY_MASK = 3527
+GUIDED_TEST_MAX_SPEED_MPS = 0.2
+GUIDED_TEST_MAX_DURATION_S = 1.0
 
 
 def heartbeat_is_vehicle(msg) -> bool:
@@ -343,6 +346,132 @@ def wait_for_armed(master, expected_armed: bool, timeout_s: float) -> bool:
     return False
 
 
+def wait_vehicle_state(master, timeout_s: float) -> tuple[str, bool]:
+    """Return the next heartbeat state from the selected autopilot only."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        msg = master.recv_match(type="HEARTBEAT", blocking=True, timeout=0.5)
+        if msg is not None and heartbeat_is_target_vehicle(msg, master.target_system):
+            return heartbeat_state(msg)
+    raise TimeoutError(f"No vehicle heartbeat received within {timeout_s:.1f}s")
+
+
+def guided_velocity_steps(speed_mps: float, duration_s: float) -> tuple[tuple[str, float, float, float], ...]:
+    """Build the fixed body-frame direction sequence used by the bench test."""
+    zero_duration_s = min(0.5, duration_s)
+    return (
+        ("FORWARD", speed_mps, 0.0, duration_s),
+        ("ZERO", 0.0, 0.0, zero_duration_s),
+        ("BACKWARD", -speed_mps, 0.0, duration_s),
+        ("ZERO", 0.0, 0.0, zero_duration_s),
+        ("RIGHT", 0.0, speed_mps, duration_s),
+        ("ZERO", 0.0, 0.0, zero_duration_s),
+        ("LEFT", 0.0, -speed_mps, duration_s),
+        ("ZERO", 0.0, 0.0, zero_duration_s),
+    )
+
+
+def send_body_velocity_target(master, forward_mps: float, right_mps: float) -> None:
+    """Send the same BODY_OFFSET_NED velocity target used by the mission."""
+    master.mav.set_position_target_local_ned_send(
+        int(time.monotonic() * 1000) & 0xFFFFFFFF,
+        master.target_system,
+        master.target_component,
+        mavutil.mavlink.MAV_FRAME_BODY_OFFSET_NED,
+        VELOCITY_ONLY_MASK,
+        0,
+        0,
+        0,
+        float(forward_mps),
+        float(right_mps),
+        0.0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
+
+
+def command_guided_velocity_test(args) -> int:
+    if not args.i_understand_props_off or not args.payload_disabled:
+        raise SystemExit(
+            "Refusing GUIDED velocity test without --i-understand-props-off "
+            "and --payload-disabled"
+        )
+    if not 0.0 < args.speed <= GUIDED_TEST_MAX_SPEED_MPS:
+        raise ValueError(f"speed must be > 0 and <= {GUIDED_TEST_MAX_SPEED_MPS:.1f} m/s")
+    if not 0.0 < args.duration <= GUIDED_TEST_MAX_DURATION_S:
+        raise ValueError(f"duration must be > 0 and <= {GUIDED_TEST_MAX_DURATION_S:.1f} s")
+    if not 2.0 <= args.rate_hz <= 20.0:
+        raise ValueError("rate-hz must be between 2 and 20 Hz")
+
+    steps = guided_velocity_steps(args.speed, args.duration)
+    if args.dry_run:
+        print("[DRY RUN] DISARMED GUIDED body-velocity sequence; no connection or commands")
+        for label, forward, right, duration in steps:
+            print(
+                f"[COMMAND] {label:<8} forward={forward:+.2f}m/s "
+                f"right={right:+.2f}m/s down=+0.00m/s duration={duration:.1f}s"
+            )
+        return 0
+
+    master = connect(args.connection, args.baud, args.timeout)
+    original_mode, armed = wait_vehicle_state(master, min(args.timeout, 3.0))
+    if armed:
+        raise SystemExit("Refusing GUIDED velocity test because the vehicle is armed")
+
+    print("[GUIDED VELOCITY TEST] vehicle must remain DISARMED; this test never arms it")
+    print("[GUIDED VELOCITY TEST] validates command direction/format only; it does not prove flight response")
+    set_mode(master, "GUIDED")
+    confirmed, actual_mode, armed = wait_for_mode(master, "GUIDED", args.observe)
+    if not confirmed:
+        raise RuntimeError(f"GUIDED was not confirmed; actual mode={actual_mode}")
+    if armed:
+        raise RuntimeError("Vehicle became armed before the test sequence")
+
+    period_s = 1.0 / args.rate_hz
+    completed = False
+    last_heartbeat_at = time.monotonic()
+    try:
+        for label, forward, right, duration in steps:
+            print(
+                f"[COMMAND] {label:<8} forward={forward:+.2f}m/s "
+                f"right={right:+.2f}m/s down=+0.00m/s duration={duration:.1f}s"
+            )
+            end = time.monotonic() + duration
+            while time.monotonic() < end:
+                msg = master.recv_match(type="HEARTBEAT", blocking=False)
+                if msg is not None and heartbeat_is_target_vehicle(msg, master.target_system):
+                    actual_mode, armed = heartbeat_state(msg)
+                    last_heartbeat_at = time.monotonic()
+                    if armed:
+                        raise RuntimeError("Vehicle armed during GUIDED velocity test")
+                    if actual_mode != "GUIDED":
+                        raise RuntimeError(f"Mode changed from GUIDED to {actual_mode}; pilot has control")
+                if time.monotonic() - last_heartbeat_at > 2.0:
+                    raise RuntimeError("Vehicle heartbeat became stale during GUIDED velocity test")
+                send_body_velocity_target(master, forward, right)
+                time.sleep(period_s)
+        completed = True
+    finally:
+        print("[COMMAND] FINAL ZERO forward=+0.00m/s right=+0.00m/s down=+0.00m/s")
+        for _ in range(3):
+            send_body_velocity_target(master, 0.0, 0.0)
+            time.sleep(0.1)
+
+    if completed and original_mode != "GUIDED":
+        set_mode(master, original_mode)
+        restored, actual_mode, armed = wait_for_mode(master, original_mode, args.observe)
+        if not restored or armed:
+            raise RuntimeError(
+                f"Could not safely restore mode={original_mode}; actual={actual_mode} armed={armed}"
+            )
+        print(f"[RESTORED] mode={original_mode} armed=False")
+    print("[GUIDED VELOCITY TEST DONE] vehicle remained disarmed")
+    return 0
+
+
 def command_set_mode(args) -> int:
     master = connect(args.connection, args.baud, args.timeout)
     set_mode(master, args.mode)
@@ -610,6 +739,20 @@ def build_parser() -> argparse.ArgumentParser:
     bench_sequence.add_argument("--i-understand-props-off", action="store_true")
     bench_sequence.add_argument("--i-accept-arming", action="store_true")
     bench_sequence.set_defaults(func=command_bench_sequence)
+
+    guided_velocity = subparsers.add_parser(
+        "guided-velocity-test",
+        help="guarded DISARMED BODY_OFFSET_NED direction test. PROPS OFF; payload disabled.",
+    )
+    add_connection_args(guided_velocity)
+    guided_velocity.add_argument("--speed", type=float, default=0.2)
+    guided_velocity.add_argument("--duration", type=float, default=1.0)
+    guided_velocity.add_argument("--rate-hz", type=float, default=10.0)
+    guided_velocity.add_argument("--observe", type=float, default=5.0)
+    guided_velocity.add_argument("--dry-run", action="store_true")
+    guided_velocity.add_argument("--i-understand-props-off", action="store_true")
+    guided_velocity.add_argument("--payload-disabled", action="store_true")
+    guided_velocity.set_defaults(func=command_guided_velocity_test)
 
     servo = subparsers.add_parser("servo", help="send DO_SET_SERVO for payload bench testing")
     add_connection_args(servo)

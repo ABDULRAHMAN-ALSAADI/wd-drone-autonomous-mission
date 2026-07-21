@@ -185,6 +185,29 @@ This sends `release_pwm`, waits, then sends `reset_pwm` on the configured servo
 channel. Your real config currently targets Pixhawk MAIN OUT / signal 5. If the
 wrong output moves, stop and fix Mission Planner servo mapping.
 
+## 8A. GUIDED Body-Velocity Command Test
+
+Run the dry run anywhere first:
+
+```bash
+./test_components/mavlink/guided_velocity_props_off.sh --dry-run
+```
+
+The real bench test requires propellers removed, the payload mechanism disabled,
+and the vehicle disarmed:
+
+```bash
+./test_components/mavlink/guided_velocity_props_off.sh
+```
+
+It requests GUIDED while disarmed, streams `0.2 m/s` body-frame commands in the
+order forward, backward, right, and left, sends zero between directions, and
+restores the original mode. It refuses to run if the Cube reports armed and
+aborts if the mode changes or heartbeat becomes stale. This proves that the Pi
+sends the same MAVLink message layout as mission centering. It cannot prove the
+aircraft's physical direction or motor mixing; those require SITL and a later
+controlled open-field test with a safety pilot.
+
 ## 9. Motor Test
 
 Run only with propellers removed, the airframe restrained, and everyone warned.
