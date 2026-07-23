@@ -1,0 +1,39 @@
+{
+  "extends": "real_pi_camera_module_3.json",
+  "camera": {
+    "source": "picamera2",
+    "fallback_source": "rpicam_mjpeg",
+    "camera_index": 0,
+    "width": 1280,
+    "height": 720,
+    "framerate": 30,
+    "pixel_format": "RGB888",
+    "array_color_order": "BGR",
+    "buffer_count": 4,
+    "warmup_s": 1.0,
+    "autofocus_mode": "continuous",
+    "lens_position": null,
+    "exposure_time_us": null,
+    "analogue_gain": null,
+    "colour_gains": null,
+    "denoise": "fast",
+    "sharpness": 1.0,
+    "quality": 85,
+    "read_timeout_s": 2.0
+  },
+  "mission": {
+    "name": "opencv_camera_diagnostics",
+    "search_enabled": false
+  },
+  "payload": {
+    "simulate_only": true
+  },
+  "display": {
+    "show_main_window": true,
+    "show_masks": false,
+    "mjpeg_stream_enabled": false
+  },
+  "logging": {
+    "directory": "logs/opencv_camera_diagnostics"
+  }
+}

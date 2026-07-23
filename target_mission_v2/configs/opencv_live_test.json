@@ -1,0 +1,22 @@
+{
+  "extends": "opencv_camera_diagnostics.json",
+  "mission": {
+    "name": "opencv_live_vision_test"
+  },
+  "vision": {
+    "search_width": 480,
+    "max_candidates_per_colour": 4,
+    "triangle_score_threshold": 0.57,
+    "hexagon_score_threshold": 0.55,
+    "confirmation_min_duration_s": 0.55,
+    "confirmation_min_hit_ratio": 0.60,
+    "confirmation_max_missing_ratio": 0.40,
+    "confirmation_max_center_std_px": 45.0,
+    "confirmation_max_area_cv": 0.45,
+    "strong_verify_interval_s": 0.50,
+    "debug_rejects": false
+  },
+  "logging": {
+    "directory": "logs/opencv_live_test"
+  }
+}

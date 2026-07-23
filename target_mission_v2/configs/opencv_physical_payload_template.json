@@ -1,0 +1,24 @@
+{
+  "extends": "opencv_real_simulated_payload.json",
+  "_operator_notes": [
+    "Template only: it intentionally remains simulate_only.",
+    "Choose and configure separate_servos or selector_servo before physical use.",
+    "Never disable simulation until a props-off bench test validates mapping and PWM."
+  ],
+  "mission": {
+    "name": "opencv_physical_payload_template_not_armed",
+    "search_enabled": false
+  },
+  "payload": {
+    "simulate_only": true,
+    "mechanism": null
+  },
+  "payload_state": {
+    "enabled": true,
+    "path": "logs/payload_state/opencv_physical_template.json"
+  },
+  "display": {
+    "show_main_window": false,
+    "mjpeg_stream_enabled": false
+  }
+}

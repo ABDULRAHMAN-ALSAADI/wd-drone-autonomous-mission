@@ -1,0 +1,16 @@
+{
+  "extends": "opencv_live_test.json",
+  "mission": {
+    "name": "opencv_real_camera_no_control",
+    "search_enabled": false
+  },
+  "control": {
+    "altitude_control": "off"
+  },
+  "payload": {
+    "simulate_only": true
+  },
+  "logging": {
+    "directory": "logs/opencv_real_no_control"
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "extends": "opencv_live_test.json",
+  "_operator_notes": [
+    "Payload release is simulated; this profile sends no servo command.",
+    "Set camera.lens_position only after running the focus sweep.",
+    "Mission Planner owns the AUTO route, altitude and speed."
+  ],
+  "camera": {
+    "autofocus_mode": "manual",
+    "lens_position": null
+  },
+  "mission": {
+    "name": "opencv_real_target_payload_simulated",
+    "search_enabled": true,
+    "final_mode": "RTL"
+  },
+  "control": {
+    "altitude_control": "off",
+    "reacquire_interval_s": 0.50,
+    "desired_drop_pixel_x": null,
+    "desired_drop_pixel_y": null,
+    "desired_drop_x_normalized": 0.5,
+    "desired_drop_y_normalized": 0.5
+  },
+  "payload": {
+    "simulate_only": true,
+    "command_ack_timeout_s": 2.0
+  },
+  "payload_state": {
+    "enabled": true,
+    "path": "logs/payload_state/opencv_real_simulated.json"
+  },
+  "safety": {
+    "max_center_time_s": 120.0,
+    "center_warning_time_s": 45.0,
+    "max_guided_speed_m_s": 0.35,
+    "max_guided_displacement_m": 8.0,
+    "center_progress_window_s": 20.0,
+    "max_lost_detection_s": 6.0,
+    "max_single_direction_time_s": 20.0,
+    "max_guided_entry_time_s": 8.0,
+    "guided_auto_bounce_grace_s": 2.0,
+    "max_guided_auto_bounces_per_target": 3,
+    "active_target_abort_mode": "AUTO",
+    "camera_frame_timeout_s": 2.0,
+    "max_input_frame_age_s": 0.50,
+    "max_vision_result_age_s": 0.75,
+    "max_strong_geometry_age_s": 1.5,
+    "require_attitude": true,
+    "require_position": true,
+    "require_gps": true,
+    "require_ekf_status": false,
+    "require_battery": true,
+    "min_battery_voltage_v": 17.5
+  },
+  "display": {
+    "show_main_window": false,
+    "mjpeg_stream_enabled": true,
+    "mjpeg_stream_bind": "0.0.0.0",
+    "mjpeg_stream_port": 5602,
+    "mjpeg_stream_fps": 8.0,
+    "mjpeg_stream_quality": 82,
+    "mjpeg_stream_width": 854
+  },
+  "logging": {
+    "directory": "logs/opencv_real_simulated_payload",
+    "sample_rate_hz": 2.0
+  }
+}

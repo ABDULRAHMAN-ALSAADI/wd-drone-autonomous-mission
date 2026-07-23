@@ -13,6 +13,7 @@ from pymavlink import mavutil
 from vision import Detection, HitTracker, StrictShapeDetector
 from control import altitude_velocity_down
 from camera_sources import build_rpicam_mjpeg_command
+from configuration import load_config
 from mission_controller import (
     Controller,
     State,
@@ -21,6 +22,7 @@ from mission_controller import (
     heartbeat_is_vehicle,
     optional_seconds_label,
     payload_colour_for_target,
+    payload_output_for_target,
     required_ardupilot_parameters,
     validate_config,
 )
@@ -550,6 +552,14 @@ class MissionConfigTests(unittest.TestCase):
     def test_physical_payload_accepts_enabled_persistent_state(self):
         config = self.config()
         config["payload"]["simulate_only"] = False
+        config["payload"].update(
+            {
+                "mechanism": "selector_servo",
+                "red_payload_pwm": 1100,
+                "neutral_pwm": 1500,
+                "blue_payload_pwm": 1900,
+            }
+        )
         config["payload_state"] = {"enabled": True, "path": "payload-state.json"}
         validate_config(config)
 
@@ -559,7 +569,24 @@ class MissionConfigTests(unittest.TestCase):
         paths.extend(sorted((Path(__file__).resolve().parents[1] / "real_mission" / "parameter_config").glob("*.json")))
         for path in paths:
             with self.subTest(path=path.name):
-                validate_config(json.loads(path.read_text(encoding="utf-8")))
+                validate_config(load_config(path))
+
+    def test_payload_outputs_match_selector_servo_mapping(self):
+        payload = {
+            "mechanism": "selector_servo",
+            "servo_channel": 5,
+            "red_payload_pwm": 1100,
+            "neutral_pwm": 1500,
+            "blue_payload_pwm": 1900,
+        }
+        self.assertEqual(
+            payload_output_for_target(payload, "blue_hexagon"),
+            {"servo_channel": 5, "release_pwm": 1100, "reset_pwm": 1500},
+        )
+        self.assertEqual(
+            payload_output_for_target(payload, "red_triangle"),
+            {"servo_channel": 5, "release_pwm": 1900, "reset_pwm": 1500},
+        )
 
     def test_enforce_parameters_can_be_disabled(self):
         class FakeVehicle:
@@ -851,7 +878,7 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(ctrl.last_detection, reacquired)
         self.assertTrue(ctrl.last_seen_at > ctrl.state_started_at)
 
-    def test_auto_bounce_keeps_forcing_guided_after_grace_time(self):
+    def test_auto_bounce_aborts_after_grace_time(self):
         vehicle = FakeVehicle()
         vehicle.mode = "AUTO"
         config = self.config()
@@ -863,11 +890,12 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.center_started_at = time.monotonic()
         ctrl.guided_mode_lost_since = time.monotonic() - 1.0
         ctrl.update(self.blank_frame(), [], self.blank_masks())
-        self.assertEqual(ctrl.state, State.CENTER)
-        self.assertEqual(ctrl.current_target, "red_triangle")
-        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO_RESUME)
+        self.assertIsNone(ctrl.current_target)
+        self.assertEqual(vehicle.mode_requests[-1], "AUTO")
+        self.assertIn("GUIDED_MODE_LOST", ctrl.active_abort_reason)
 
-    def test_optional_finite_auto_bounce_limit_is_diagnostic_only(self):
+    def test_finite_auto_bounce_limit_aborts_target(self):
         vehicle = FakeVehicle()
         vehicle.mode = "AUTO"
         config = self.config()
@@ -879,9 +907,10 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.center_started_at = time.monotonic()
         ctrl.guided_bounce_count_for_target = 1
         ctrl.update(self.blank_frame(), [], self.blank_masks())
-        self.assertEqual(ctrl.state, State.CENTER)
-        self.assertEqual(ctrl.current_target, "red_triangle")
-        self.assertEqual(vehicle.mode_requests[-1], "GUIDED")
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO_RESUME)
+        self.assertIsNone(ctrl.current_target)
+        self.assertEqual(vehicle.mode_requests[-1], "AUTO")
+        self.assertIn("GUIDED_AUTO_BOUNCES", ctrl.active_abort_reason)
 
     def test_center_stands_down_on_external_mode_instead_of_forcing_auto(self):
         vehicle = FakeVehicle()
@@ -913,6 +942,11 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl = self.controller(config, vehicle)
         ctrl.state = State.CENTER
         ctrl.current_target = "red_triangle"
+        ctrl.last_detection = Detection(
+            "red_triangle", 450, 260, 400.0, 0.8, 3, 3, 0, 0,
+            0.5, 0.6, 0.9, 430, 240, 40, 40,
+        )
+        ctrl.last_seen_at = time.monotonic()
         ctrl.center_started_at = time.monotonic() - 1.0
         ctrl.update(self.blank_frame(), [], self.blank_masks())
         self.assertEqual(ctrl.state, State.CENTER)
@@ -961,7 +995,7 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(vehicle.mode_requests, [])
         self.assertEqual(vehicle.servos, [])
 
-    def test_camera_timeout_holds_guided_position_during_active_target(self):
+    def test_camera_timeout_zeroes_velocity_and_returns_to_auto(self):
         vehicle = FakeVehicle()
         vehicle.mode = "GUIDED"
         config = self.config()
@@ -973,10 +1007,11 @@ class ControllerFlowTests(unittest.TestCase):
 
         ctrl.handle_camera_frame_miss(time.monotonic())
 
-        self.assertEqual(ctrl.state, State.CENTER)
-        self.assertEqual(ctrl.current_target, "red_triangle")
+        self.assertEqual(ctrl.state, State.WAITING_FOR_AUTO_RESUME)
+        self.assertIsNone(ctrl.current_target)
         self.assertEqual(vehicle.velocities[-1], (0.0, 0.0, 0.0))
-        self.assertEqual(vehicle.mode_requests, [])
+        self.assertEqual(vehicle.mode_requests[-1], "AUTO")
+        self.assertIn("CAMERA_TIMEOUT", ctrl.active_abort_reason)
 
     def test_complete_state_resets_for_next_auto_run(self):
         vehicle = FakeVehicle()
@@ -1009,6 +1044,14 @@ class ControllerFlowTests(unittest.TestCase):
         vehicle = FakeVehicle()
         config = self.config()
         config["payload"]["simulate_only"] = False
+        config["payload"].update(
+            {
+                "mechanism": "selector_servo",
+                "red_payload_pwm": 1100,
+                "neutral_pwm": 1500,
+                "blue_payload_pwm": 1900,
+            }
+        )
         config["payload_state"] = {"enabled": True, "path": "placeholder.json"}
         tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(tempdir.cleanup)
@@ -1018,6 +1061,18 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.current_target = "red_triangle"
         ctrl.completed_targets = {"blue_hexagon"}
         started = time.monotonic()
+        ctrl.last_detection = Detection(
+            "red_triangle", 480, 270, 500.0, 0.9, 3, 3, 0, 0,
+            0.5, 0.6, 0.9, 460, 250, 40, 40,
+        )
+        ctrl.last_frame_at = started
+        ctrl.last_tracking_at = started
+        ctrl.last_strong_geometry_at = started
+        ctrl.last_center_error_px = 0.0
+        ctrl.center_lock_completed_at = started
+        ctrl.center_error_history.extend(
+            [(started - 0.1, 0.0), (started, 0.0)]
+        )
 
         ctrl.payload_action(started)
         self.assertFalse(ctrl.payload_release_accepted)
