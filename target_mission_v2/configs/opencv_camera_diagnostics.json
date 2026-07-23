@@ -29,9 +29,12 @@
     "simulate_only": true
   },
   "display": {
-    "show_main_window": true,
+    "show_main_window": false,
     "show_masks": false,
-    "mjpeg_stream_enabled": false
+    "mjpeg_stream_enabled": false,
+    "mjpeg_stream_fps": 8.0,
+    "mjpeg_stream_quality": 82,
+    "mjpeg_stream_width": 854
   },
   "logging": {
     "directory": "logs/opencv_camera_diagnostics"
