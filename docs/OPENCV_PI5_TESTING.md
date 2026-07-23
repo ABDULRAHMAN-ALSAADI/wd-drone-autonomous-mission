@@ -51,6 +51,23 @@ Expected results:
 - frame age stays bounded;
 - a report is written below `~/camera_tests/opencv_diagnostics/`.
 
+Measured on the project Raspberry Pi 5 on 2026-07-23:
+
+- direct Picamera2 diagnostic: stable 30.0 FPS at 1280x720;
+- full OpenCV pipeline: 29.61 FPS, 14.63 ms mean processing latency, and
+  16.32 ms p95 processing latency;
+- full pipeline plus laptop-monitor stream: 29.34 FPS, 13.19 ms mean
+  processing latency, and 15.54 ms p95 processing latency;
+- monitoring stream: approximately 7.8 FPS at JPEG quality 82 while the
+  detector continued near 30 FPS;
+- peak measured temperature: 53.8 C;
+- throttling status: `0x0`;
+- peak measured process memory: approximately 217 MiB.
+
+These measurements verify camera and processing performance only. They do not
+verify target accuracy, centering control, payload behavior, or flight safety.
+Repeat the benchmark after changing camera controls or OpenCV thresholds.
+
 Record raw local evidence without a display:
 
 ```bash
