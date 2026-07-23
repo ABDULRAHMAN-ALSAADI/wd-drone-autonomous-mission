@@ -22,7 +22,7 @@ from dataclasses import asdict
 from enum import Enum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Deque, Optional
 
 import cv2
 from pymavlink import mavutil
@@ -36,7 +36,7 @@ from vision import (
     SUPPORTED_VISION_BACKENDS,
     create_detector,
 )
-from control import altitude_velocity_down, clamp
+from control import altitude_velocity_down
 
 
 AUTOPILOT_COMPONENTS = {mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1}
@@ -266,6 +266,16 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError("camera.read_timeout_s must be positive for rpicam_mjpeg")
     if float(config["mission"].get("max_flight_time_s", 600.0)) <= 0:
         raise ValueError("mission.max_flight_time_s must be positive")
+    if not str(config["mission"].get("name", "")).strip():
+        raise ValueError("mission.name is required")
+    if (
+        not bool(config["mission"].get("controller_enabled", True))
+        and bool(config["mission"].get("search_enabled", False))
+    ):
+        raise ValueError(
+            "mission.search_enabled must be false when "
+            "mission.controller_enabled is false"
+        )
     if int(config["mission"].get("search_start_wp", 0)) < 0:
         raise ValueError("mission.search_start_wp must be zero or positive")
     if float(config["mission"].get("mode_change_timeout_s", 5.0)) <= 0:
@@ -278,6 +288,27 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("mission.search_enable_pwm_min must be a valid RC PWM value")
     if int(config["vision"]["required_hits"]) < 1:
         raise ValueError("vision.required_hits must be at least 1")
+    for key in (
+        "confirmation_min_hit_ratio",
+        "confirmation_max_missing_ratio",
+    ):
+        value = float(config["vision"].get(key, 0.0 if "min" in key else 1.0))
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"vision.{key} must be between 0 and 1")
+    for key in (
+        "confirmation_window_s",
+        "confirmation_max_center_std_px",
+        "confirmation_max_area_cv",
+        "confirmation_max_bbox_cv",
+        "confirmation_max_area_jump_ratio",
+    ):
+        value = config["vision"].get(key)
+        if value is not None and float(value) <= 0:
+            raise ValueError(f"vision.{key} must be positive")
+    if float(config["vision"].get("confirmation_min_duration_s", 0.0)) < 0:
+        raise ValueError("vision.confirmation_min_duration_s must be zero or positive")
+    if float(config["vision"].get("confirmation_max_area_jump_ratio", 4.0)) < 1.0:
+        raise ValueError("vision.confirmation_max_area_jump_ratio must be at least 1")
     vision_backend = config["vision"].get("backend", "strict_shape")
     if vision_backend not in SUPPORTED_VISION_BACKENDS:
         supported = ", ".join(sorted(SUPPORTED_VISION_BACKENDS))
@@ -2440,6 +2471,11 @@ def main() -> int:
     validate_config(config)
     if args.show_payload_state or args.reset_payload_state:
         return manage_payload_state(config, reset=args.reset_payload_state)
+    if not bool(config["mission"].get("controller_enabled", True)):
+        raise RuntimeError(
+            "This is a camera-only profile; mission controller and MAVLink "
+            "commands are disabled. Use tools/opencv_live_test.py."
+        )
     vehicle = Vehicle(config["mavlink"]["connection"], config["mavlink"].get("baud"))
     enforce_parameters(vehicle, config)
     camera = open_camera(config["camera"])

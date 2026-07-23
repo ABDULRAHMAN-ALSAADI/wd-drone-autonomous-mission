@@ -39,7 +39,32 @@ DRY_RUN=1 ./scripts/sync_to_pi.sh
 The dry run shows what will copy. The real sync copies code to the Pi without
 deleting Pi files.
 
-## 3. Pi Camera And Hailo Hardware Status
+## 3. OpenCV Camera Module 3 Tests
+
+The OpenCV-only mission uses direct Picamera2 arrays. Run on the Raspberry Pi:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./test_components/camera/opencv_test.sh list
+./test_components/camera/opencv_test.sh diagnostic --seconds 20
+./test_components/camera/opencv_test.sh live --mode full --headless --stream --stream-bind 127.0.0.1
+```
+
+Open the annotated stream from a second terminal on the Ubuntu laptop:
+
+```bash
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./real_mission/open_laptop_camera_window.sh
+```
+
+These camera-only commands never connect to MAVLink. The complete focus,
+benchmark, replay, and image-capture workflow is in:
+
+```text
+docs/OPENCV_PI5_TESTING.md
+```
+
+## 3A. Legacy Camera And Hailo Hardware Status
 
 Run on the Ubuntu laptop:
 
@@ -52,7 +77,7 @@ This is read-only. It checks Pi temperature, throttling, camera boot overlay,
 detected `rpicam` cameras, video devices, Hailo PCIe visibility, and HailoRT
 installation state.
 
-## 4. Pi Camera Health Without Window
+## 4. Legacy MJPEG Camera Health Without Window
 
 Run on the Raspberry Pi:
 
@@ -70,7 +95,7 @@ Good result:
 [CAMERA OK] frames=... avg_fps=...
 ```
 
-## 5. Laptop Live Camera Window
+## 5. Legacy Laptop-Side OpenCV Window
 
 Run on the Ubuntu laptop, not inside `ssh pi5`:
 
@@ -79,7 +104,9 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission
 ./test_components/camera/live_from_laptop.sh
 ```
 
-This opens the real live OpenCV window and runs the mission detector overlay.
+This compatibility tool streams raw MJPEG from the Pi and runs OpenCV on the
+laptop. Prefer the direct Picamera2 test in section 3, where OpenCV runs on the
+Pi and only annotated monitoring frames cross the network.
 The laptop and Pi must be on the same Wi-Fi/hotspot network. RFD900x does not
 carry video.
 

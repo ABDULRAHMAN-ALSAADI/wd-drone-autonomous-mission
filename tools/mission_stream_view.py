@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Show the Pi mission controller's exact annotated frame on this laptop."""
+"""Show the Pi-side annotated OpenCV stream on this laptop."""
 from __future__ import annotations
 
 import argparse
@@ -16,7 +16,7 @@ import numpy as np
 
 SOI = b"\xff\xd8"
 EOI = b"\xff\xd9"
-WINDOW_NAME = "WD Drone Live Mission"
+WINDOW_NAME = "WD Drone Pi OpenCV Monitor"
 
 
 def start_tunnel(ssh_alias: str, local_port: int, remote_port: int) -> subprocess.Popen:
@@ -72,8 +72,8 @@ def main() -> int:
         try:
             response = urllib.request.urlopen(url, timeout=5.0)
         except Exception as exc:
-            print("[MISSION VIDEO ERROR] The Pi mission controller stream is not available.")
-            print("Start Mission 2 on the Pi first, then run this viewer again.")
+            print("[MISSION VIDEO ERROR] The Pi annotated stream is not available.")
+            print("Start the mission controller or OpenCV live test on the Pi first.")
             print(f"Details: {exc}")
             return 2
 

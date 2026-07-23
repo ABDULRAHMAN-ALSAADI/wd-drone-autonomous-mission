@@ -2,6 +2,7 @@
   "extends": "opencv_live_test.json",
   "mission": {
     "name": "opencv_real_camera_no_control",
+    "controller_enabled": false,
     "search_enabled": false
   },
   "control": {

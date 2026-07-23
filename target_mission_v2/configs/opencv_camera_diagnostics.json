@@ -2,7 +2,7 @@
   "extends": "real_pi_camera_module_3.json",
   "camera": {
     "source": "picamera2",
-    "fallback_source": "rpicam_mjpeg",
+    "fallback_source": null,
     "camera_index": 0,
     "width": 1280,
     "height": 720,

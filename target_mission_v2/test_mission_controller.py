@@ -476,6 +476,26 @@ class MissionConfigTests(unittest.TestCase):
         self.assertEqual(cmd[-2:], ["-o", "-"])
         self.assertIn("--flush", cmd)
 
+    def test_rpicam_mjpeg_command_maps_named_denoise_mode(self):
+        cmd = build_rpicam_mjpeg_command({
+            "source": "rpicam_mjpeg",
+            "denoise": "fast",
+        })
+        self.assertEqual(cmd[cmd.index("--denoise") + 1], "cdn_fast")
+
+    def test_camera_only_profile_cannot_enable_search(self):
+        config = self.config()
+        config["mission"]["controller_enabled"] = False
+        config["mission"]["search_enabled"] = True
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_config_requires_mission_name(self):
+        config = self.config()
+        config["mission"]["name"] = ""
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
     def test_validate_config_rejects_unknown_missing_action(self):
         config = self.config()
         config["parameters"]["missing_action"] = "ignore"

@@ -165,7 +165,13 @@ def build_rpicam_mjpeg_command(camera_config: dict[str, Any]) -> list[str]:
 
     denoise = camera_config.get("denoise")
     if denoise:
-        args.extend(["--denoise", str(denoise)])
+        rpicam_denoise = {
+            "off": "cdn_off",
+            "minimal": "cdn_off",
+            "fast": "cdn_fast",
+            "high_quality": "cdn_hq",
+        }.get(str(denoise).lower(), str(denoise))
+        args.extend(["--denoise", rpicam_denoise])
 
     if bool(camera_config.get("hflip", False)):
         args.append("--hflip")
@@ -412,6 +418,12 @@ class Picamera2Camera:
     def read(self) -> tuple[bool, Optional[np.ndarray]]:
         frame = self.read_frame()
         return (frame is not None, None if frame is None else frame.image_bgr)
+
+    def set_controls(self, values: dict[str, Any]) -> None:
+        """Apply explicit Picamera2 controls for calibration tools."""
+        if self._closed:
+            raise RuntimeError("camera is closed")
+        self.camera.set_controls(values)
 
     def release(self) -> None:
         if self._closed:

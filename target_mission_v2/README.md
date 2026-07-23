@@ -63,9 +63,13 @@ The real Raspberry Pi/Cube profile uses:
 ```
 
 Camera input is selected with `camera.source`. SITL uses `udp_h264` from
-`enable_camera`. The Raspberry Pi Camera Module 3 profile uses `rpicam_mjpeg`,
-which reads frames directly from `rpicam-vid --codec mjpeg` and avoids depending
-on H.264 encoder support.
+`enable_camera`. The new Raspberry Pi Camera Module 3 profiles use
+`picamera2`, which delivers image arrays directly to OpenCV with capture
+metadata and a single-slot latest-frame buffer. The older `rpicam_mjpeg`
+source remains available only as an explicit compatibility/debug fallback.
+
+Use the camera-only profiles and commands in
+`docs/OPENCV_PI5_TESTING.md` before selecting a real mission profile.
 
 ## Parameter policy
 
@@ -107,7 +111,7 @@ Common values:
   "reacquire_after_lost_s": 0.25
 },
 "safety": {
-  "guided_auto_bounce_grace_s": null,
+  "max_center_time_s": 120.0,
   "mode_retry_interval_s": 0.2
 }
 ```
@@ -121,18 +125,14 @@ Common values:
 For real flights, prefer `qgc_mission` unless companion-owned AUTO speed is
 intentional.
 
-`guided_auto_bounce_grace_s` is `null` by default, which means a temporary AUTO
-heartbeat never causes the controller to drop a target after GUIDED was
-requested. The target lock survives and the controller keeps retrying GUIDED.
-
 If the target is briefly lost during centering, the controller stays in GUIDED,
 stops horizontal movement, searches the full frame for the same target, and keeps
 trying to reacquire the same active target.
 
-For Mission 2, keep `max_guided_auto_bounces_per_target` as `null`. Repeated
-`GUIDED -> AUTO` bounces are counted for diagnosis, but they do not abort the
-active target. The controller keeps requesting GUIDED until centering and payload
-are finished.
+The named OpenCV profiles bound centering time, target loss, stale frames,
+stagnation, and GUIDED displacement. Recovery behavior is profile-controlled.
+These guards must be verified in SITL before any flight test; they do not
+replace pilot control or Pixhawk failsafes.
 
 The overlay shows `Guided bounces`. A normal AUTO resume after completing one
 target does not increase this counter; only an unexpected AUTO report during
@@ -140,29 +140,11 @@ active centering does.
 
 ## Vision correction
 
-Red triangle acceptance requires:
-
-- red colour mask;
-- at least two independent three-corner approximations;
-- fewer than two four-corner approximations;
-- contour extent at or below 0.72;
-- triangle-compatible circularity and solidity;
-- three spatially consistent detections inside 1.5 seconds.
-
-Blue hexagon acceptance requires:
-
-- blue colour mask;
-- at least two 5–8-corner approximations;
-- no square/rectangle extent;
-- hexagon-compatible circularity and solidity;
-- three spatially consistent detections inside 1.5 seconds.
-
-The display shows explicit counts instead of an unclear accumulated score:
-
-```text
-red_triangle hits: 0/3
-blue_hexagon hits: 0/3
-```
+The OpenCV detector uses one HSV/mask preprocessing pass, a low-resolution
+colour-candidate stage, and high-resolution ROI geometry verification. Triangle
+and hexagon decisions use weighted geometry scores rather than one exact polygon
+vertex count. Initial confirmation records both hits and misses over time;
+colour-only fallback is limited to tracking an already confirmed target.
 
 The active flight backend is selected explicitly:
 
@@ -183,11 +165,10 @@ chmod +x setup.sh run.sh
 ./setup.sh
 ```
 
-Expected test result:
+Run the current complete test suite from the repository root:
 
-```text
-Ran 49 tests
-OK
+```bash
+./scripts/check_project.sh
 ```
 
 ## Run
@@ -229,29 +210,20 @@ Starting profile for Raspberry Pi Camera Module 3:
 That real profile is for the Pi-to-Cube UART path. Use the SITL profile when
 running only Gazebo on the Ubuntu laptop.
 
-Before a real bench test, check the camera alone:
+Before a real bench test, check the camera alone without MAVLink:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
-./scripts/pi_camera_check.sh --seconds 15
+./test_components/camera/opencv_test.sh list
+./test_components/camera/opencv_test.sh diagnostic --seconds 20
 ```
 
-On Pi OS Lite this saves the latest annotated preview to:
+For the exact camera-only test sequence and the live annotated laptop window,
+read:
 
 ```text
-~/camera_tests/module3_live_latest.jpg
+docs/OPENCV_PI5_TESTING.md
 ```
-
-For the real live competition-style camera window, run this on the Ubuntu
-laptop while the Pi is powered and reachable as `pi5`:
-
-```bash
-cd ~/FOR_COMP/wd-drone-autonomous-mission
-./real_mission/open_laptop_camera_window.sh
-```
-
-That window shows the live Camera Module 3 feed, FPS, resolution, red/blue mask
-pixel counts, and the same OpenCV target detections used by the mission.
 
 Start the mission from MAVProxy:
 

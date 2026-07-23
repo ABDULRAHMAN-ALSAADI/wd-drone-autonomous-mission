@@ -30,6 +30,6 @@ PYTHON_BIN="$(pick_python)" || {
 PYTHONPATH=src "$PYTHON_BIN" -m unittest discover -s tests -v
 (
     cd target_mission_v2
-    "$PYTHON_BIN" -m unittest -v test_mission_controller.py
+    "$PYTHON_BIN" -m unittest discover -p 'test_*.py' -v
 )
 "$PYTHON_BIN" -m py_compile target_mission_v2/*.py src/wd_drone/*.py tools/*.py

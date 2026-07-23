@@ -934,6 +934,7 @@ class StrictShapeDetector:
         processed: ProcessedVisionFrame,
         allowed_targets: Optional[set[str]] = None,
     ) -> list[Detection]:
+        search_started = time.perf_counter()
         self.last_rejections.clear()
         allowed = allowed_targets or {"red_triangle", "blue_hexagon"}
         detections: list[Detection] = []
@@ -944,23 +945,36 @@ class StrictShapeDetector:
             if target not in allowed:
                 continue
             best: Optional[Detection] = None
-            for contour in self._coarse_candidates(mask, processed):
+            candidate_started = time.perf_counter()
+            candidates = self._coarse_candidates(mask, processed)
+            candidate_ms = (time.perf_counter() - candidate_started) * 1000.0
+            processed.timings_ms[f"{target}_candidate_extraction"] = candidate_ms
+            verification_ms = 0.0
+            for contour in candidates:
                 area = float(cv2.contourArea(contour))
                 valid, reason, metrics = self._scale_status(contour, area, processed)
                 if not valid:
                     self._record_rejection(target, reason, metrics)
                     continue
+                verification_started = time.perf_counter()
                 item = (
                     self._triangle(contour, processed, "geometry_search")
                     if target == "red_triangle"
                     else self._hexagon(contour, processed, "geometry_search")
                 )
+                verification_ms += (
+                    time.perf_counter() - verification_started
+                ) * 1000.0
                 if item is not None and (
                     best is None or item.total_score > best.total_score
                 ):
                     best = item
+            processed.timings_ms[f"{target}_verification"] = verification_ms
             if best is not None:
                 detections.append(best)
+        processed.timings_ms["search_total"] = (
+            time.perf_counter() - search_started
+        ) * 1000.0
         return detections
 
     def search(
@@ -1092,6 +1106,7 @@ class StrictShapeDetector:
         previous_center: tuple[int, int],
         max_jump_px: float = 220.0,
     ) -> Optional[Detection]:
+        tracking_started = time.perf_counter()
         if target not in {"red_triangle", "blue_hexagon"}:
             return None
         left, top, right, bottom, predicted, movement_gate = self._tracking_roi(
@@ -1116,11 +1131,13 @@ class StrictShapeDetector:
             )
             if area < minimum_area:
                 continue
-            strict = (
-                self._triangle(contour, processed, "geometry_track")
-                if target == "red_triangle"
-                else self._hexagon(contour, processed, "geometry_track")
-            )
+            strict = None
+            if require_strong:
+                strict = (
+                    self._triangle(contour, processed, "geometry_track")
+                    if target == "red_triangle"
+                    else self._hexagon(contour, processed, "geometry_track")
+                )
             item = strict
             if item is None:
                 item = self._colour_tracking_detection(contour, target, processed, previous)
@@ -1135,6 +1152,9 @@ class StrictShapeDetector:
             association_cost = distance / max(1.0, movement_gate) + 0.35 * area_penalty
             options.append((association_cost, item, strict is not None))
         if not options:
+            processed.timings_ms["tracking_total"] = (
+                time.perf_counter() - tracking_started
+            ) * 1000.0
             return None
 
         _, selected, strong = min(options, key=lambda value: value[0])
@@ -1163,6 +1183,9 @@ class StrictShapeDetector:
             confidence=float(selected.total_score or selected.confidence),
             frame_id=processed.frame_id,
         )
+        processed.timings_ms["tracking_total"] = (
+            time.perf_counter() - tracking_started
+        ) * 1000.0
         return selected
 
     def track_colour(
