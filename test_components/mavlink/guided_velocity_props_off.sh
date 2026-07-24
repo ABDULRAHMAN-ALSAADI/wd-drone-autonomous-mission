@@ -10,6 +10,4 @@ exec ./scripts/mavlink_bench.sh guided-velocity-test \
     --speed "${SPEED:-0.2}" \
     --duration "${DURATION:-1.0}" \
     --observe "${OBSERVE:-5.0}" \
-    --i-understand-props-off \
-    --payload-disabled \
     "$@"

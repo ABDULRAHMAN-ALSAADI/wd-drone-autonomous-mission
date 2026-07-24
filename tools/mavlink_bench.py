@@ -394,11 +394,6 @@ def send_body_velocity_target(master, forward_mps: float, right_mps: float) -> N
 
 
 def command_guided_velocity_test(args) -> int:
-    if not args.i_understand_props_off or not args.payload_disabled:
-        raise SystemExit(
-            "Refusing GUIDED velocity test without --i-understand-props-off "
-            "and --payload-disabled"
-        )
     if not 0.0 < args.speed <= GUIDED_TEST_MAX_SPEED_MPS:
         raise ValueError(f"speed must be > 0 and <= {GUIDED_TEST_MAX_SPEED_MPS:.1f} m/s")
     if not 0.0 < args.duration <= GUIDED_TEST_MAX_DURATION_S:
@@ -415,6 +410,12 @@ def command_guided_velocity_test(args) -> int:
                 f"right={right:+.2f}m/s down=+0.00m/s duration={duration:.1f}s"
             )
         return 0
+
+    if not args.i_understand_props_off or not args.payload_disabled:
+        raise SystemExit(
+            "Refusing GUIDED velocity test without --i-understand-props-off "
+            "and --payload-disabled"
+        )
 
     master = connect(args.connection, args.baud, args.timeout)
     original_mode, armed = wait_vehicle_state(master, min(args.timeout, 3.0))
@@ -474,17 +475,20 @@ def command_guided_velocity_test(args) -> int:
 
 def command_set_mode(args) -> int:
     master = connect(args.connection, args.baud, args.timeout)
+    _original_mode, armed = wait_vehicle_state(master, min(args.timeout, 3.0))
+    if armed:
+        raise SystemExit("Refusing bench mode change because the vehicle is armed")
     set_mode(master, args.mode)
     actual, _armed = observe_mode(master, args.observe)
     if actual == args.mode:
         print(f"[CONFIRMED] requested mode={args.mode} actual={actual}")
-    else:
-        print(
-            f"[WARNING] requested mode={args.mode} actual={actual}. "
-            "If this snaps to another mode, check RC flight-mode switch, "
-            "Mission Planner/QGC mode controls, and Pixhawk mode failsafe conditions."
-        )
-    return 0
+        return 0
+    print(
+        f"[WARNING] requested mode={args.mode} actual={actual}. "
+        "If this snaps to another mode, check RC flight-mode switch, "
+        "Mission Planner/QGC mode controls, and Pixhawk mode failsafe conditions."
+    )
+    return 1
 
 
 def send_arm_command(master, arm: bool) -> None:
@@ -579,9 +583,25 @@ def command_bench_sequence(args) -> int:
 
 
 def command_servo(args) -> int:
+    if not args.i_understand_props_off or not args.i_accept_servo_motion:
+        raise SystemExit(
+            "Refusing servo command without --i-understand-props-off "
+            "and --i-accept-servo-motion"
+        )
+    if not 1 <= args.channel <= 16:
+        raise ValueError("servo channel must be between 1 and 16")
+    if not 800 <= args.pwm <= 2200:
+        raise ValueError("servo PWM must be between 800 and 2200")
+    if args.reset_pwm is not None and not 800 <= args.reset_pwm <= 2200:
+        raise ValueError("servo reset PWM must be between 800 and 2200")
+    if not 0.0 <= args.hold <= 10.0:
+        raise ValueError("servo hold must be between 0 and 10 seconds")
+
     master = connect(args.connection, args.baud, args.timeout)
-    if not args.i_understand_props_off:
-        raise SystemExit("Refusing servo command without --i-understand-props-off")
+    _mode, armed = wait_vehicle_state(master, min(args.timeout, 3.0))
+    if armed:
+        raise SystemExit("Refusing servo command because the vehicle is armed")
+
     print(f"[SERVO] channel={args.channel} pwm={args.pwm}")
     master.mav.command_long_send(
         master.target_system,
@@ -598,6 +618,7 @@ def command_servo(args) -> int:
     )
     ack = wait_ack(master, mavutil.mavlink.MAV_CMD_DO_SET_SERVO)
     print(f"[ACK] {ack or 'timeout'}")
+    accepted = ack == "MAV_RESULT_ACCEPTED"
     if args.reset_pwm is not None:
         time.sleep(args.hold)
         print(f"[SERVO RESET] channel={args.channel} pwm={args.reset_pwm}")
@@ -616,7 +637,8 @@ def command_servo(args) -> int:
         )
         ack = wait_ack(master, mavutil.mavlink.MAV_CMD_DO_SET_SERVO)
         print(f"[ACK] {ack or 'timeout'}")
-    return 0
+        accepted = accepted and ack == "MAV_RESULT_ACCEPTED"
+    return 0 if accepted else 1
 
 
 def command_speed(args) -> int:
@@ -647,7 +669,12 @@ def command_motor_test(args) -> int:
         raise ValueError("motor must be 1..8")
     if not 0 <= args.throttle_percent <= 15:
         raise ValueError("For bench safety, throttle-percent must be 0..15")
+    if not 0.0 < args.duration <= 3.0:
+        raise ValueError("For bench safety, duration must be > 0 and <= 3 seconds")
     master = connect(args.connection, args.baud, args.timeout)
+    _mode, armed = wait_vehicle_state(master, min(args.timeout, 3.0))
+    if armed:
+        raise SystemExit("Refusing motor test because the vehicle is armed")
     print(
         f"[MOTOR TEST] motor={args.motor} throttle={args.throttle_percent}% "
         f"duration={args.duration}s PROPS-OFF ONLY"
@@ -667,7 +694,7 @@ def command_motor_test(args) -> int:
     )
     ack = wait_ack(master, mavutil.mavlink.MAV_CMD_DO_MOTOR_TEST)
     print(f"[ACK] {ack or 'timeout'}")
-    return 0
+    return 0 if ack == "MAV_RESULT_ACCEPTED" else 1
 
 
 def add_connection_args(parser: argparse.ArgumentParser) -> None:
@@ -761,6 +788,7 @@ def build_parser() -> argparse.ArgumentParser:
     servo.add_argument("--reset-pwm", type=int)
     servo.add_argument("--hold", type=float, default=1.0)
     servo.add_argument("--i-understand-props-off", action="store_true")
+    servo.add_argument("--i-accept-servo-motion", action="store_true")
     servo.set_defaults(func=command_servo)
 
     speed = subparsers.add_parser("speed", help="send DO_CHANGE_SPEED for AUTO mission speed testing")

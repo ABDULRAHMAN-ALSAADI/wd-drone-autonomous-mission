@@ -205,12 +205,15 @@ Run only with propellers removed. Disconnect the payload mechanism first if the
 channel is uncertain.
 
 ```bash
-./test_components/mavlink/servo_payload_test.sh
+./test_components/mavlink/servo_payload_test.sh \
+  --i-understand-props-off \
+  --i-accept-servo-motion
 ```
 
 This sends `release_pwm`, waits, then sends `reset_pwm` on the configured servo
 channel. Your real config currently targets Pixhawk MAIN OUT / signal 5. If the
-wrong output moves, stop and fix Mission Planner servo mapping.
+wrong output moves, stop and fix Mission Planner servo mapping. The tool refuses
+to run while the Cube reports armed.
 
 ## 8A. GUIDED Body-Velocity Command Test
 
@@ -224,7 +227,9 @@ The real bench test requires propellers removed, the payload mechanism disabled,
 and the vehicle disarmed:
 
 ```bash
-./test_components/mavlink/guided_velocity_props_off.sh
+./test_components/mavlink/guided_velocity_props_off.sh \
+  --i-understand-props-off \
+  --payload-disabled
 ```
 
 It requests GUIDED while disarmed, streams `0.2 m/s` body-frame commands in the
@@ -246,11 +251,16 @@ test_components/mavlink/MOTOR_MAPPING.md
 ```
 
 ```bash
-./test_components/mavlink/motor_test.sh --motor 1 --throttle-percent 5 --duration 1
+./test_components/mavlink/motor_test.sh \
+  --motor 1 \
+  --throttle-percent 5 \
+  --duration 1 \
+  --i-understand-props-off \
+  --i-accept-motor-spin
 ```
 
 Test one motor at a time. Do not increase throttle until direction and mapping
-are correct.
+are correct. The tool refuses to run while the Cube reports armed.
 
 ## 10. Real Mission Smoke Test
 

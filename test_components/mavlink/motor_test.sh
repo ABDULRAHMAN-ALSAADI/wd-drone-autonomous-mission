@@ -7,6 +7,4 @@ cd "$ROOT"
 exec ./scripts/mavlink_bench.sh motor-test \
     --connection /dev/serial0 \
     --baud 921600 \
-    --i-understand-props-off \
-    --i-accept-motor-spin \
     "$@"

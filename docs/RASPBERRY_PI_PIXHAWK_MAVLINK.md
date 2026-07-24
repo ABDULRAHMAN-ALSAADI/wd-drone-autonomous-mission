@@ -150,26 +150,20 @@ Props off. Payload disconnected first if you are unsure about the channel.
 ./scripts/mavlink_bench.sh servo \
   --connection /dev/serial0 \
   --baud 921600 \
-  --channel 9 \
+  --channel 5 \
   --pwm 1900 \
   --reset-pwm 1100 \
   --hold 1.0 \
-  --i-understand-props-off
+  --i-understand-props-off \
+  --i-accept-servo-motion
 ```
 
-## AUTO Speed Command Test
+Channel 5 matches the current payload configuration and means MAIN OUT 5.
 
-This sends `MAV_CMD_DO_CHANGE_SPEED`:
+## AUTO Speed Ownership
 
-```bash
-./scripts/mavlink_bench.sh speed \
-  --connection /dev/serial0 \
-  --baud 921600 \
-  --speed 3.0
-```
-
-For the mission itself, prefer setting AUTO speed in QGC unless you intentionally
-want companion-owned speed commands.
+Do not run a companion `MAV_CMD_DO_CHANGE_SPEED` test for this project. Mission
+Planner owns AUTO speed, altitude, and waypoint routing.
 
 ## Motor Test
 

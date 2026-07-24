@@ -22,4 +22,4 @@ exec ./scripts/mavlink_bench.sh servo \
     --pwm "$release_pwm" \
     --reset-pwm "$reset_pwm" \
     --hold "$hold_s" \
-    --i-understand-props-off
+    "$@"

@@ -118,14 +118,16 @@ the channel is uncertain.
 ./scripts/mavlink_bench.sh servo \
   --connection /dev/serial0 \
   --baud 921600 \
-  --channel 9 \
+  --channel 5 \
   --pwm 1900 \
   --reset-pwm 1100 \
   --hold 1.0 \
-  --i-understand-props-off
+  --i-understand-props-off \
+  --i-accept-servo-motion
 ```
 
-If the wrong output moves, stop and fix the channel mapping before continuing.
+Channel 5 matches the current payload configuration and means MAIN OUT 5. If
+the wrong output moves, stop and fix the channel mapping before continuing.
 
 ## Motor Test
 

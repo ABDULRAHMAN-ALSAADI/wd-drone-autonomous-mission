@@ -59,10 +59,10 @@ Changing `FRAME_TYPE` requires rebooting the flight controller.
 After rewiring or changing frame type, retest with propellers removed:
 
 ```bash
-./test_components/mavlink/motor_test.sh --motor 1 --throttle-percent 5 --duration 1
-./test_components/mavlink/motor_test.sh --motor 2 --throttle-percent 5 --duration 1
-./test_components/mavlink/motor_test.sh --motor 3 --throttle-percent 5 --duration 1
-./test_components/mavlink/motor_test.sh --motor 4 --throttle-percent 5 --duration 1
+./test_components/mavlink/motor_test.sh --motor 1 --throttle-percent 5 --duration 1 --i-understand-props-off --i-accept-motor-spin
+./test_components/mavlink/motor_test.sh --motor 2 --throttle-percent 5 --duration 1 --i-understand-props-off --i-accept-motor-spin
+./test_components/mavlink/motor_test.sh --motor 3 --throttle-percent 5 --duration 1 --i-understand-props-off --i-accept-motor-spin
+./test_components/mavlink/motor_test.sh --motor 4 --throttle-percent 5 --duration 1 --i-understand-props-off --i-accept-motor-spin
 ```
 
 Do not continue to propeller testing until motor position and spin direction are
