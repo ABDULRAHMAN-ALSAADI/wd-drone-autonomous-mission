@@ -421,8 +421,7 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission
 
 The script waits for AUTO, `mission.search_enabled=true`, and
 `mission.search_start_wp`. It should not start searching while the Cube is
-disarmed, while the Mission 1 no-search profile is running, or before the
-configured waypoint.
+disarmed or before the configured waypoint.
 
 During an active target, the real config keeps the target lock through
 `GUIDED -> AUTO` bounces and keeps requesting GUIDED. It should not RTL just

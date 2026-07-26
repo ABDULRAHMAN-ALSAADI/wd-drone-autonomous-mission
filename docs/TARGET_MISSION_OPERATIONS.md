@@ -83,12 +83,6 @@ Mission 2 uses:
 real_mission/parameter_config/mission2_target_payload.json
 ```
 
-Mission 1 no-search monitoring uses:
-
-```text
-real_mission/parameter_config/mission1_no_search.json
-```
-
 `target_mission_v2/parameter_config.json` remains the normal SITL tuning file.
 
 AUTO search speed is controlled by:

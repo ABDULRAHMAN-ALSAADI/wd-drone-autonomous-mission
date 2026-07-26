@@ -1,0 +1,118 @@
+MISSION 2 TEST COMMANDS
+
+SAFETY
+Run tests 1-7 on the Raspberry Pi with ALL PROPELLERS REMOVED, the aircraft
+secured and disarmed, and the Cube fully booted. Run one test at a time. Stop
+for any warning, missing health value, wrong mode, or wrong movement.
+
+Pi terminal setup:
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+source .venv/bin/activate
+
+
+1) OPENCV CAMERA ONLY
+
+./test_components/camera/opencv_test.sh diagnostic --seconds 20
+
+Checks Camera Module 3 without sending Pixhawk commands.
+
+./test_components/camera/opencv_test.sh live --mode full --headless --stream --stream-bind 127.0.0.1
+
+Shows detection of both target shapes. Press Ctrl+C before the next test.
+
+Laptop viewer after the Pi prints [STREAM]:
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./real_mission/open_laptop_camera_window.sh
+
+
+2) PIXHAWK SIGNAL, HEALTH, AND RC INFORMATION
+
+SECONDS_TO_RUN=10 ./test_components/mavlink/status.sh
+SECONDS_TO_RUN=10 ./test_components/mavlink/health.sh
+./test_components/mavlink/rc_channels.sh --seconds 30 --channels 1 2 3 4 5 6 7 8
+
+Expect vehicle heartbeat src=1:1, armed=False, real battery/GPS/EKF data, and
+changing RC PWM values. The tested connection is /dev/ttyAMA0 at 921600 baud.
+
+
+3) OPENCV + SELECTOR SERVO
+
+./test_components/mavlink/opencv_servo_payload_test.sh \
+  --i-understand-props-off \
+  --i-accept-servo-motion \
+  --i-confirm-payload-zone-clear
+
+Red triangle: 1300 for 3 seconds, then 1500.
+Blue hexagon: 1700 for 3 seconds, then 1500.
+Press Ctrl+C after both pass and confirm neutral 1500.
+
+
+4) INDIVIDUAL MOTOR TESTS
+
+./test_components/mavlink/motor_test.sh --motor 1 --throttle-percent 5 --duration 1 --i-understand-props-off --i-accept-motor-spin
+./test_components/mavlink/motor_test.sh --motor 2 --throttle-percent 5 --duration 1 --i-understand-props-off --i-accept-motor-spin
+./test_components/mavlink/motor_test.sh --motor 3 --throttle-percent 5 --duration 1 --i-understand-props-off --i-accept-motor-spin
+./test_components/mavlink/motor_test.sh --motor 4 --throttle-percent 5 --duration 1 --i-understand-props-off --i-accept-motor-spin
+
+Verify the physical motor position and rotation direction after each command.
+
+
+5) MODE AND ARM AUTHORITY
+
+Upload the small reviewed AUTO route first.
+
+./test_components/mavlink/bench_sequence.sh --dry-run
+./test_components/mavlink/bench_sequence.sh \
+  --i-understand-props-off \
+  --i-accept-arming
+
+Tests STABILIZE -> GUIDED -> ARM -> AUTO -> RTL -> STABILIZE -> DISARM.
+It must finish in STABILIZE and disarmed.
+
+
+6) MISSION CENTERING COMMAND LAYOUT
+
+Physically disable the payload first.
+
+./test_components/mavlink/guided_velocity_props_off.sh --dry-run
+./test_components/mavlink/guided_velocity_props_off.sh \
+  --i-understand-props-off \
+  --payload-disabled
+
+While disarmed, sends small forward/back/right/left body-velocity commands,
+then sends zero and restores the original mode.
+
+
+7) COMPLETE PREFLIGHT CHECK
+
+SECONDS_TO_RUN=10 ./test_components/preflight/full_check.sh
+
+Runs software, Pi, camera, read-only Pixhawk, and Mission 2 config checks.
+[CHECKS COMPLETE] is not flight approval. Do not fly with warnings, failed
+checks, health values shown as '-', or unresolved ArduPilot pre-arm messages.
+
+
+8) FIRST REAL MISSION 2 COMPANION FLIGHT
+
+Before flight:
+- Complete docs/REAL_DRONE_CHECKLIST.md.
+- Upload and review the real-field Mission 2 AUTO route.
+- Confirm home, fence, RTL, altitude, speed, and RC recovery mode.
+- Confirm the first search-area item is MAVLink mission sequence 2.
+- Keep payload.simulate_only=true; the servo will NOT move in this flight.
+- The profile has no RC search gate or automatic centering timeout and does not
+  require battery/EKF messages; verify them manually and test RC recovery.
+- Start with one target, land, and review logs before testing both targets.
+
+Optional laptop viewer after the mission prints [VIDEO STREAM]:
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./real_mission/open_laptop_camera_window.sh
+
+FINAL MISSION 2 COMMAND - run on the Pi while disarmed in STABILIZE:
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./real_mission/run_mission2_target_payload.sh
+
+Do not arm until Cube, Picamera2, the stream address, and
+MISSION PROFILE: mission2_target_payload appear. The pilot then arms and
+selects AUTO. For wrong behavior, immediately leave AUTO/GUIDED using the
+tested RC recovery mode, land, and disarm.

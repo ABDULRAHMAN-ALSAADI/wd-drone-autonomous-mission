@@ -1,7 +1,7 @@
 {
   "_help": {
     "mission.search_start_wp": "First AUTO mission item where the Pi is allowed to search for targets.",
-    "mission.search_enabled": "Set false for Mission 1/no-search profiles. Mission 2 must be true.",
+    "mission.search_enabled": "Must remain true for the Mission 2 target-search profile.",
     "mission.search_enable_rc_channel": "Optional extra RC switch gate. Null disables the RC gate. Example: 7 means RC channel 7 must be high before search can start.",
     "navigation.search_speed_source": "qgc_mission means Mission Planner/QGC/ArduPilot owns AUTO speed. companion_do_change_speed makes the Pi send MAV_CMD_DO_CHANGE_SPEED.",
     "control.center_max_speed_m_s": "Maximum horizontal speed during GUIDED centering.",

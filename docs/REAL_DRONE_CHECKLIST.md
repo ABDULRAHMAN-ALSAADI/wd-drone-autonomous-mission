@@ -47,7 +47,6 @@ Do not begin autonomous flight testing until these are closed and recorded:
 - [ ] `./scripts/check_project.sh` passes from a clean checkout.
 - [ ] The uploaded Mission Planner/QGC mission matches the selected Pi profile.
 - [ ] A fresh ArduPilot parameter backup is saved with the test record.
-- [ ] Mission 1 uses no target controller or the no-search profile.
 - [ ] Early Mission 2 flights keep:
 
 ```json

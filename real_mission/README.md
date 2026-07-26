@@ -22,39 +22,9 @@ the blue hexagon and red triangle, centers in GUIDED, triggers the payload servo
 when enabled, resumes AUTO after the first target, and requests RTL after both
 targets are complete.
 
-## Mission 1 vs Mission 2
+## Mission 2 Only
 
-This is the important safety rule:
-
-```text
-Mission 1 = ArduPilot AUTO only, no Pi search/payload logic.
-Mission 2 = ArduPilot AUTO + Pi vision/search/payload logic.
-```
-
-For Mission 1, normally do not run the target payload controller at all. Upload
-the Figure 8 mission from Mission Planner/QGC and start AUTO from the RC.
-
-If you want the Pi process open during Mission 1 for bench monitoring practice,
-use the no-search profile:
-
-```bash
-cd ~/FOR_COMP/wd-drone-autonomous-mission
-./real_mission/run_mission1_no_search.sh
-```
-
-That profile has:
-
-```json
-"mission": {
-  "name": "mission1_figure8_no_search",
-  "search_enabled": false
-}
-```
-
-Even if the AUTO mission reaches waypoint `5`, `7`, or any search-like number,
-the Pi will not enter SEARCH.
-
-For Mission 2, use:
+This project and the Raspberry Pi controller run only Mission 2:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
@@ -71,25 +41,20 @@ That profile has:
 ```
 
 The RC should control ArduPilot modes or mission start. The companion computer
-does not upload or choose between the two missions in the air.
+does not upload the route, arm, take off, or start AUTO.
 
 Real sequence:
 
-1. Upload the correct AUTO mission from Mission Planner/QGC.
-2. Start the matching Pi profile, or no Pi target controller for Mission 1.
+1. Upload the reviewed Mission 2 AUTO route from Mission Planner/QGC.
+2. Start the Mission 2 Pi profile.
 3. Use RC/Mission Planner to arm and start AUTO.
 4. The Pi waits quietly until:
    - the vehicle is armed;
    - mode is `AUTO`;
    - mission item is at or after `mission.search_start_wp`.
-   - search is enabled by the selected mission profile.
-5. Then, only for Mission 2, the Pi starts vision/search/centering/payload.
-
-The Cube normally has one uploaded AUTO mission at a time. If you want one RC
-button for mission one and another RC button for mission two, that is an
-ArduPilot/Mission Planner/Lua mission-management design. The clean first
-version is: upload the mission you want on the ground, start the matching Pi
-profile, then use RC to start AUTO.
+   - search is enabled by the Mission 2 profile.
+5. The Pi starts vision, target centering, and simulated or enabled payload
+   handling.
 
 ## Optional Mission 2 RC Enable Switch
 

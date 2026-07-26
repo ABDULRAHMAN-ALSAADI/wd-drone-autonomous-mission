@@ -9,15 +9,12 @@ This file explains the repository in plain language.
 This is the real-drone operator folder.
 
 - `run_mission2_target_payload.sh`: run this on the Raspberry Pi for Mission 2.
-- `run_mission1_no_search.sh`: optional Pi process for Mission 1 with search
-  disabled.
 - `run_real_mission.sh`: lower-level wrapper used by the mission-specific
   scripts.
 - `open_laptop_camera_window.sh`: run this on the Ubuntu laptop to watch the Pi
   Camera Module 3 feed.
 - `parameter_config/mission2_target_payload.json`: edit this for Mission 2
   real-drone tuning.
-- `parameter_config/mission1_no_search.json`: no-search Mission 1 profile.
 - `parameter_config/README.md`: explains the important tuning fields.
 
 ### `test_components/`

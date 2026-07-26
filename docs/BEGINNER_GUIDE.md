@@ -28,9 +28,6 @@ Raspberry Pi mission process
     requests RTL after target two
 ```
 
-Mission 1 is different: it is an ArduPilot AUTO mission with search and
-payload logic disabled.
-
 ## 2. Safety Boundary
 
 Code that runs in simulation is not automatically safe for an aircraft.
@@ -336,26 +333,10 @@ are understood. The complete guarded sequence is in:
 test_components/COMMANDS.md
 ```
 
-## 10. Run Mission 1 And Mission 2
+## 10. Run Mission 2
 
-Mission Planner owns the uploaded AUTO route. Upload only one reviewed mission
-at a time.
-
-Mission 1, Figure 8:
-
-```text
-Upload Mission 1 from Mission Planner.
-Do not run the target controller, or run the no-search profile for monitoring.
-```
-
-Optional no-search process on the Pi:
-
-```bash
-cd ~/FOR_COMP/wd-drone-autonomous-mission
-./real_mission/run_mission1_no_search.sh
-```
-
-Mission 2, target payload:
+Mission Planner owns the uploaded AUTO route. The Raspberry Pi runs only the
+Mission 2 target controller:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
