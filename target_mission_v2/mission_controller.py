@@ -241,6 +241,17 @@ class Controller:
             lon = getattr(self.vehicle, "longitude_deg", None)
             self.center_origin = (lat, lon) if lat is not None and lon is not None else None
         elif state == State.PAYLOAD:
+            # Each target owns a separate payload transaction.  Do not let the
+            # completed first target's command timestamps satisfy the second.
+            self.payload_started = False
+            self.payload_reset = False
+            self.payload_release_sent_at = None
+            self.payload_release_accepted = False
+            self.payload_reset_sent_at = None
+            self.payload_reset_accepted = False
+            self.payload_failed = False
+            self.payload_block_started_at = None
+            self.last_payload_block_reason = ""
             self.last_payload_geometry_at = 0.0
             self.last_payload_geometry_detection = None
             self.last_payload_geometry_error_px = None
@@ -929,22 +940,24 @@ class Controller:
                     c["target_lost_timeout_s"],
                 )
             )
-            if self.last_detection is None or now - self.last_seen_at > lost_timeout_s:
-                self.centered_since = None
-                self.target_loss_active = True
-                self.abandon_active_target(
-                    now,
-                    f"TARGET_LOST {lost_for:.1f}s",
-                )
-                return detections, masks
             if not fresh_detection:
                 self.centered_since = None
-                self.status_message = (
-                    f"Looking for {self.current_target} in GUIDED "
-                    f"{lost_for:.1f}/{lost_timeout_s:.1f}s"
+                self.target_loss_active = (
+                    self.last_seen_at <= 0.0 or lost_for > lost_timeout_s
                 )
+                if self.target_loss_active:
+                    self.status_message = (
+                        f"Target lock lost for {lost_for:.1f}s; "
+                        "holding GUIDED and searching"
+                    )
+                else:
+                    self.status_message = (
+                        f"Looking for {self.current_target} in GUIDED "
+                        f"{lost_for:.1f}/{lost_timeout_s:.1f}s"
+                    )
                 self.send_velocity(0.0, 0.0, self.altitude_down())
                 return detections, masks
+            self.target_loss_active = False
             forward, right, distance = self.centre_velocity(self.last_detection, width, height)
             minimum_progress = float(self.safety.get("center_min_progress_px", 8.0))
             if self.center_best_error_px is None or distance <= self.center_best_error_px - minimum_progress:

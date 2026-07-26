@@ -838,6 +838,15 @@ class FakeDetector:
         return list(self.search_detections), {"red": mask, "blue": mask}
 
 
+class FakeExpiredLockDetector(FakeDetector):
+    """Mimic the strict detector clearing its local lock after vibration."""
+
+    def __init__(self, search_detections=None):
+        super().__init__(search_detections)
+        self.tracking_state = None
+        self.last_lock_drop_reason = "strict geometry lock expired"
+
+
 class ControllerFlowTests(unittest.TestCase):
     def config(self):
         config = MissionConfigTests.config()
@@ -978,6 +987,55 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertEqual(vehicle.mode_requests, [])
         self.assertEqual(vehicle.velocities[-1][:2], (0.0, 0.0))
 
+    def test_expired_strict_lock_holds_guided_during_reacquisition_window(self):
+        vehicle = FakeVehicle()
+        config = self.config()
+        config["safety"]["max_lost_detection_s"] = 4.0
+        ctrl = self.controller(config, vehicle)
+        ctrl.detector = FakeExpiredLockDetector()
+        ctrl.state = State.CENTER
+        ctrl.current_target = "red_triangle"
+        ctrl.last_detection = Detection(
+            "red_triangle", 450, 260, 400.0, 0.8, 3, 3, 0, 0,
+            0.5, 0.6, 0.9, 430, 240, 40, 40,
+        )
+        ctrl.last_seen_at = time.monotonic() - 0.7
+        ctrl.center_started_at = time.monotonic()
+
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+
+        self.assertEqual(ctrl.state, State.CENTER)
+        self.assertEqual(ctrl.current_target, "red_triangle")
+        self.assertIsNone(ctrl.last_detection)
+        self.assertEqual(vehicle.mode_requests, [])
+        self.assertEqual(vehicle.velocities[-1][:2], (0.0, 0.0))
+        self.assertIn("Looking for red_triangle in GUIDED", ctrl.status_message)
+
+    def test_expired_strict_lock_keeps_guided_after_reacquisition_timeout(self):
+        vehicle = FakeVehicle()
+        config = self.config()
+        config["safety"]["max_lost_detection_s"] = 4.0
+        ctrl = self.controller(config, vehicle)
+        ctrl.detector = FakeExpiredLockDetector()
+        ctrl.state = State.CENTER
+        ctrl.current_target = "red_triangle"
+        ctrl.last_detection = Detection(
+            "red_triangle", 450, 260, 400.0, 0.8, 3, 3, 0, 0,
+            0.5, 0.6, 0.9, 430, 240, 40, 40,
+        )
+        ctrl.last_seen_at = time.monotonic() - 5.0
+        ctrl.center_started_at = time.monotonic()
+
+        ctrl.update(self.blank_frame(), [], self.blank_masks())
+
+        self.assertEqual(ctrl.state, State.CENTER)
+        self.assertEqual(ctrl.current_target, "red_triangle")
+        self.assertIsNone(ctrl.last_detection)
+        self.assertEqual(vehicle.mode_requests, [])
+        self.assertEqual(vehicle.velocities[-1][:2], (0.0, 0.0))
+        self.assertTrue(ctrl.target_loss_active)
+        self.assertIn("holding GUIDED and searching", ctrl.status_message)
+
     def test_center_reacquires_same_target_before_timeout(self):
         vehicle = FakeVehicle()
         config = self.config()
@@ -991,10 +1049,12 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.last_detection = Detection("red_triangle", 300, 260, 400.0, 0.8, 3, 3, 0, 0, 0.5, 0.6, 0.9, 280, 240, 40, 40)
         ctrl.last_seen_at = time.monotonic() - 1.0
         ctrl.center_started_at = time.monotonic()
+        ctrl.target_loss_active = True
         ctrl.update(self.blank_frame(), [], self.blank_masks())
         self.assertEqual(ctrl.state, State.CENTER)
         self.assertEqual(ctrl.last_detection, reacquired)
         self.assertTrue(ctrl.last_seen_at > ctrl.state_started_at)
+        self.assertFalse(ctrl.target_loss_active)
 
     def test_auto_bounce_aborts_after_grace_time(self):
         vehicle = FakeVehicle()
@@ -1242,6 +1302,54 @@ class ControllerFlowTests(unittest.TestCase):
             ctrl.last_payload_geometry_detection.source,
             "geometry_payload",
         )
+
+    def test_second_target_starts_a_new_payload_transaction(self):
+        vehicle = FakeVehicle()
+        ctrl = self.controller(vehicle=vehicle)
+        started = time.monotonic()
+        ctrl.completed_targets = {"blue_hexagon"}
+        ctrl.current_target = "red_triangle"
+        ctrl.payload_started = True
+        ctrl.payload_reset = True
+        ctrl.payload_release_sent_at = started - 20.0
+        ctrl.payload_release_accepted = True
+        ctrl.payload_reset_sent_at = started - 19.0
+        ctrl.payload_reset_accepted = True
+
+        ctrl.transition(State.PAYLOAD, "second target centred")
+
+        self.assertIsNone(ctrl.payload_release_sent_at)
+        self.assertFalse(ctrl.payload_release_accepted)
+        self.assertIsNone(ctrl.payload_reset_sent_at)
+        self.assertFalse(ctrl.payload_reset_accepted)
+
+        ctrl.last_detection = Detection(
+            "red_triangle", 480, 270, 500.0, 0.9, 3, 3, 0, 0,
+            0.5, 0.6, 0.9, 460, 250, 40, 40,
+        )
+        ctrl.last_frame_at = started
+        ctrl.last_tracking_at = started
+        ctrl.last_strong_geometry_at = started
+        ctrl.last_payload_geometry_at = started
+        ctrl.last_payload_geometry_detection = replace(
+            ctrl.last_detection,
+            source="geometry_payload",
+            shape_score=0.9,
+            total_score=0.9,
+        )
+        ctrl.last_payload_geometry_error_px = 0.0
+        ctrl.last_payload_geometry_reason = "fresh full-resolution strict geometry"
+        ctrl.last_center_error_px = 0.0
+        ctrl.center_lock_completed_at = started
+        ctrl.center_error_history.extend(
+            [(started - 0.1, 0.0), (started, 0.0)]
+        )
+
+        ctrl.payload_action(started)
+
+        self.assertEqual(ctrl.payload_release_sent_at, started)
+        self.assertNotIn("red_triangle", ctrl.completed_targets)
+        self.assertNotIn("RTL", vehicle.mode_requests)
 
     def test_physical_payload_requires_ack_and_persists_attempt(self):
         vehicle = FakeVehicle()
