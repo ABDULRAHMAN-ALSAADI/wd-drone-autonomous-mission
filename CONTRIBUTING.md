@@ -6,18 +6,23 @@ changes are valuable.
 
 ## Your First Contribution
 
-1. Read the root `README.md` and run `./scripts/check_project.sh`.
+1. Complete `UBUNTU_SETUP.txt`, read the root `README.md`, and run
+   `./scripts/check_project.sh`.
 2. Search existing issues before opening a new one.
-3. Fork the repository and create a focused branch:
+3. Ask to be added as a collaborator or fork the repository. Use only your own
+   GitHub account, token, and SSH keys.
+4. Configure your identity once, then create a focused branch:
 
    ```bash
+   git config --global user.name "Your Name"
+   git config --global user.email "you@example.com"
    git switch -c fix/short-description
    ```
 
-4. Make the change and add or update tests and documentation.
-5. Run `./scripts/check_project.sh` again.
-6. Commit with a short description of the observable change.
-7. Push your branch and open a pull request using the template.
+5. Make the change and add or update tests and documentation.
+6. Run `./scripts/check_project.sh` again.
+7. Commit with a short description of the observable change.
+8. Push your branch and open a pull request using the template.
 
 For a large change, a new dependency, or anything that affects flight control,
 payload behavior, arming, modes, or failsafes, open an issue before investing
@@ -30,25 +35,16 @@ Raspberry Pi; do not treat ad-hoc Pi edits as the permanent source.
 
 ## Branches
 
-- `main`: OpenCV-only reference mission.
-- `yolov8-mission-pi5`: YOLOv8/Hailo candidate detection plus OpenCV shape
-  verification.
+`main` is the supported OpenCV Mission 2 implementation. Create a short feature
+branch for every change and open a pull request back to `main`.
 
-Use a short feature branch for normal work. Do not merge experimental flight
-behavior directly into `main` during a test day.
+Do not merge experimental flight behavior directly into `main` during a test
+day.
 
 ## Before A Pull Request
 
-For `main`:
-
 ```bash
 ./scripts/check_project.sh
-```
-
-For `yolov8-mission-pi5`:
-
-```bash
-./check_project.sh
 ```
 
 Also run the relevant SITL scenario when mission, control, MAVLink or vision

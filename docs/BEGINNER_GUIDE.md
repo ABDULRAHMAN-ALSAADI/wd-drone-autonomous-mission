@@ -3,16 +3,13 @@
 This is the complete onboarding path for a new team member. Follow it in
 order. Do not jump directly from cloning the code to a real flight.
 
-## 1. Understand The Two Implementations
+## 1. Understand The Project
 
-The same GitHub repository has two important branches:
+The supported `main` branch contains the OpenCV Mission 2 implementation. One
+clone is the complete version-controlled project; no second vision branch or
+model download is required.
 
-| Branch | Local folder | Vision backend |
-| --- | --- | --- |
-| `main` | `wd-drone-autonomous-mission` | Strict OpenCV color and geometry |
-| `yolov8-mission-pi5` | `YoloV8-autonmous-mission` | YOLOv8/Hailo proposals verified by OpenCV |
-
-Both versions use the same mission idea:
+The mission idea is:
 
 ```text
 Mission Planner / ArduPilot
@@ -46,46 +43,42 @@ range test, compass/GPS checks, failsafe tests or a competent safety pilot.
 
 ## 3. Clone The Workspace
 
-Install the basic Ubuntu tools:
+Use the short root guide for the copy-and-paste version:
+
+```text
+UBUNTU_SETUP.txt
+```
+
+On a new Ubuntu laptop:
 
 ```bash
 sudo apt update
-sudo apt install git openssh-client rsync python3-venv python3-pip python3-opencv python3-numpy gstreamer1.0-tools
-```
-
-Create the workspace and clone both branches:
-
-```bash
+sudo apt install -y git
 mkdir -p ~/FOR_COMP
 cd ~/FOR_COMP
-
 git clone --branch main \
-  https://github.com/ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission.git \
-  wd-drone-autonomous-mission
-
-git clone --branch yolov8-mission-pi5 \
-  https://github.com/ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission.git \
-  YoloV8-autonmous-mission
+  https://github.com/ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission.git
+cd wd-drone-autonomous-mission
+./scripts/setup_ubuntu.sh
 ```
 
-Private-repository users must authenticate with GitHub first. Team members
-with SSH access can replace the HTTPS URL with:
-
-```text
-git@github.com:ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission.git
-```
+The public HTTPS clone needs no GitHub login. Pushing changes requires the
+friend's own GitHub authentication plus collaborator access, or a fork. Never
+copy another teammate's token, password, or SSH private key.
 
 ## 4. Prepare The OpenCV Version On Ubuntu
 
+The setup command above installs Ubuntu dependencies, creates `.venv`, and
+runs the complete software test suite. For later development sessions:
+
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
-./scripts/setup.sh
 source .venv/bin/activate
 ./scripts/check_project.sh
 ```
 
-The virtual environment contains architecture-specific packages. Never copy
-this Ubuntu `.venv` to the Raspberry Pi.
+The virtual environment contains architecture-specific packages. Never commit
+it or copy this Ubuntu `.venv` to the Raspberry Pi.
 
 Important entry points:
 
@@ -262,49 +255,7 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission
 Run the laptop command outside an SSH session. Raspberry Pi OS Lite has no
 desktop, and direct X forwarding is not the supported camera path.
 
-## 8. Prepare YOLOv8 And Hailo AI HAT+
-
-Read the dedicated guide after cloning the YOLO branch:
-
-```text
-~/FOR_COMP/YoloV8-autonmous-mission/BEGINNER_GUIDE.md
-```
-
-For an AI HAT+, Raspberry Pi's official installation currently uses:
-
-```bash
-sudo apt install dkms
-sudo apt install hailo-all
-sudo reboot
-```
-
-After reboot:
-
-```bash
-hailortcli fw-control identify
-rpicam-hello --list-cameras
-```
-
-Official AI HAT documentation:
-
-```text
-https://www.raspberrypi.com/documentation/accessories/ai-hat-plus.html
-https://www.raspberrypi.com/documentation/computers/ai.html
-```
-
-The model artifacts are intentionally not stored in GitHub yet. Obtain the
-team-approved files and put them at the YOLO project root:
-
-```text
-best.pt    Ubuntu Gazebo / Ultralytics test
-best.onnx  Hailo compilation input
-best.hef   Raspberry Pi Hailo runtime
-```
-
-Do not rename one format to another. ONNX-to-HEF is a real compilation and
-quantization process documented in `hailo_compile/README.md`.
-
-## 9. Test MAVLink Before A Mission
+## 8. Test MAVLink Before A Mission
 
 The configured real link is:
 
@@ -333,7 +284,7 @@ are understood. The complete guarded sequence is in:
 test_components/COMMANDS.md
 ```
 
-## 10. Run Mission 2
+## 9. Run Mission 2
 
 Mission Planner owns the uploaded AUTO route. The Raspberry Pi runs only the
 Mission 2 target controller:
@@ -354,7 +305,7 @@ Before starting Mission 2:
 The Pi process does not arm, take off or choose the AUTO mission. It waits for
 the required ArduPilot state.
 
-## 11. Configuration Ownership
+## 10. Configuration Ownership
 
 Set in Mission Planner / ArduPilot:
 
@@ -376,7 +327,7 @@ Set in the mission JSON profile:
 Never tune the real configuration by guessing. Record one controlled test,
 change one value and document the result.
 
-## 12. Normal Git Workflow
+## 11. Normal Git Workflow
 
 Create a branch for each change:
 
@@ -409,7 +360,7 @@ Never commit:
 
 See `CONTRIBUTING.md` for review expectations.
 
-## 13. Troubleshooting
+## 12. Troubleshooting
 
 ### `ssh pi5` fails on the Pi itself
 
@@ -437,12 +388,7 @@ The ArduPilot vehicle heartbeat is normally system `1`, component `1`.
 Mission Planner and router components may also send heartbeats. The provided
 tools filter the vehicle heartbeat for mode confirmation.
 
-### YOLO clone starts but cannot find a model
-
-Check that `best.hef` exists on the Pi and `best.pt` exists for the Ubuntu
-simulation. These files are not downloaded from GitHub by design.
-
-## 14. Recommended Reading Order
+## 13. Recommended Reading Order
 
 1. `docs/ARCHITECTURE.md`
 2. `docs/REAL_MISSION_FLOW.md`
@@ -451,7 +397,6 @@ simulation. These files are not downloaded from GitHub by design.
 5. `simulation/README.md`
 6. `docs/SAFETY_AND_FAILSAFES.md`
 7. `docs/REAL_DRONE_CHECKLIST.md`
-8. YOLO branch `BEGINNER_GUIDE.md`
 
 When a command and an old screenshot disagree, trust the current Git branch,
 configuration file and test output. Ask the test lead before using a command

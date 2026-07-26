@@ -3,11 +3,13 @@
 On a new laptop or for a new team member, read this first:
 
 ```text
-docs/BEGINNER_GUIDE.md
+UBUNTU_SETUP.txt
 ```
 
-It starts from installing Git and cloning the repository. This file is the
-short daily-use map after the computer is already prepared.
+It gives one copy-and-paste Ubuntu setup, verifies the software, and explains
+the safe Git workflow. Read `docs/BEGINNER_GUIDE.md` afterward for simulation,
+Pi, and hardware details. This file is the short daily-use map after the
+computer is already prepared.
 
 This repo has three folders you should care about first:
 

@@ -13,6 +13,8 @@ This `scripts/` folder is the lower-level toolbox behind those wrappers.
 
 ## Daily Development
 
+- `setup_ubuntu.sh`: install fresh-laptop Ubuntu dependencies, create the Python
+  environment, and run the complete software test suite.
 - `setup.sh`: create/update local Python environment.
 - `check_project.sh`: run local tests.
 - `sync_to_pi.sh`: copy laptop source to the Raspberry Pi without deleting Pi

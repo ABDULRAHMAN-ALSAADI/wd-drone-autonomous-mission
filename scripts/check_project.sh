@@ -33,3 +33,4 @@ PYTHONPATH=src "$PYTHON_BIN" -m unittest discover -s tests -v
     "$PYTHON_BIN" -m unittest discover -p 'test_*.py' -v
 )
 "$PYTHON_BIN" -m py_compile target_mission_v2/*.py src/wd_drone/*.py tools/*.py
+bash -n scripts/setup.sh scripts/setup_ubuntu.sh scripts/check_project.sh

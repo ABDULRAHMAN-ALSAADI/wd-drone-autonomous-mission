@@ -25,6 +25,7 @@ Choose the path that matches what you want to do:
 
 | I want to… | Read or run this |
 | --- | --- |
+| Prepare a new Ubuntu laptop | [New Ubuntu Laptop Setup](UBUNTU_SETUP.txt) |
 | Understand the project in five minutes | Continue with **How It Works** below |
 | Set up a new computer from zero | [Beginner Guide](docs/BEGINNER_GUIDE.md) |
 | Run a quick local software check | [Quick Start](#quick-start-software-only) |
@@ -73,16 +74,21 @@ The supported beginner environment is Ubuntu. These commands do not connect to
 an aircraft:
 
 ```bash
+sudo apt update
+sudo apt install -y git
+mkdir -p ~/FOR_COMP
+cd ~/FOR_COMP
 git clone https://github.com/ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission.git
 cd wd-drone-autonomous-mission
-./scripts/setup.sh
-source .venv/bin/activate
-./scripts/check_project.sh
+./scripts/setup_ubuntu.sh
 ```
 
-A successful check ends with all unit tests passing and all Python files
-compiling. Camera, Gazebo, Raspberry Pi, and flight-controller tests are
-separate because they need additional hardware or software.
+The setup installs the Ubuntu packages, creates `.venv`, and runs all software
+tests. A successful run ends with `[READY] Ubuntu development setup passed`.
+Camera, Gazebo, Raspberry Pi, and flight-controller tests are separate because
+they need additional hardware or software. See
+[UBUNTU_SETUP.txt](UBUNTU_SETUP.txt) for daily Git commands and the safe
+contribution workflow.
 
 ## Project Map
 
@@ -97,9 +103,9 @@ separate because they need additional hardware or software.
 | [`docs/`](docs/) | Architecture, safety, operations, calibration, and roadmap documents |
 
 The [`main`](https://github.com/ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission/tree/main)
-branch is the OpenCV reference implementation. The
-[`yolov8-mission-pi5`](https://github.com/ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission/tree/yolov8-mission-pi5)
-branch contains the YOLOv8/Hailo candidate-detection implementation.
+branch is the supported OpenCV Mission 2 implementation. Future model-assisted
+vision work is tracked in [Vision Model Plan](docs/VISION_MODEL_PLAN.md); it is
+not required for this setup.
 
 ## Real Hardware
 

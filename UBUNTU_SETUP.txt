@@ -1,0 +1,87 @@
+WD DRONE - NEW UBUNTU LAPTOP SETUP
+
+This installs the Mission 2 project for software development. A public clone
+does not need a GitHub login.
+
+1. OPEN TERMINAL AND COPY THIS WHOLE BLOCK
+
+sudo apt update
+sudo apt install -y git
+mkdir -p ~/FOR_COMP
+cd ~/FOR_COMP
+git clone --branch main https://github.com/ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission.git
+cd wd-drone-autonomous-mission
+./scripts/setup_ubuntu.sh
+
+The setup is successful when it ends with:
+
+[READY] Ubuntu development setup passed.
+
+The complete check currently runs 139 software tests. If any command fails,
+stop and send the complete terminal error to the team.
+
+
+2. WHAT WORKS ON THE LAPTOP
+
+- Read and edit all source code and documentation.
+- Run the complete software test suite.
+- Create Git branches and contribute changes.
+- Run Gazebo/ArduPilot SITL after installing its separate dependencies.
+- Watch the Pi camera later, after the friend receives separate Pi SSH access.
+
+The clone does not include your .venv, passwords, SSH keys, logs, camera
+recordings, model files, or the external ArduPilot/Gazebo source trees. Those
+are machine-specific or intentionally excluded. The setup creates a fresh
+.venv for this laptop.
+
+
+3. NORMAL DAILY COMMANDS
+
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+git switch main
+git pull --ff-only
+source .venv/bin/activate
+./scripts/check_project.sh
+
+
+4. START A SAFE DEVELOPMENT BRANCH
+
+Replace the example name and email with the friend's own GitHub details:
+
+git config --global user.name "Friend Name"
+git config --global user.email "friend@example.com"
+
+Then create a branch:
+
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+git switch -c feature/short-description
+
+Before every commit:
+
+git status --short
+./scripts/check_project.sh
+
+Never share or copy another person's GitHub password, token, SSH private key,
+or ~/.ssh folder. To push changes, the repository owner must add the friend as
+a GitHub collaborator, or the friend must fork the repository and use their
+own GitHub authentication.
+
+
+5. OPTIONAL SIMULATION
+
+The project source is ready after step 1. Full simulation additionally needs
+Gazebo Harmonic, ArduPilot, and ardupilot_gazebo. Follow:
+
+simulation/README.md
+
+These external projects are large and are not stored inside this GitHub repo.
+
+
+6. HARDWARE SAFETY
+
+Laptop setup and unit tests do not connect to or command an aircraft.
+
+Do not run real_mission commands or MAVLink arm, servo, motor, or velocity
+tests as ordinary laptop development. Pi camera, Cube/Pixhawk, servo, motor,
+and real-flight tests need team supervision, the correct hardware, and the
+documented propeller-off safety procedure.
