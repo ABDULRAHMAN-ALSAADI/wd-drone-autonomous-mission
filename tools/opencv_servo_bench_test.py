@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Props-off bench test: strict OpenCV centering triggers one servo action."""
+"""Props-off bench test: strict OpenCV triggers each target's servo action once."""
 from __future__ import annotations
 
 import argparse
@@ -36,6 +36,7 @@ DEFAULT_CONFIG = (
 )
 SERVO_COMMAND = mavutil.mavlink.MAV_CMD_DO_SET_SERVO
 ACCEPTED = "MAV_RESULT_ACCEPTED"
+MISSION_TARGETS = frozenset({"red_triangle", "blue_hexagon"})
 
 
 def servo_settings_from_config(
@@ -57,9 +58,10 @@ def servo_settings_from_config(
 def resolve_servo_settings(
     args: argparse.Namespace,
     config: dict,
+    target: str,
 ) -> dict[str, float | int]:
     """Use profile values unless an expert explicitly supplies an override."""
-    settings = servo_settings_from_config(config, args.target)
+    settings = servo_settings_from_config(config, target)
     for key in (
         "servo_channel",
         "release_pwm",
@@ -71,6 +73,15 @@ def resolve_servo_settings(
         if override is not None:
             settings[key] = override
     return settings
+
+
+def targets_for_run(target_option: str) -> set[str]:
+    """Return the targets that may trigger once during this bench run."""
+    if target_option == "both":
+        return set(MISSION_TARGETS)
+    if target_option in MISSION_TARGETS:
+        return {target_option}
+    raise ValueError(f"Unknown target option: {target_option}")
 
 
 def send_servo(master, channel: int, pwm: int, timeout_s: float) -> bool:
@@ -191,6 +202,7 @@ def draw_bench_overlay(
     heartbeat_age_s: float,
     rejection: str,
     fps: float,
+    completed_targets: set[str],
 ):
     output = frame.copy()
     cv2.drawMarker(
@@ -242,8 +254,9 @@ def draw_bench_overlay(
             ),
             (
                 f"Centered {centered_for_s:.1f}/{center_hold_s:.1f}s "
-                "| one release maximum"
+                "| one release per target"
             ),
+            f"Completed {', '.join(sorted(completed_targets)) or 'none'}",
             (
                 f"Pixhawk mode {mode} | DISARMED required | "
                 f"heartbeat age {heartbeat_age_s:.1f}s"
@@ -258,8 +271,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument(
         "--target",
-        choices=("red_triangle", "blue_hexagon"),
-        required=True,
+        choices=("both", "red_triangle", "blue_hexagon"),
+        default="both",
+        help="Defaults to automatic recognition of both targets in any order.",
     )
     parser.add_argument(
         "--connection",
@@ -307,7 +321,7 @@ def parse_args() -> argparse.Namespace:
 
 def validate_args(
     args: argparse.Namespace,
-    servo_settings: dict[str, float | int],
+    settings_by_target: dict[str, dict[str, float | int]],
 ) -> None:
     required_flags = (
         args.i_understand_props_off
@@ -319,16 +333,23 @@ def validate_args(
             "Refusing physical servo test. Remove every propeller, clear the "
             "payload drop zone, and pass all three acknowledgement flags."
         )
-    if not 1 <= int(servo_settings["servo_channel"]) <= 16:
-        raise ValueError("servo channel must be between 1 and 16")
-    for name in ("release_pwm", "reset_pwm"):
-        value = int(servo_settings[name])
-        if not 800 <= value <= 2200:
-            raise ValueError(f"{name} must be between 800 and 2200")
-    if not 0.0 < float(servo_settings["release_hold_s"]) <= 10.0:
-        raise ValueError("release-hold-s must be in (0, 10]")
-    if float(servo_settings["ack_timeout_s"]) <= 0:
-        raise ValueError("ack-timeout-s must be positive")
+    for target, servo_settings in settings_by_target.items():
+        if not 1 <= int(servo_settings["servo_channel"]) <= 16:
+            raise ValueError(
+                f"{target} servo channel must be between 1 and 16"
+            )
+        for name in ("release_pwm", "reset_pwm"):
+            value = int(servo_settings[name])
+            if not 800 <= value <= 2200:
+                raise ValueError(
+                    f"{target} {name} must be between 800 and 2200"
+                )
+        if not 0.0 < float(servo_settings["release_hold_s"]) <= 10.0:
+            raise ValueError(
+                f"{target} release-hold-s must be in (0, 10]"
+            )
+        if float(servo_settings["ack_timeout_s"]) <= 0:
+            raise ValueError(f"{target} ack-timeout-s must be positive")
     if args.heartbeat_max_age_s <= 0 or args.duration_s <= 0:
         raise ValueError("heartbeat-max-age-s and duration-s must be positive")
 
@@ -336,8 +357,12 @@ def validate_args(
 def main() -> int:
     args = parse_args()
     config = load_profile(args.config)
-    servo_settings = resolve_servo_settings(args, config)
-    validate_args(args, servo_settings)
+    requested_targets = targets_for_run(args.target)
+    settings_by_target = {
+        target: resolve_servo_settings(args, config, target)
+        for target in requested_targets
+    }
+    validate_args(args, settings_by_target)
     connection = str(
         args.connection or config["mavlink"]["connection"]
     )
@@ -364,12 +389,6 @@ def main() -> int:
         raise SystemExit("Refusing test because the vehicle is armed")
 
     per_target = control.get("center_tolerance_px_by_target", {})
-    tolerance_px = float(
-        per_target.get(
-            args.target,
-            control.get("center_tolerance_px", 22.0),
-        )
-    )
     center_hold_s = float(control.get("center_hold_s", 1.2))
     association_fraction = float(
         vision.get("payload_association_max_fraction", 0.18)
@@ -378,13 +397,16 @@ def main() -> int:
     print("=" * 72)
     print("STRICT OPENCV -> PHYSICAL SERVO BENCH TEST")
     print("PROPELLERS OFF. VEHICLE MUST REMAIN DISARMED.")
-    print(
-        f"target={args.target} "
-        f"channel={int(servo_settings['servo_channel'])} "
-        f"release={int(servo_settings['release_pwm'])} "
-        f"hold={float(servo_settings['release_hold_s']):.1f}s "
-        f"reset={int(servo_settings['reset_pwm'])}"
-    )
+    print("Automatic strict recognition; targets may be presented in any order.")
+    for target in sorted(requested_targets):
+        servo_settings = settings_by_target[target]
+        print(
+            f"target={target} "
+            f"channel={int(servo_settings['servo_channel'])} "
+            f"release={int(servo_settings['release_pwm'])} "
+            f"hold={float(servo_settings['release_hold_s']):.1f}s "
+            f"reset={int(servo_settings['reset_pwm'])}"
+        )
     print(f"MAVLink {connection} at {baud} baud")
     print("No mode, arm, motor, or velocity command exists in this test.")
     print("=" * 72)
@@ -399,7 +421,11 @@ def main() -> int:
     last_vehicle_heartbeat_at = started_at
     last_frame_id = 0
     centered_since: Optional[float] = None
-    released_at: Optional[float] = None
+    active_target: Optional[str] = None
+    completed_targets: set[str] = set()
+    all_completed = False
+    servo_needs_reset = False
+    pending_reset_settings: Optional[dict[str, float | int]] = None
     state = "SEARCH_STRICT_GEOMETRY"
     process_times: deque[float] = deque(maxlen=120)
 
@@ -443,18 +469,46 @@ def main() -> int:
                 captured_at_s=captured_at_s,
                 received_at_s=camera_frame.received_monotonic_s,
             )
-            detections = detector.search_processed(
-                processed,
-                {args.target},
+            pending_targets = requested_targets - completed_targets
+            search_targets = (
+                {active_target}
+                if active_target is not None
+                else pending_targets
             )
+            detections = detector.search_processed(processed, search_targets)
             process_times.append(now)
             confirmed = tracker.update(
                 detections,
-                {args.target},
+                search_targets,
                 now=now,
                 frame_id=camera_frame.frame_id,
             )
-            detection = select_detection(detections, args.target)
+            if confirmed is not None and active_target is None:
+                active_target = confirmed.target
+                print(f"[TARGET CONFIRMED] {active_target}")
+            display_target = (
+                active_target
+                or (confirmed.target if confirmed is not None else None)
+            )
+            detection = (
+                select_detection(detections, display_target)
+                if display_target is not None
+                else (
+                    max(detections, key=lambda item: item.total_score)
+                    if detections
+                    else None
+                )
+            )
+            tolerance_target = (
+                active_target
+                or (detection.target if detection is not None else "")
+            )
+            tolerance_px = float(
+                per_target.get(
+                    tolerance_target,
+                    control.get("center_tolerance_px", 22.0),
+                )
+            )
             desired = desired_point(
                 control,
                 process_image.shape[1],
@@ -472,7 +526,9 @@ def main() -> int:
             heartbeat_age_s = now - last_vehicle_heartbeat_at
             strict_confirmed = (
                 confirmed is not None
+                and active_target is not None
                 and detection is not None
+                and detection.target == active_target
                 and detection.source == "geometry_search"
                 and detection.status == "valid_shape"
             )
@@ -481,9 +537,7 @@ def main() -> int:
                 and error_px is not None
                 and error_px <= tolerance_px
             )
-            if released_at is not None:
-                state = "RELEASE_COMPLETE"
-            elif heartbeat_age_s > args.heartbeat_max_age_s:
+            if heartbeat_age_s > args.heartbeat_max_age_s:
                 centered_since = None
                 state = "BLOCKED_STALE_HEARTBEAT"
             elif not strict_confirmed:
@@ -503,17 +557,18 @@ def main() -> int:
                 else now - centered_since
             )
             ready = (
-                released_at is None
-                and centered
+                centered
                 and centered_for_s >= center_hold_s
                 and heartbeat_age_s <= args.heartbeat_max_age_s
             )
             if ready:
+                assert active_target is not None
+                servo_settings = settings_by_target[active_target]
                 verified, _full_detection, reason = (
                     full_resolution_center_verified(
                         detector,
                         raw,
-                        args.target,
+                        active_target,
                         detection,
                         desired,
                         tolerance_px,
@@ -545,6 +600,8 @@ def main() -> int:
                         raise RuntimeError(
                             "Release servo command was not accepted"
                         )
+                    servo_needs_reset = True
+                    pending_reset_settings = servo_settings
                     time.sleep(float(servo_settings["release_hold_s"]))
                     mode, armed = wait_vehicle_state(master, 2.0)
                     last_vehicle_heartbeat_at = time.monotonic()
@@ -561,12 +618,32 @@ def main() -> int:
                         raise RuntimeError(
                             "Servo reset command was not accepted"
                         )
-                    released_at = time.monotonic()
-                    state = "RELEASE_COMPLETE"
-                    print(
-                        "[BENCH RELEASE COMPLETE] command accepted and reset "
-                        "accepted; physical payload release is not sensed"
+                    servo_needs_reset = False
+                    pending_reset_settings = None
+                    completed_target = active_target
+                    completed_targets.add(completed_target)
+                    active_target = None
+                    centered_since = None
+                    tracker.reset()
+                    reset_tracking = getattr(
+                        detector,
+                        "reset_tracking",
+                        None,
                     )
+                    if callable(reset_tracking):
+                        reset_tracking()
+                    state = f"RELEASE_COMPLETE_{completed_target}"
+                    print(
+                        f"[BENCH RELEASE COMPLETE] target={completed_target}; "
+                        "command accepted and reset accepted; physical payload "
+                        "release is not sensed"
+                    )
+                    all_completed = completed_targets == requested_targets
+                    if not all_completed:
+                        print(
+                            "[READY FOR NEXT TARGET] remaining="
+                            f"{sorted(requested_targets - completed_targets)}"
+                        )
 
             fps = (
                 0.0
@@ -592,7 +669,7 @@ def main() -> int:
                 ),
                 process_image.shape,
                 state,
-                args.target,
+                active_target or "automatic",
                 error_px,
                 tolerance_px,
                 centered_for_s,
@@ -601,15 +678,40 @@ def main() -> int:
                 heartbeat_age_s,
                 rejection,
                 fps,
+                completed_targets,
             )
             stream.publish(view)
-            if released_at is not None and now - released_at >= 3.0:
+            if all_completed:
+                print("[BENCH TEST COMPLETE] all requested targets released once")
+                time.sleep(1.0)
                 return 0
     finally:
+        if servo_needs_reset and pending_reset_settings is not None:
+            try:
+                _final_mode, final_armed = wait_vehicle_state(master, 1.0)
+                if final_armed:
+                    print(
+                        "[FAILSAFE RESET BLOCKED] Vehicle is armed; "
+                        "neutral servo command was not sent"
+                    )
+                else:
+                    print("[FAILSAFE RESET] Returning selector to neutral")
+                    send_servo(
+                        master,
+                        int(pending_reset_settings["servo_channel"]),
+                        int(pending_reset_settings["reset_pwm"]),
+                        float(pending_reset_settings["ack_timeout_s"]),
+                    )
+            except Exception as exc:
+                print(f"[FAILSAFE RESET FAILED] {exc}")
         reader.stop()
         stream.stop()
 
-    print("[TIMEOUT] No payload command was sent")
+    print(
+        "[TIMEOUT] completed="
+        f"{sorted(completed_targets)} "
+        f"remaining={sorted(requested_targets - completed_targets)}"
+    )
     return 2
 
 

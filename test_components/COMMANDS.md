@@ -231,16 +231,15 @@ Strict OpenCV plus physical servo test:
 
 ```bash
 ./test_components/mavlink/opencv_servo_payload_test.sh \
-  --target red_triangle \
   --i-understand-props-off \
   --i-accept-servo-motion \
   --i-confirm-payload-zone-clear
 ```
 
-Use `--target blue_hexagon` for the other selector position. Connection, baud,
+The detector automatically accepts the red triangle and blue hexagon in either
+order during the same run. Each target can trigger only once. Connection, baud,
 servo channel, target PWM, neutral PWM, and hold time come from the real Mission
-2 profile. The bench tool sends no arm, mode, motor, or velocity commands and
-allows only one release per run.
+2 profile. The bench tool sends no arm, mode, motor, or velocity commands.
 
 ## 8A. GUIDED Body-Velocity Command Test
 

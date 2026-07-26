@@ -19,7 +19,10 @@ for directory in (ROOT / "target_mission_v2", ROOT / "tools"):
 from camera_sources import CameraFrame  # noqa: E402
 from opencv_common import LatestCameraReader  # noqa: E402
 from opencv_live_test import desired_point, scale_detection  # noqa: E402
-from opencv_servo_bench_test import servo_settings_from_config  # noqa: E402
+from opencv_servo_bench_test import (  # noqa: E402
+    servo_settings_from_config,
+    targets_for_run,
+)
 from test_opencv_refactor import detection  # noqa: E402
 
 
@@ -131,6 +134,12 @@ class CoordinateMappingTests(unittest.TestCase):
 
 
 class ServoProfileTests(unittest.TestCase):
+    def test_default_bench_mode_accepts_both_targets(self):
+        self.assertEqual(
+            targets_for_run("both"),
+            {"red_triangle", "blue_hexagon"},
+        )
+
     def test_bench_servo_settings_follow_target_mapping(self):
         config = {
             "payload": {
