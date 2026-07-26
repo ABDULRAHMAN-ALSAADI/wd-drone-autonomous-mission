@@ -23,18 +23,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Run package tests
+      - name: Run the complete project check
         run: |
           . .ci-venv/bin/activate
-          PYTHONPATH=src python -m unittest discover -s tests -v
-
-      - name: Run target mission tests
-        run: |
-          . .ci-venv/bin/activate
-          cd target_mission_v2
-          python -m unittest -v test_mission_controller.py
-
-      - name: Compile mission scripts
-        run: |
-          . .ci-venv/bin/activate
-          python -m py_compile target_mission_v2/*.py src/wd_drone/*.py tools/*.py
+          ./scripts/check_project.sh

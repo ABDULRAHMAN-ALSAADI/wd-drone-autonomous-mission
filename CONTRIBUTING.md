@@ -1,5 +1,28 @@
 # Contributing
 
+Thank you for helping improve the project. You do not need to be an expert:
+clear documentation fixes, reproducible bug reports, tests, and small focused
+changes are valuable.
+
+## Your First Contribution
+
+1. Read the root `README.md` and run `./scripts/check_project.sh`.
+2. Search existing issues before opening a new one.
+3. Fork the repository and create a focused branch:
+
+   ```bash
+   git switch -c fix/short-description
+   ```
+
+4. Make the change and add or update tests and documentation.
+5. Run `./scripts/check_project.sh` again.
+6. Commit with a short description of the observable change.
+7. Push your branch and open a pull request using the template.
+
+For a large change, a new dependency, or anything that affects flight control,
+payload behavior, arming, modes, or failsafes, open an issue before investing
+significant work.
+
 ## Source Of Truth
 
 Edit and review code on an Ubuntu clone. Synchronize tested files to the
@@ -31,6 +54,9 @@ For `yolov8-mission-pi5`:
 Also run the relevant SITL scenario when mission, control, MAVLink or vision
 behavior changes. State clearly what was and was not tested on real hardware.
 
+Continuous integration runs the software suite, but it cannot validate a
+camera, UART connection, flight controller, payload mechanism, or aircraft.
+
 ## Change Rules
 
 - Keep Mission Planner responsible for AUTO route, speed and altitude.
@@ -49,6 +75,10 @@ Do not commit camera dumps, logs, private data, model weights or generated HEF
 compiler output unless the team explicitly approves the release. Keep a record
 of model source, class mapping, training version and checksum outside Git until
 then.
+
+Never commit credentials, `.env` files, SSH keys, telemetry containing private
+locations, or personal data. If sensitive information is committed, stop and
+follow `SECURITY.md`; deleting it in a later commit is not enough.
 
 ## Commit Message
 

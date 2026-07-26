@@ -1,0 +1,59 @@
+name: Bug report
+description: Report a reproducible problem in software, simulation, or documentation.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report secrets, private location data, or exploitable safety issues here. Use the process in SECURITY.md.
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - Ubuntu software tests
+        - Gazebo / ArduPilot SITL
+        - Raspberry Pi 5
+        - Propeller-off hardware bench
+        - Real flight
+        - Documentation only
+    validations:
+      required: true
+  - type: input
+    id: branch_commit
+    attributes:
+      label: Branch and commit
+      placeholder: main at 0123abc
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the expected behavior and the actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Run ...
+        2. Configure ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Remove secrets, coordinates, personal data, and unrelated logs.
+      render: shell
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I did not reproduce this on an armed aircraft solely for this report.
+          required: true

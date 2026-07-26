@@ -1,154 +1,111 @@
 # WD Drone Autonomous Mission
 
-Autonomous rotary-wing UAV mission software for the 2026 UAV competition.
+[![Tests](https://github.com/ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission/actions/workflows/tests.yml/badge.svg)](https://github.com/ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission/actions/workflows/tests.yml)
+[![Python 3](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
+[![ArduPilot](https://img.shields.io/badge/Autopilot-ArduPilot-orange.svg)](https://ardupilot.org/)
+[![Raspberry Pi 5](https://img.shields.io/badge/Companion-Raspberry%20Pi%205-c51a4a.svg)](https://www.raspberrypi.com/products/raspberry-pi-5/)
 
-Start here:
+Open, testable companion-computer software for an autonomous rotary-wing UAV.
+The project combines ArduPilot, a Raspberry Pi 5, MAVLink, and computer vision
+to find ground targets, center above them, and operate a payload mechanism.
 
-```text
-START_HERE.md
-```
+This repository was built for the 2026 UAV competition, but its simulation,
+vision, safety, and hardware-test tools are designed so future teams can study
+and improve them.
 
-New team member or fresh computer:
+> [!CAUTION]
+> This software can command a real aircraft. Start with unit tests and
+> simulation. Remove propellers for all hardware bench tests. A successful
+> software test does not make an aircraft safe to fly.
 
-```text
-docs/BEGINNER_GUIDE.md
-```
+## Start Here
 
-That guide covers cloning both Git branches, Ubuntu setup, Raspberry Pi 5,
-Camera Module 3, OpenCV, YOLOv8/Hailo, Gazebo/SITL, testing, deployment, and
-the normal Git workflow.
+Choose the path that matches what you want to do:
 
-## Simple Folder Map
-
-| Folder | Purpose |
+| I want to… | Read or run this |
 | --- | --- |
-| `real_mission/` | Real Pi 5 + Cube Orange mission and real-drone parameter config. |
-| `test_components/` | Bench commands for camera, MAVLink, servo, motor, and software checks. |
-| `simulation/` | Gazebo + ArduPilot SITL scripts for testing the mission on Ubuntu. |
-| `target_mission_v2/` | Internal tested mission engine used by `real_mission/`. |
-| `scripts/` and `tools/` | Internal helpers used by the test wrappers. |
-| `docs/` | Safety notes, wiring notes, and longer explanations. |
+| Understand the project in five minutes | Continue with **How It Works** below |
+| Set up a new computer from zero | [Beginner Guide](docs/BEGINNER_GUIDE.md) |
+| Run a quick local software check | [Quick Start](#quick-start-software-only) |
+| Run the Gazebo + ArduPilot simulation | [Simulation Guide](simulation/README.md) |
+| Prepare Raspberry Pi and flight hardware | [Real Mission Guide](real_mission/README.md) |
+| Test one camera, MAVLink, servo, or motor component | [Component Test Commands](test_components/COMMANDS.md) |
+| Understand the code | [Architecture](docs/ARCHITECTURE.md) and [Project Structure](docs/PROJECT_STRUCTURE.md) |
+| Contribute a change | [Contributing Guide](CONTRIBUTING.md) |
 
-The YOLOv8/Hailo implementation is maintained on branch
-`yolov8-mission-pi5`. The beginner guide shows how to clone it beside this
-OpenCV-only version.
+## How It Works
 
-## Run The Real Mission
-
-On the Raspberry Pi:
-
-```bash
-cd ~/FOR_COMP/wd-drone-autonomous-mission
-./real_mission/run_mission2_target_payload.sh
-```
-
-Edit the real-drone tuning file:
+ArduPilot remains responsible for the normal AUTO route, altitude, speed, and
+flight failsafes. The Raspberry Pi companion process starts searching only when
+the configured mission conditions are met.
 
 ```text
-real_mission/parameter_config/mission2_target_payload.json
+ArduPilot AUTO survey
+        ↓
+Pi detects and confirms a target
+        ↓
+Pi requests GUIDED and sends bounded horizontal centering commands
+        ↓
+Fresh full-resolution geometry and safety checks pass
+        ↓
+Payload is simulated or released
+        ↓
+AUTO resumes for target two, then RTL is requested
 ```
 
-## Test Before Flight
+The OpenCV mission looks for:
 
-Read:
+- a **blue hexagon**, which receives the red payload;
+- a **red triangle**, which receives the blue payload.
 
-```text
-test_components/COMMANDS.md
-```
+Read [Real Mission Flow](docs/REAL_MISSION_FLOW.md) for the complete state
+machine and operator responsibilities.
 
-Run all local software checks:
+## Quick Start: Software Only
+
+The supported beginner environment is Ubuntu. These commands do not connect to
+an aircraft:
 
 ```bash
-./test_components/software/run_all_checks.sh
+git clone https://github.com/ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission.git
+cd wd-drone-autonomous-mission
+./scripts/setup.sh
+source .venv/bin/activate
+./scripts/check_project.sh
 ```
 
-Run the full read-only preflight check on the Pi:
+A successful check ends with all unit tests passing and all Python files
+compiling. Camera, Gazebo, Raspberry Pi, and flight-controller tests are
+separate because they need additional hardware or software.
 
-```bash
-./test_components/preflight/full_check.sh
-```
+## Project Map
 
-Run the live laptop camera window:
+| Path | What belongs here |
+| --- | --- |
+| [`real_mission/`](real_mission/) | Real-aircraft launch commands and parameter profiles |
+| [`target_mission_v2/`](target_mission_v2/) | Mission state machine, camera sources, OpenCV detector, configuration validation, and payload mapping |
+| [`simulation/`](simulation/) | Gazebo and ArduPilot SITL setup and launch scripts |
+| [`test_components/`](test_components/) | Guarded camera, MAVLink, servo, motor, and preflight checks |
+| [`tools/`](tools/) | Lower-level diagnostic and replay utilities |
+| [`tests/`](tests/) | Tests for the observer and shared tools |
+| [`docs/`](docs/) | Architecture, safety, operations, calibration, and roadmap documents |
 
-```bash
-./real_mission/open_laptop_camera_window.sh
-```
+The [`main`](../../tree/main) branch is the OpenCV reference implementation.
+The [`yolov8-mission-pi5`](../../tree/yolov8-mission-pi5) branch contains the
+YOLOv8/Hailo candidate-detection implementation.
 
-Run MAVLink health on the Pi:
+## Real Hardware
 
-```bash
-./test_components/mavlink/status.sh
-./test_components/mavlink/health.sh
-```
+Do not jump from cloning the repository to flight. Use this progression:
 
-Run the guarded avionics sequence dry-run:
+1. Run `./scripts/check_project.sh`.
+2. Test in Gazebo and ArduPilot SITL.
+3. Review [Safety and Failsafes](docs/SAFETY_AND_FAILSAFES.md).
+4. Run read-only Raspberry Pi and MAVLink checks.
+5. Run guarded propeller-off bench tests.
+6. Use a team-reviewed flight-test plan with a competent safety pilot.
 
-```bash
-./test_components/mavlink/bench_sequence.sh --dry-run
-```
-
-Real armed bench sequence, propellers removed only:
-
-```bash
-./test_components/mavlink/bench_sequence.sh --i-understand-props-off --i-accept-arming
-```
-
-## Mission Behavior
-
-The Pi waits for ArduPilot to be armed, in `AUTO`, at or after the configured
-search waypoint, and running a search-enabled Mission 2 profile. Then it:
-
-1. searches for the blue hexagon and red triangle;
-2. requests `GUIDED`;
-3. centers over the confirmed target;
-4. drops the correct payload when physical payload is enabled;
-5. resumes `AUTO` for the next target;
-6. requests `RTL` after both targets are complete.
-
-By default, QGC/Mission Planner and ArduPilot own AUTO altitude and AUTO speed.
-The Pi only controls low-speed horizontal centering in GUIDED after a confirmed
-target.
-
-Read the operator flow for Mission 1 and Mission 2:
-
-```text
-docs/REAL_MISSION_FLOW.md
-```
-
-## Simulation
-
-Read:
-
-```text
-simulation/README.md
-```
-
-The normal startup order is Gazebo, SITL, camera stream, then mission
-controller.
-
-## Camera Monitoring
-
-The OpenCV-only Pi camera workflow, focus sweep, benchmarks, dataset capture,
-and laptop monitoring commands are documented here:
-
-```text
-docs/OPENCV_PI5_TESTING.md
-```
-
-The laptop camera window needs an Ethernet, Wi-Fi, or hotspot SSH connection to
-the Pi:
-
-```bash
-./real_mission/open_laptop_camera_window.sh
-```
-
-It displays the annotated stream generated by either the mission controller or
-the camera-only OpenCV live test. RFD900x is MAVLink telemetry, not video. The
-mission does not depend on the laptop window.
-
-## Safety
-
-Keep this default until bench tests pass:
+Physical payload output is disabled by default:
 
 ```json
 "payload": {
@@ -156,4 +113,36 @@ Keep this default until bench tests pass:
 }
 ```
 
-Do not run arm, servo, or motor tests with propellers installed.
+The project does not replace airframe inspection, correct ArduPilot setup,
+range checks, GPS/compass checks, tested RC recovery modes, legal compliance,
+or pilot judgment.
+
+## Testing
+
+Run the same project check used by continuous integration:
+
+```bash
+./scripts/check_project.sh
+```
+
+When mission control, MAVLink, camera, or vision behavior changes, also run the
+relevant SITL scenario. Hardware behavior must be reported separately in a pull
+request; unit tests cannot prove real-flight readiness.
+
+## Contributing
+
+Beginner contributions are welcome. Documentation corrections, reproducible bug
+reports, simulation scenarios, tests, and small focused improvements are good
+places to start.
+
+Please read [CONTRIBUTING.md](CONTRIBUTING.md), open an issue for large or
+safety-critical changes, and use a feature branch. Never include secrets, logs,
+private flight data, camera dumps, or large model files in a pull request.
+
+See the [Roadmap](docs/ROADMAP.md) for future work.
+
+## License
+
+An open-source license has not been selected yet. Public visibility alone does
+not grant permission to copy, modify, or redistribute the project. A `LICENSE`
+file should be added before inviting broad reuse.
