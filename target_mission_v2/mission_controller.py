@@ -15,19 +15,17 @@ import argparse
 import json
 import math
 import signal
-import threading
 import time
 from collections import deque
 from dataclasses import asdict
 from enum import Enum
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Deque, Optional
 
 import cv2
-from pymavlink import mavutil
 
-from camera_sources import CameraFrame, CameraLike, open_camera
+from camera_sources import CameraLike, open_camera
+from camera_worker import LatestFrameCamera
 from config_validation import (
     DEFAULT_NAVIGATION,
     DEFAULT_SAFETY,
@@ -38,10 +36,22 @@ from config_validation import (
     validate_config,
 )
 from configuration import load_config
+from overlay import draw_mission_overlay
 from payload import (
     TARGET_PAYLOAD_COLOUR,
+    load_payload_state,
+    manage_payload_state,
     payload_colour_for_target,
     payload_output_for_target,
+    perform_payload_action,
+    persist_payload_release,
+    verify_payload_geometry as verify_payload_geometry_frame,
+)
+from safety import (
+    guidance_health_errors as evaluate_guidance_health,
+    measurement_age,
+    payload_release_gate_errors as evaluate_payload_release_gate,
+    payload_safety_error as evaluate_payload_safety,
 )
 from vision import (
     Detection,
@@ -49,10 +59,16 @@ from vision import (
     ProcessedVisionFrame,
     create_detector,
 )
+from vehicle import (
+    Vehicle,
+    enforce_parameters,
+    heartbeat_is_target_vehicle,
+    heartbeat_is_vehicle,
+)
+from video_stream import MjpegFrameServer
 from control import altitude_velocity_down
 
 
-AUTOPILOT_COMPONENTS = {mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1}
 MISSION_OWNED_MODES = {"AUTO", "GUIDED"}
 
 
@@ -84,542 +100,6 @@ def horizontal_distance_m(
     dlon = lon2 - lon1
     a = math.sin(dlat / 2.0) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2.0) ** 2
     return 6_371_000.0 * 2.0 * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1.0 - a)))
-
-
-def heartbeat_is_vehicle(message: Any) -> bool:
-    if message.get_srcSystem() <= 0:
-        return False
-    if message.get_srcComponent() not in AUTOPILOT_COMPONENTS:
-        return False
-    if message.type in (
-        mavutil.mavlink.MAV_TYPE_GCS,
-        mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER,
-    ):
-        return False
-    return message.autopilot != mavutil.mavlink.MAV_AUTOPILOT_INVALID
-
-
-def heartbeat_is_target_vehicle(message: Any, target_system: int) -> bool:
-    return message.get_srcSystem() == target_system and heartbeat_is_vehicle(message)
-
-
-class Vehicle:
-    VELOCITY_ONLY_MASK = 3527
-
-    def __init__(self, connection: str, baud: Optional[int] = None) -> None:
-        print(f"[MAVLINK] Connecting to {connection} baud={baud or 'default'}")
-        kwargs: dict[str, Any] = {"source_system": 245, "source_component": 191}
-        if baud is not None:
-            kwargs["baud"] = int(baud)
-        self.master = mavutil.mavlink_connection(connection, **kwargs)
-        hb = self._wait_vehicle_heartbeat(timeout_s=30.0)
-        if hb is None:
-            raise RuntimeError("No ArduPilot heartbeat")
-        self.target_system = hb.get_srcSystem()
-        self.target_component = hb.get_srcComponent()
-        self.master.target_system = self.target_system
-        self.master.target_component = self.target_component
-        self.mode = mavutil.mode_string_v10(hb)
-        self.armed = bool(hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-        self.relative_alt_m: Optional[float] = None
-        self.latitude_deg: Optional[float] = None
-        self.longitude_deg: Optional[float] = None
-        self.mission_seq: Optional[int] = None
-        self.velocity_north_m_s: Optional[float] = None
-        self.velocity_east_m_s: Optional[float] = None
-        self.velocity_down_m_s: Optional[float] = None
-        self.horizontal_speed_m_s: Optional[float] = None
-        self.total_speed_m_s: Optional[float] = None
-        self.acceleration_m_s2: Optional[float] = None
-        self._last_velocity_sample: Optional[tuple[float, float, float, float]] = None
-        self.rc_channels: dict[int, int] = {}
-        self.last_heartbeat = time.monotonic()
-        self.last_position_at: Optional[float] = None
-        self.last_mission_at: Optional[float] = None
-        self.last_rc_at: Optional[float] = None
-        self.gps_fix_type: Optional[int] = None
-        self.gps_satellites: Optional[int] = None
-        self.last_gps_at: Optional[float] = None
-        self.battery_voltage_v: Optional[float] = None
-        self.battery_remaining_pct: Optional[int] = None
-        self.last_battery_at: Optional[float] = None
-        self.ekf_flags: Optional[int] = None
-        self.last_ekf_at: Optional[float] = None
-        self.roll_rad: Optional[float] = None
-        self.pitch_rad: Optional[float] = None
-        self.yaw_rad: Optional[float] = None
-        self.last_attitude_at: Optional[float] = None
-        self.command_acks: dict[int, tuple[float, int]] = {}
-        self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT, 10.0)
-        self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_MISSION_CURRENT, 4.0)
-        self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_RC_CHANNELS, 4.0)
-        self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_GPS_RAW_INT, 4.0)
-        self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_SYS_STATUS, 2.0)
-        self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT, 2.0)
-        self._request_interval(mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE, 10.0)
-        print(f"[MAVLINK] Connected system={self.target_system} component={self.target_component}")
-
-    def _wait_vehicle_heartbeat(self, timeout_s: float) -> Optional[Any]:
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            message = self.master.recv_match(type="HEARTBEAT", blocking=True, timeout=0.5)
-            if message is None:
-                continue
-            if heartbeat_is_vehicle(message):
-                return message
-            source = f"{message.get_srcSystem()}:{message.get_srcComponent()}"
-            print(f"[MAVLINK] Ignoring non-vehicle heartbeat src={source} mode={mavutil.mode_string_v10(message)}")
-        return None
-
-    def _request_interval(self, message_id: int, hz: float) -> None:
-        self.master.mav.command_long_send(
-            self.target_system, self.target_component,
-            mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
-            message_id, int(1_000_000 / hz), 0, 0, 0, 0, 0,
-        )
-
-    def poll(self) -> None:
-        for _ in range(100):
-            msg = self.master.recv_match(blocking=False)
-            if msg is None:
-                return
-            self._handle_message(msg)
-
-    def recover_vehicle_heartbeat(self, timeout_s: float = 1.0) -> bool:
-        """Drain a telemetry backlog before declaring the vehicle heartbeat lost."""
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            msg = self.master.recv_match(blocking=True, timeout=min(0.1, max(0.0, deadline - time.monotonic())))
-            if msg is None:
-                continue
-            self._handle_message(msg)
-            if msg.get_type() == "HEARTBEAT" and heartbeat_is_target_vehicle(msg, self.target_system):
-                return True
-        return False
-
-    def _handle_message(self, msg: Any) -> None:
-        kind = msg.get_type()
-        if kind != "BAD_DATA" and msg.get_srcSystem() not in (0, self.target_system):
-            return
-        if kind == "HEARTBEAT":
-            if not heartbeat_is_target_vehicle(msg, self.target_system):
-                return
-            self.mode = mavutil.mode_string_v10(msg)
-            self.armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-            self.last_heartbeat = time.monotonic()
-        elif kind == "GLOBAL_POSITION_INT":
-            now = time.monotonic()
-            self.relative_alt_m = msg.relative_alt / 1000.0
-            self.latitude_deg = float(msg.lat) / 1e7
-            self.longitude_deg = float(msg.lon) / 1e7
-            self.last_position_at = now
-            vn = float(msg.vx) / 100.0
-            ve = float(msg.vy) / 100.0
-            vd = float(msg.vz) / 100.0
-            self.velocity_north_m_s = vn
-            self.velocity_east_m_s = ve
-            self.velocity_down_m_s = vd
-            self.horizontal_speed_m_s = math.hypot(vn, ve)
-            self.total_speed_m_s = math.sqrt(vn * vn + ve * ve + vd * vd)
-            if self._last_velocity_sample is not None:
-                last_t, last_vn, last_ve, last_vd = self._last_velocity_sample
-                dt = max(1e-6, now - last_t)
-                dv = math.sqrt((vn - last_vn) ** 2 + (ve - last_ve) ** 2 + (vd - last_vd) ** 2)
-                self.acceleration_m_s2 = dv / dt
-            self._last_velocity_sample = (now, vn, ve, vd)
-        elif kind == "MISSION_CURRENT":
-            self.mission_seq = int(msg.seq)
-            self.last_mission_at = time.monotonic()
-        elif kind == "RC_CHANNELS":
-            for channel in range(1, 19):
-                value = int(getattr(msg, f"chan{channel}_raw", 0))
-                if value > 0:
-                    self.rc_channels[channel] = value
-            self.last_rc_at = time.monotonic()
-        elif kind == "GPS_RAW_INT":
-            self.gps_fix_type = int(msg.fix_type)
-            self.gps_satellites = int(msg.satellites_visible)
-            self.last_gps_at = time.monotonic()
-        elif kind == "SYS_STATUS":
-            voltage_mv = int(getattr(msg, "voltage_battery", 0))
-            self.battery_voltage_v = voltage_mv / 1000.0 if voltage_mv not in (0, 65535) else None
-            remaining = int(getattr(msg, "battery_remaining", -1))
-            self.battery_remaining_pct = remaining if remaining >= 0 else None
-            self.last_battery_at = time.monotonic()
-        elif kind == "EKF_STATUS_REPORT":
-            self.ekf_flags = int(msg.flags)
-            self.last_ekf_at = time.monotonic()
-        elif kind == "ATTITUDE":
-            self.roll_rad = float(msg.roll)
-            self.pitch_rad = float(msg.pitch)
-            self.yaw_rad = float(msg.yaw)
-            self.last_attitude_at = time.monotonic()
-        elif kind == "STATUSTEXT":
-            text = msg.text.decode(errors="replace") if isinstance(msg.text, bytes) else msg.text
-            if int(msg.severity) <= mavutil.mavlink.MAV_SEVERITY_WARNING:
-                print(f"[ARDUPILOT] {text}")
-        elif kind == "COMMAND_ACK":
-            result = mavutil.mavlink.enums["MAV_RESULT"].get(msg.result)
-            print(f"[COMMAND ACK] command={msg.command} result={result.name if result else msg.result}")
-            self.command_acks[int(msg.command)] = (time.monotonic(), int(msg.result))
-
-    def set_mode(self, name: str) -> None:
-        mapping = self.master.mode_mapping()
-        if name not in mapping:
-            raise RuntimeError(f"Mode unavailable: {name}")
-        print(f"[MODE REQUEST] {self.mode} -> {name}")
-        self.master.mav.set_mode_send(
-            self.target_system,
-            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
-            mapping[name],
-        )
-
-    def send_body_velocity(self, forward: float, right: float, down: float) -> None:
-        self.master.mav.set_position_target_local_ned_send(
-            int(time.monotonic() * 1000) & 0xFFFFFFFF,
-            self.target_system,
-            self.target_component,
-            mavutil.mavlink.MAV_FRAME_BODY_OFFSET_NED,
-            self.VELOCITY_ONLY_MASK,
-            0, 0, 0,
-            float(forward), float(right), float(down),
-            0, 0, 0,
-            0, 0,
-        )
-
-    def set_servo(self, channel: int, pwm: int) -> float:
-        sent_at = time.monotonic()
-        self.master.mav.command_long_send(
-            self.target_system, self.target_component,
-            mavutil.mavlink.MAV_CMD_DO_SET_SERVO, 0,
-            float(channel), float(pwm), 0, 0, 0, 0, 0,
-        )
-        return sent_at
-
-    def command_ack_after(self, command: int, sent_at: float) -> Optional[int]:
-        ack = self.command_acks.get(int(command))
-        if ack is None or ack[0] < sent_at:
-            return None
-        return ack[1]
-
-    def set_ground_speed(self, speed_m_s: float) -> None:
-        print(f"[SPEED REQUEST] AUTO ground speed {speed_m_s:.2f} m/s")
-        self.master.mav.command_long_send(
-            self.target_system,
-            self.target_component,
-            mavutil.mavlink.MAV_CMD_DO_CHANGE_SPEED,
-            0,
-            1.0,
-            float(speed_m_s),
-            -1.0,
-            0,
-            0,
-            0,
-            0,
-        )
-
-    @staticmethod
-    def _param_id(message: Any) -> str:
-        param_id = message.param_id.decode(errors="replace") if isinstance(message.param_id, bytes) else message.param_id
-        return param_id.rstrip("\x00")
-
-    def _parameter_components(self) -> list[int]:
-        components = [self.target_component, 1, 0]
-        return list(dict.fromkeys(components))
-
-    def read_parameter(self, name: str, timeout_s: float = 8.0) -> Optional[float]:
-        deadline = time.monotonic() + timeout_s
-        for component in self._parameter_components():
-            self.master.mav.param_request_read_send(self.target_system, component, name.encode(), -1)
-            attempt_deadline = min(deadline, time.monotonic() + max(0.8, timeout_s / 3.0))
-            while time.monotonic() < attempt_deadline:
-                msg = self.master.recv_match(blocking=True, timeout=0.25)
-                if msg is None:
-                    continue
-                self._handle_message(msg)
-                if msg.get_type() == "PARAM_VALUE" and self._param_id(msg) == name:
-                    return float(msg.param_value)
-            if time.monotonic() >= deadline:
-                break
-        return None
-
-    def set_parameter(self, name: str, value: float, timeout_s: float = 6.0) -> None:
-        print(f"[PARAMETER] Setting {name}={value}")
-        deadline = time.monotonic() + timeout_s
-        last_send_at = 0.0
-        while time.monotonic() < deadline:
-            now = time.monotonic()
-            if now - last_send_at >= 1.0:
-                for component in self._parameter_components():
-                    self.master.mav.param_set_send(
-                        self.target_system, component,
-                        name.encode(), float(value), mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
-                    )
-                last_send_at = now
-            msg = self.master.recv_match(blocking=True, timeout=0.3)
-            if msg is None:
-                continue
-            self._handle_message(msg)
-            if msg.get_type() == "PARAM_VALUE" and self._param_id(msg) == name and abs(float(msg.param_value) - value) <= 0.5:
-                print(f"[PARAMETER VERIFIED] {name}={float(msg.param_value)}")
-                return
-        raise RuntimeError(f"ArduPilot did not confirm {name}={value}")
-
-
-def enforce_parameters(vehicle: Vehicle, config: dict[str, Any]) -> None:
-    params = config["parameters"]
-    if not bool(params.get("enforce", True)):
-        print("[PARAMETER] Enforcement disabled; QGC/ArduPilot parameters are left unchanged")
-        return
-    timeout_s = float(params.get("read_timeout_s", 8.0))
-    missing_action = params.get("missing_action", "fail")
-    for name, value in required_ardupilot_parameters(config).items():
-        current = vehicle.read_parameter(name, timeout_s=timeout_s)
-        if current is None:
-            message = f"Could not read {name}; parameter was not verified"
-            if missing_action == "warn":
-                print(f"[PARAMETER WARNING] {message}")
-                continue
-            raise RuntimeError(message)
-        print(f"[PARAMETER] {name} current={current}")
-        if abs(current - value) > 0.5:
-            vehicle.set_parameter(name, value)
-        else:
-            print(f"[PARAMETER VERIFIED] {name}={current}")
-
-
-class LatestFrameCamera:
-    """Capture in the background so camera stalls do not block MAVLink polling."""
-
-    def __init__(self, camera: CameraLike) -> None:
-        self.camera = camera
-        self._lock = threading.Lock()
-        self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
-        self._frame: Optional[CameraFrame] = None
-        self._sequence = 0
-        self._last_delivered_sequence = 0
-        self.captured_count = 0
-        self.overwritten_count = 0
-        self._failed = False
-
-    def start(self) -> None:
-        self._thread = threading.Thread(target=self._run, name="camera-capture", daemon=True)
-        self._thread.start()
-
-    def _run(self) -> None:
-        while not self._stop.is_set():
-            try:
-                read_frame = getattr(self.camera, "read_frame", None)
-                if callable(read_frame):
-                    camera_frame = read_frame()
-                else:
-                    ok, image = self.camera.read()
-                    camera_frame = None if not ok or image is None else CameraFrame(
-                        frame_id=self._sequence + 1,
-                        sensor_timestamp_ns=None,
-                        received_monotonic_s=time.monotonic(),
-                        image_bgr=image,
-                        metadata={},
-                        source=type(self.camera).__name__,
-                    )
-            except Exception as exc:
-                print(f"[CAMERA ERROR] {exc}")
-                self._failed = True
-                return
-            if camera_frame is None:
-                time.sleep(0.01)
-                continue
-            with self._lock:
-                if self._frame is not None and self._sequence > self._last_delivered_sequence:
-                    self.overwritten_count += 1
-                self._sequence += 1
-                self.captured_count += 1
-                self._frame = CameraFrame(
-                    frame_id=self._sequence,
-                    sensor_timestamp_ns=camera_frame.sensor_timestamp_ns,
-                    received_monotonic_s=camera_frame.received_monotonic_s,
-                    image_bgr=camera_frame.image_bgr,
-                    metadata=camera_frame.metadata,
-                    source=camera_frame.source,
-                )
-
-    def latest(self) -> Optional[CameraFrame]:
-        with self._lock:
-            self._last_delivered_sequence = self._sequence
-            return self._frame
-
-    def metrics(self) -> dict[str, int]:
-        with self._lock:
-            return {
-                "captured": self.captured_count,
-                "overwritten": self.overwritten_count,
-                "latest_frame_id": self._sequence,
-            }
-
-    @property
-    def failed(self) -> bool:
-        return self._failed
-
-    def stop(self) -> None:
-        self._stop.set()
-        self.camera.release()
-        if self._thread is not None:
-            self._thread.join(timeout=2.5)
-
-
-class MjpegFrameServer:
-    """Serve the mission overlay without encoding in the mission loop."""
-
-    def __init__(self, display_config: dict[str, Any]) -> None:
-        self.enabled = bool(display_config.get("mjpeg_stream_enabled", False))
-        self.bind = str(display_config.get("mjpeg_stream_bind", "127.0.0.1"))
-        self.port = int(display_config.get("mjpeg_stream_port", 5602))
-        self.max_fps = float(display_config.get("mjpeg_stream_fps", 10.0))
-        self.quality = int(display_config.get("mjpeg_stream_quality", 65))
-        self.width = int(display_config.get("mjpeg_stream_width", 960))
-        self._condition = threading.Condition()
-        self._raw_frame: Optional[Any] = None
-        self._raw_sequence = 0
-        self._raw_consumed_sequence = 0
-        self._jpeg: Optional[bytes] = None
-        self._sequence = 0
-        self._stopping = False
-        self._last_encode_at = 0.0
-        self._submitted_count = 0
-        self._encoded_count = 0
-        self._overwritten_count = 0
-        self._server: Optional[ThreadingHTTPServer] = None
-        self._thread: Optional[threading.Thread] = None
-        self._encoder_thread: Optional[threading.Thread] = None
-
-    def start(self) -> None:
-        if not self.enabled:
-            return
-        owner = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self) -> None:
-                if self.path not in {"/", "/stream.mjpg"}:
-                    self.send_error(404)
-                    return
-                self.send_response(200)
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
-                self.end_headers()
-                sequence = -1
-                try:
-                    while True:
-                        with owner._condition:
-                            owner._condition.wait_for(
-                                lambda: owner._stopping or owner._sequence != sequence,
-                                timeout=1.0,
-                            )
-                            if owner._stopping:
-                                return
-                            if owner._jpeg is None or owner._sequence == sequence:
-                                continue
-                            jpeg = owner._jpeg
-                            sequence = owner._sequence
-                        self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n")
-                        self.wfile.write(f"Content-Length: {len(jpeg)}\r\n\r\n".encode("ascii"))
-                        self.wfile.write(jpeg)
-                        self.wfile.write(b"\r\n")
-                except (BrokenPipeError, ConnectionResetError):
-                    return
-
-            def log_message(self, _format: str, *_args: Any) -> None:
-                return
-
-        try:
-            self._server = ThreadingHTTPServer((self.bind, self.port), Handler)
-            self._server.daemon_threads = True
-        except OSError as exc:
-            self.enabled = False
-            print(f"[VIDEO STREAM WARNING] disabled: {exc}")
-            return
-        self._encoder_thread = threading.Thread(
-            target=self._encode_loop,
-            name="mission-video-encoder",
-            daemon=True,
-        )
-        self._encoder_thread.start()
-        self._thread = threading.Thread(target=self._server.serve_forever, name="mission-video", daemon=True)
-        self._thread.start()
-        print(f"[VIDEO STREAM] http://{self.bind}:{self.port}/stream.mjpg via SSH tunnel")
-
-    def publish(self, frame: Any) -> None:
-        if not self.enabled:
-            return
-        with self._condition:
-            if self._raw_sequence != self._raw_consumed_sequence:
-                self._overwritten_count += 1
-            self._raw_frame = frame
-            self._raw_sequence += 1
-            self._submitted_count += 1
-            self._condition.notify_all()
-
-    def _encode_loop(self) -> None:
-        minimum_interval = 1.0 / max(0.1, self.max_fps)
-        while True:
-            with self._condition:
-                self._condition.wait_for(
-                    lambda: self._stopping or self._raw_sequence != self._raw_consumed_sequence,
-                    timeout=1.0,
-                )
-                if self._stopping:
-                    return
-                if self._raw_frame is None:
-                    continue
-                frame = self._raw_frame
-                self._raw_consumed_sequence = self._raw_sequence
-
-            delay = minimum_interval - (time.monotonic() - self._last_encode_at)
-            if delay > 0:
-                time.sleep(delay)
-            output = frame
-            if output.shape[1] > self.width:
-                scale = self.width / output.shape[1]
-                output = cv2.resize(
-                    output,
-                    (self.width, max(1, round(output.shape[0] * scale))),
-                    interpolation=cv2.INTER_AREA,
-                )
-            ok, encoded = cv2.imencode(
-                ".jpg",
-                output,
-                [int(cv2.IMWRITE_JPEG_QUALITY), self.quality],
-            )
-            self._last_encode_at = time.monotonic()
-            if not ok:
-                continue
-            with self._condition:
-                self._jpeg = encoded.tobytes()
-                self._sequence += 1
-                self._encoded_count += 1
-                self._condition.notify_all()
-
-    def metrics(self) -> dict[str, int]:
-        with self._condition:
-            return {
-                "submitted": self._submitted_count,
-                "encoded": self._encoded_count,
-                "overwritten": self._overwritten_count,
-            }
-
-    def stop(self) -> None:
-        if not self.enabled and self._server is None:
-            return
-        with self._condition:
-            self._stopping = True
-            self._condition.notify_all()
-        if self._server is not None:
-            self._server.shutdown()
-            self._server.server_close()
-        if self._encoder_thread is not None:
-            self._encoder_thread.join(timeout=2.0)
-        if self._thread is not None:
-            self._thread.join(timeout=2.0)
 
 
 class Controller:
@@ -731,52 +211,10 @@ class Controller:
         }, sort_keys=True) + "\n")
 
     def _load_payload_state(self) -> None:
-        assert self.payload_state_path is not None
-        if not self.payload_state_path.exists():
-            print(f"[PAYLOAD STATE] empty: {self.payload_state_path}")
-            return
-        data = json.loads(self.payload_state_path.read_text(encoding="utf-8"))
-        profile = str(self.config["mission"].get("name", ""))
-        if data.get("mission_profile") != profile:
-            raise RuntimeError(
-                f"Payload state profile mismatch: file={data.get('mission_profile')} config={profile}. "
-                "Reset the state explicitly before this attempt."
-            )
-        targets = data.get("targets", {})
-        self.completed_targets.update(
-            target for target, record in targets.items()
-            if bool(record.get("payload_release_attempted", False))
-        )
-        print(f"[PAYLOAD STATE] loaded completed={sorted(self.completed_targets)} path={self.payload_state_path}")
+        load_payload_state(self)
 
     def _persist_payload_release(self, target: str, payload_colour: str, accepted: bool) -> None:
-        if self.payload_state_path is None:
-            return
-        output = payload_output_for_target(self.config["payload"], target)
-        data: dict[str, Any] = {
-            "mission_profile": self.config["mission"].get("name"),
-            "targets": {},
-        }
-        if self.payload_state_path.exists():
-            data = json.loads(self.payload_state_path.read_text(encoding="utf-8"))
-        data.setdefault("targets", {})[target] = {
-            "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "waypoint": self.vehicle.mission_seq,
-            "payload_colour": payload_colour,
-            "payload_mechanism": self.config["payload"].get(
-                "mechanism",
-                "legacy_simulation",
-            ),
-            "servo_channel": output["servo_channel"],
-            "release_pwm": output["release_pwm"],
-            "payload_command_accepted": bool(accepted),
-            "payload_release_attempted": True,
-            "physical_release_confirmed": False,
-        }
-        self.payload_state_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.payload_state_path.with_suffix(self.payload_state_path.suffix + ".tmp")
-        temporary.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        temporary.replace(self.payload_state_path)
+        persist_payload_release(self, target, payload_colour, accepted)
 
     def transition(self, state: State, reason: str) -> None:
         print(f"[STATE] {self.state.value} -> {state.value}: {reason}")
@@ -971,73 +409,10 @@ class Controller:
 
     @staticmethod
     def _age(now: float, timestamp: Optional[float]) -> Optional[float]:
-        return None if timestamp is None else now - timestamp
+        return measurement_age(now, timestamp)
 
     def guidance_health_errors(self, expected_mode: str, now: Optional[float] = None) -> list[str]:
-        now = time.monotonic() if now is None else now
-        errors: list[str] = []
-        if not self.vehicle.armed:
-            errors.append("vehicle is disarmed")
-        if self.vehicle.mode != expected_mode:
-            errors.append(f"mode is {self.vehicle.mode}, expected {expected_mode}")
-
-        heartbeat_age = now - float(getattr(self.vehicle, "last_heartbeat", 0.0))
-        if heartbeat_age > float(self.safety.get("heartbeat_recent_s", 3.0)):
-            errors.append(f"heartbeat stale ({heartbeat_age:.1f}s)")
-
-        position_age = self._age(now, getattr(self.vehicle, "last_position_at", None))
-        if self.vehicle.relative_alt_m is None:
-            errors.append("altitude unknown")
-        elif position_age is not None and position_age > float(self.safety.get("position_recent_s", 3.0)):
-            errors.append(f"position/altitude stale ({position_age:.1f}s)")
-        elif bool(self.safety.get("require_position", False)) and position_age is None:
-            errors.append("position timestamp unavailable")
-
-        min_alt = self.safety.get("payload_min_altitude_m")
-        max_alt = self.safety.get("payload_max_altitude_m")
-        if self.vehicle.relative_alt_m is not None:
-            if min_alt is not None and self.vehicle.relative_alt_m < float(min_alt):
-                errors.append(f"altitude {self.vehicle.relative_alt_m:.2f}m below {float(min_alt):.2f}m")
-            if max_alt is not None and self.vehicle.relative_alt_m > float(max_alt):
-                errors.append(f"altitude {self.vehicle.relative_alt_m:.2f}m above {float(max_alt):.2f}m")
-
-        if bool(self.safety.get("require_gps", False)):
-            gps_age = self._age(now, getattr(self.vehicle, "last_gps_at", None))
-            if gps_age is None or gps_age > float(self.safety.get("gps_recent_s", 4.0)):
-                errors.append("GPS status unavailable or stale")
-            fix = getattr(self.vehicle, "gps_fix_type", None)
-            satellites = getattr(self.vehicle, "gps_satellites", None)
-            if fix is None or fix < int(self.safety.get("min_gps_fix_type", 3)):
-                errors.append(f"GPS fix {fix} below required {int(self.safety.get('min_gps_fix_type', 3))}")
-            if satellites is None or satellites < int(self.safety.get("min_gps_satellites", 6)):
-                errors.append(f"GPS satellites {satellites} below required {int(self.safety.get('min_gps_satellites', 6))}")
-
-        if bool(self.safety.get("require_ekf_status", False)):
-            flags = getattr(self.vehicle, "ekf_flags", None)
-            required = int(self.safety.get("ekf_required_flags", 51))
-            if flags is None:
-                errors.append("EKF status unavailable")
-            elif flags & required != required:
-                errors.append(f"EKF flags 0x{flags:x} missing required 0x{required:x}")
-
-        battery = getattr(self.vehicle, "battery_voltage_v", None)
-        minimum_battery = self.safety.get("min_battery_voltage_v")
-        if bool(self.safety.get("require_battery", False)) and battery is None:
-            errors.append("battery voltage unavailable")
-        if minimum_battery is not None and battery is not None and battery < float(minimum_battery):
-            errors.append(f"battery {battery:.2f}V below {float(minimum_battery):.2f}V")
-
-        if bool(self.safety.get("require_attitude", False)):
-            attitude_age = self._age(now, getattr(self.vehicle, "last_attitude_at", None))
-            if attitude_age is None:
-                errors.append("attitude unavailable")
-            elif attitude_age > float(self.safety.get("attitude_recent_s", 1.0)):
-                errors.append(f"attitude stale ({attitude_age:.1f}s)")
-
-        enabled, reason = self.search_gate_status(now=now)
-        if not enabled:
-            errors.append(f"autonomy gate disabled: {reason}")
-        return errors
+        return evaluate_guidance_health(self, expected_mode, now)
 
     def latch_pilot_override(self, reason: str) -> None:
         if not self.manual_override_latched:
@@ -1126,22 +501,7 @@ class Controller:
         return True, f"AUTO item {self.vehicle.mission_seq}; {reason}"
 
     def payload_safety_error(self) -> Optional[str]:
-        if bool(self.safety.get("payload_requires_guided", True)) and self.vehicle.mode != "GUIDED":
-            return f"vehicle mode is {self.vehicle.mode}, not GUIDED"
-        altitude = self.vehicle.relative_alt_m
-        min_alt = self.safety.get("payload_min_altitude_m")
-        max_alt = self.safety.get("payload_max_altitude_m")
-        if min_alt is not None:
-            if altitude is None:
-                return "altitude is unknown"
-            if altitude < float(min_alt):
-                return f"altitude {altitude:.2f} m is below {float(min_alt):.2f} m"
-        if max_alt is not None:
-            if altitude is None:
-                return "altitude is unknown"
-            if altitude > float(max_alt):
-                return f"altitude {altitude:.2f} m is above {float(max_alt):.2f} m"
-        return None
+        return evaluate_payload_safety(self)
 
     def center_error_variance_px(self, now: Optional[float] = None) -> Optional[float]:
         timestamp = time.monotonic() if now is None else float(now)
@@ -1188,235 +548,19 @@ class Controller:
         captured_at_s: Optional[float] = None,
         received_at_s: Optional[float] = None,
     ) -> bool:
-        """Require a new strict full-resolution shape result before release."""
-        target = self.current_target
-        verify = getattr(self.detector, "verify_target_frame", None)
-        previous_reason = self.last_payload_geometry_reason
-        was_verified = self.last_payload_geometry_detection is not None
-        self.last_payload_geometry_at = 0.0
-        self.last_payload_geometry_detection = None
-        self.last_payload_geometry_error_px = None
-
-        if target not in TARGET_PAYLOAD_COLOUR:
-            reason = f"invalid payload target {target!r}"
-            detection = None
-        elif self.last_detection is None:
-            reason = "no active visual lock"
-            detection = None
-        elif not callable(verify):
-            reason = "detector has no full-resolution payload verifier"
-            detection = None
-        else:
-            expected_center = (
-                self.last_detection.center_x / max(1.0, float(process_width)),
-                self.last_detection.center_y / max(1.0, float(process_height)),
-            )
-            detection = verify(
-                full_resolution_frame,
-                target,
-                expected_center_normalized=expected_center,
-                max_center_distance_fraction=float(
-                    self.config["vision"].get(
-                        "payload_association_max_fraction",
-                        0.18,
-                    )
-                ),
-                frame_id=frame_id,
-                captured_at_s=captured_at_s,
-                received_at_s=received_at_s,
-            )
-            verification = getattr(
-                self.detector,
-                "last_payload_verification",
-                {},
-            )
-            reason = str(
-                verification.get(
-                    "reason",
-                    "strict full-resolution geometry failed",
-                )
-            )
-
-        if detection is not None:
-            source = str(getattr(detection, "source", ""))
-            if (
-                source != "geometry_payload"
-                or detection.status != "valid_shape"
-                or detection.target != target
-            ):
-                detection = None
-                reason = "payload verifier returned non-strict evidence"
-
-        if detection is not None:
-            frame_height, frame_width = full_resolution_frame.shape[:2]
-            process_desired_x, process_desired_y = self.desired_drop_point(
-                process_width,
-                process_height,
-            )
-            desired_x = process_desired_x * frame_width / max(
-                1.0,
-                float(process_width),
-            )
-            desired_y = process_desired_y * frame_height / max(
-                1.0,
-                float(process_height),
-            )
-            center_error = math.hypot(
-                detection.center_x - desired_x,
-                detection.center_y - desired_y,
-            )
-            tolerance_scale = frame_width / max(1.0, float(process_width))
-            full_resolution_tolerance = (
-                self.center_tolerance_px() * tolerance_scale
-            )
-            if center_error > full_resolution_tolerance:
-                detection = None
-                reason = (
-                    f"full-resolution center error {center_error:.1f}px exceeds "
-                    f"{full_resolution_tolerance:.1f}px"
-                )
-            else:
-                self.last_payload_geometry_at = now
-                self.last_payload_geometry_detection = detection
-                self.last_payload_geometry_error_px = center_error
-                self.last_payload_geometry_reason = (
-                    "fresh full-resolution strict geometry"
-                )
-                self.last_strong_geometry_at = now
-                if not was_verified:
-                    self.event(
-                        "PAYLOAD_GEOMETRY_VERIFIED",
-                        target=target,
-                        frame_id=frame_id,
-                        error_px=round(center_error, 1),
-                        source=source,
-                    )
-                return True
-
-        self.last_payload_geometry_reason = reason
-        if reason != previous_reason:
-            self.event(
-                "PAYLOAD_GEOMETRY_REJECTED",
-                target=target,
-                frame_id=frame_id,
-                reason=reason,
-            )
-        return False
+        return verify_payload_geometry_frame(
+            self,
+            full_resolution_frame,
+            process_width,
+            process_height,
+            now,
+            frame_id,
+            captured_at_s,
+            received_at_s,
+        )
 
     def payload_release_gate_errors(self, now: Optional[float] = None) -> list[str]:
-        timestamp = time.monotonic() if now is None else float(now)
-        errors = self.guidance_health_errors("GUIDED", timestamp)
-        target = self.current_target
-        if target not in TARGET_PAYLOAD_COLOUR:
-            errors.append(f"invalid target class {target!r}")
-            return errors
-        if target in self.completed_targets:
-            errors.append(f"payload already attempted for {target}")
-        if self.last_detection is None or self.last_detection.target != target:
-            errors.append("current target has no matching visual track")
-
-        frame_age = timestamp - self.last_frame_at
-        frame_limit = float(self.safety.get("camera_frame_timeout_s", 2.0))
-        if frame_age > frame_limit:
-            errors.append(f"camera frame stale ({frame_age:.2f}s)")
-        result_age = timestamp - self.last_tracking_at if self.last_tracking_at else float("inf")
-        if result_age > float(self.safety.get("max_vision_result_age_s", 0.75)):
-            errors.append(f"tracking result stale ({result_age:.2f}s)")
-        geometry_age = (
-            timestamp - self.last_strong_geometry_at
-            if self.last_strong_geometry_at
-            else float("inf")
-        )
-        if geometry_age > float(self.safety.get("max_strong_geometry_age_s", 0.7)):
-            errors.append(f"strong geometry stale ({geometry_age:.2f}s)")
-        payload_geometry = self.last_payload_geometry_detection
-        if payload_geometry is None:
-            errors.append(
-                "fresh full-resolution strict geometry missing "
-                f"({self.last_payload_geometry_reason})"
-            )
-        else:
-            if payload_geometry.target != target:
-                errors.append("payload geometry target does not match active target")
-            if payload_geometry.source != "geometry_payload":
-                errors.append("payload geometry source is not strict")
-            if payload_geometry.status != "valid_shape":
-                errors.append("payload geometry status is not valid_shape")
-            payload_geometry_age = timestamp - self.last_payload_geometry_at
-            if payload_geometry_age > float(
-                self.safety.get("max_payload_geometry_age_s", 0.5)
-            ):
-                errors.append(
-                    f"payload geometry stale ({payload_geometry_age:.2f}s)"
-                )
-            if self.last_payload_geometry_error_px is None:
-                errors.append("full-resolution payload center error unavailable")
-        if self.last_center_error_px is None:
-            errors.append("center error unavailable")
-        elif self.last_center_error_px > self.center_tolerance_px():
-            errors.append(
-                f"center error {self.last_center_error_px:.1f}px exceeds "
-                f"{self.center_tolerance_px():.1f}px"
-            )
-        if not self.center_lock_completed_at:
-            errors.append("continuous center hold not completed")
-        variance = self.center_error_variance_px(timestamp)
-        if variance is None:
-            errors.append("center variance unavailable")
-        elif variance > float(self.safety.get("max_center_variance_px", 8.0)):
-            errors.append(
-                f"center variation {variance:.1f}px exceeds "
-                f"{float(self.safety.get('max_center_variance_px', 8.0)):.1f}px"
-            )
-
-        horizontal_speed = getattr(self.vehicle, "horizontal_speed_m_s", None)
-        if horizontal_speed is None:
-            errors.append("horizontal speed unavailable")
-        elif horizontal_speed > float(
-            self.safety.get("max_payload_horizontal_speed_m_s", 0.6)
-        ):
-            errors.append(f"horizontal speed {horizontal_speed:.2f}m/s too high")
-        vertical_down = getattr(self.vehicle, "velocity_down_m_s", None)
-        if vertical_down is None:
-            errors.append("vertical speed unavailable")
-        elif abs(vertical_down) > float(
-            self.safety.get("max_payload_vertical_speed_m_s", 0.4)
-        ):
-            errors.append(f"vertical speed {abs(vertical_down):.2f}m/s too high")
-
-        if bool(self.safety.get("require_attitude", False)):
-            roll = getattr(self.vehicle, "roll_rad", None)
-            pitch = getattr(self.vehicle, "pitch_rad", None)
-            if roll is None or pitch is None:
-                errors.append("roll/pitch unavailable")
-            else:
-                roll_deg = abs(math.degrees(roll))
-                pitch_deg = abs(math.degrees(pitch))
-                if roll_deg > float(self.safety.get("max_payload_roll_deg", 15.0)):
-                    errors.append(f"roll {roll_deg:.1f}deg too high")
-                if pitch_deg > float(self.safety.get("max_payload_pitch_deg", 15.0)):
-                    errors.append(f"pitch {pitch_deg:.1f}deg too high")
-
-        displacement = self.guided_displacement_m()
-        max_displacement = self.safety.get("max_guided_displacement_m")
-        if (
-            displacement is not None
-            and max_displacement is not None
-            and displacement > float(max_displacement)
-        ):
-            errors.append(
-                f"GUIDED displacement {displacement:.1f}m exceeds "
-                f"{float(max_displacement):.1f}m"
-            )
-        if self.camera_timeout_active:
-            errors.append("camera timeout active")
-        if self.target_loss_active:
-            errors.append("target loss active")
-        if self.active_abort_reason:
-            errors.append(f"abort active: {self.active_abort_reason}")
-        if self.manual_override_latched:
-            errors.append("pilot override active")
-        return errors
+        return evaluate_payload_release_gate(self, now)
 
     def active_target_abort_mode(self) -> str:
         return str(self.safety.get("active_target_abort_mode", "AUTO"))
@@ -1439,136 +583,12 @@ class Controller:
                         f"{reason}; abort to {mode}")
 
     def payload_action(self, now: float) -> None:
-        p = self.config["payload"]
-        if self.payload_release_sent_at is None:
-            health_errors = self.payload_release_gate_errors(now)
-            if health_errors:
-                reason = "; ".join(health_errors)
-                if self.payload_block_started_at is None:
-                    self.payload_block_started_at = now
-                self.status_message = f"Payload blocked: {reason}"
-                self.send_velocity(0.0, 0.0, self.altitude_down(), force=True)
-                if reason != self.last_payload_block_reason:
-                    self.event("PAYLOAD_BLOCKED", target=self.current_target, reason=reason)
-                    self.last_payload_block_reason = reason
-                if now - self.payload_block_started_at >= float(
-                    self.safety.get("payload_authorization_timeout_s", 8.0)
-                ):
-                    self.abandon_active_target(
-                        now,
-                        f"PAYLOAD_GATE_TIMEOUT {reason}",
-                    )
-                return
-            self.last_payload_block_reason = ""
-            self.payload_block_started_at = None
-        self.send_velocity(0.0, 0.0, self.altitude_down())
-        altitude = self.vehicle.relative_alt_m if self.vehicle.relative_alt_m is not None else float("nan")
-        target = self.current_target or ""
-        payload_colour = payload_colour_for_target(target)
-        output = payload_output_for_target(p, target)
-        simulate_only = bool(p["simulate_only"])
-        ack_timeout_s = float(p.get("command_ack_timeout_s", 2.0))
-
-        if self.payload_release_sent_at is None:
-            self.status_message = f"Releasing {payload_colour} payload on {target}"
-            if simulate_only:
-                self.payload_release_sent_at = now
-                self.payload_release_accepted = True
-                self.payload_started = True
-                self.event("PAYLOAD_SIMULATED", target=target, payload_colour=payload_colour, altitude_m=altitude)
-            else:
-                sent_at = self.vehicle.set_servo(
-                    output["servo_channel"],
-                    output["release_pwm"],
-                )
-                self.payload_release_sent_at = now if sent_at is None else float(sent_at)
-                # Record the attempt before waiting for ACK so a process
-                # restart cannot repeat a release that may have reached the servo.
-                self._persist_payload_release(target, payload_colour, accepted=False)
-                self.event(
-                    "PAYLOAD_RELEASE_COMMAND_SENT",
-                    target=target,
-                    payload_colour=payload_colour,
-                    servo_channel=output["servo_channel"],
-                    pwm=output["release_pwm"],
-                )
-            return
-
-        if not simulate_only and not self.payload_release_accepted:
-            ack_reader = getattr(self.vehicle, "command_ack_after", None)
-            result = ack_reader(mavutil.mavlink.MAV_CMD_DO_SET_SERVO, self.payload_release_sent_at) if callable(ack_reader) else None
-            if result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
-                self.payload_release_accepted = True
-                self.payload_started = True
-                self._persist_payload_release(target, payload_colour, accepted=True)
-                self.event("PAYLOAD_COMMAND_ACCEPTED", target=target, physical_release_confirmed=False)
-            elif result is not None:
-                self.payload_failed = True
-                self.status_message = f"Payload command rejected: MAV_RESULT={result}; pilot action required"
-                self.event("PAYLOAD_COMMAND_REJECTED", target=target, mav_result=result)
-                return
-            elif now - self.payload_release_sent_at > ack_timeout_s:
-                self.payload_failed = True
-                self.status_message = "Payload ACK timeout; pilot action required"
-                self.event("PAYLOAD_ACK_TIMEOUT", target=target)
-                return
-            else:
-                self.status_message = f"Waiting for payload command ACK on {target}"
-                return
-
-        if self.payload_failed:
-            self.send_velocity(0.0, 0.0, self.altitude_down(), force=True)
-            return
-
-        elapsed = now - self.payload_release_sent_at
-        if not simulate_only and self.payload_reset_sent_at is None and elapsed >= float(p["release_hold_s"]):
-            sent_at = self.vehicle.set_servo(
-                output["servo_channel"],
-                output["reset_pwm"],
-            )
-            self.payload_reset_sent_at = now if sent_at is None else float(sent_at)
-            self.event(
-                "PAYLOAD_RESET_COMMAND_SENT",
-                target=target,
-                pwm=output["reset_pwm"],
-            )
-            return
-
-        if not simulate_only and self.payload_reset_sent_at is not None and not self.payload_reset_accepted:
-            ack_reader = getattr(self.vehicle, "command_ack_after", None)
-            result = ack_reader(mavutil.mavlink.MAV_CMD_DO_SET_SERVO, self.payload_reset_sent_at) if callable(ack_reader) else None
-            if result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
-                self.payload_reset_accepted = True
-                self.payload_reset = True
-                self.event("PAYLOAD_RESET_ACCEPTED", target=target)
-            elif result is not None or now - self.payload_reset_sent_at > ack_timeout_s:
-                self.payload_failed = True
-                self.status_message = "Payload reset not confirmed; pilot action required"
-                self.event("PAYLOAD_RESET_FAILED", target=target, mav_result=result)
-                return
-            else:
-                self.status_message = f"Waiting for payload reset ACK on {target}"
-                return
-
-        action_ready = elapsed >= float(p["total_action_time_s"])
-        reset_ready = simulate_only or self.payload_reset_accepted
-        if action_ready and reset_ready:
-            if self.current_target:
-                if self.last_center_error_px is not None:
-                    self.completed_center_errors[self.current_target] = self.last_center_error_px
-                self.completed_targets.add(self.current_target)
-                print(
-                    f"[TARGET COMPLETE] {self.current_target}; "
-                    f"lock_error={self.last_center_error_px}; done={sorted(self.completed_targets)}"
-                )
-            self.current_target = None
-            self.last_detection = None
-            self.tracker.reset()
-            next_mode = "AUTO" if self.incomplete_targets() else str(self.config["mission"].get("final_mode", "RTL"))
-            self.vehicle.set_mode(next_mode)
-            self.last_mode_request_at = now
-            next_state = State.WAITING_FOR_AUTO_RESUME if next_mode == "AUTO" else State.WAITING_FOR_RTL
-            self.transition(next_state, "payload complete")
+        perform_payload_action(
+            self,
+            now,
+            State.WAITING_FOR_AUTO_RESUME,
+            State.WAITING_FOR_RTL,
+        )
 
     def _track_active_target(
         self,
@@ -2043,168 +1063,7 @@ class Controller:
         return detections, masks
 
     def draw(self, frame, detections):
-        out = frame.copy()
-        h, w = out.shape[:2]
-        desired = self.desired_drop_point(w, h)
-        desired_center = (round(desired[0]), round(desired[1]))
-        cv2.drawMarker(out, desired_center, (255, 255, 255), cv2.MARKER_CROSS, 26, 1)
-        if self.current_target:
-            cv2.circle(out, desired_center, round(self.center_tolerance_px()), (0, 255, 255), 1, cv2.LINE_AA)
-
-        candidate_colours = {
-            "colour_candidate": (0, 220, 255),
-            "geometric_candidate": (0, 140, 255),
-            "confirmed_geometry": (0, 255, 0),
-            "temporary_colour_tracking": (0, 220, 255),
-            "rejected": (150, 150, 150),
-        }
-        candidate_labels = {
-            "colour_candidate": "COLOUR CANDIDATE",
-            "geometric_candidate": "GEOMETRIC CANDIDATE",
-            "confirmed_geometry": "STRICT GEOMETRY",
-            "temporary_colour_tracking": "TEMP COLOUR TRACK",
-            "rejected": "COLOUR CANDIDATE REJECTED",
-        }
-        for candidate in getattr(self.detector, "last_candidates", []):
-            status = str(candidate.get("status", "colour_candidate"))
-            bbox = candidate.get("bbox")
-            if not bbox or len(bbox) != 4:
-                continue
-            x, y, box_width, box_height = (int(value) for value in bbox)
-            colour = candidate_colours.get(status, (0, 220, 255))
-            thickness = 1 if status == "rejected" else 2
-            cv2.rectangle(
-                out,
-                (x, y),
-                (x + box_width, y + box_height),
-                colour,
-                thickness,
-            )
-            if status == "rejected":
-                cv2.line(
-                    out,
-                    (x, y),
-                    (x + box_width, y + box_height),
-                    colour,
-                    1,
-                    cv2.LINE_AA,
-                )
-                cv2.line(
-                    out,
-                    (x + box_width, y),
-                    (x, y + box_height),
-                    colour,
-                    1,
-                    cv2.LINE_AA,
-                )
-            label = candidate_labels.get(status, status.upper())
-            cv2.putText(
-                out,
-                label,
-                (x, max(16, y - 5)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.38,
-                colour,
-                1,
-                cv2.LINE_AA,
-            )
-
-        draw_items = list(detections)
-        if self.last_detection and all(item.target != self.last_detection.target for item in draw_items):
-            draw_items.append(self.last_detection)
-        for item in draw_items:
-            source = str(getattr(item, "source", ""))
-            if source == "colour_track":
-                status_label = "TEMP COLOUR TRACK"
-                colour = (0, 220, 255)
-            elif source == "geometry_track":
-                status_label = "STRICT TRACK"
-                colour = (0, 255, 0)
-            elif source == "geometry_payload":
-                status_label = "PAYLOAD GEOMETRY"
-                colour = (255, 255, 0)
-            elif self.current_target == item.target:
-                status_label = "CONFIRMED TARGET"
-                colour = (0, 255, 0)
-            else:
-                status_label = "GEOMETRIC CANDIDATE"
-                colour = (0, 140, 255)
-            cv2.rectangle(out, (item.bbox_x, item.bbox_y), (item.bbox_x + item.bbox_w, item.bbox_y + item.bbox_h), colour, 2)
-            cv2.circle(out, (item.center_x, item.center_y), 5, colour, -1)
-            cv2.line(out, desired_center, (item.center_x, item.center_y), colour, 2, cv2.LINE_AA)
-            error = math.hypot(item.center_x - desired_center[0], item.center_y - desired_center[1])
-            cv2.putText(out, f"{status_label}: {item.target} {item.confidence:.2f} err {error:.0f}px",
-                        (item.bbox_x, max(18, item.bbox_y - 7)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, colour, 1, cv2.LINE_AA)
-        alt = "unknown" if self.vehicle.relative_alt_m is None else f"{self.vehicle.relative_alt_m:.2f} m"
-        centered_for = 0.0 if self.centered_since is None else time.monotonic() - self.centered_since
-        center_error = "none" if self.last_center_error_px is None else f"{self.last_center_error_px:.0f}px"
-        def fmt(value: Optional[float], unit: str) -> str:
-            return "n/a" if value is None else f"{value:.2f}{unit}"
-
-        done = ",".join(sorted(self.completed_targets)) if self.completed_targets else "none"
-        drop_locks = ", ".join(
-            f"{target.replace('_', ' ')} {error:.0f}px"
-            for target, error in sorted(self.completed_center_errors.items())
-        ) or "none"
-        gate_enabled, gate_reason = self.search_gate_status()
-        gate = "enabled" if gate_enabled else f"blocked: {gate_reason}"
-        tracking_state = getattr(self.detector, "tracking_state", None)
-        if tracking_state is None:
-            strict_status = "no lock"
-        else:
-            strict_age = max(
-                0.0,
-                time.monotonic() - tracking_state.last_strong_geometry_at,
-            )
-            strict_status = (
-                f"age {strict_age:.2f}s | failed checks "
-                f"{tracking_state.failed_geometry_checks}/"
-                f"{getattr(self.detector, 'max_failed_geometry_checks', 2)}"
-            )
-        evidence_source = (
-            "none"
-            if self.last_detection is None
-            else str(self.last_detection.source)
-        )
-        payload_vision = (
-            "VERIFIED"
-            if self.last_payload_geometry_detection is not None
-            else self.last_payload_geometry_reason
-        )
-        font_scale = float(self.config["display"].get("overlay_font_scale", 0.46))
-        max_text_width = max(120, w - 42)
-
-        def fit_line(text: str) -> str:
-            if cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)[0][0] <= max_text_width:
-                return text
-            clipped = text
-            while len(clipped) > 4 and cv2.getTextSize(clipped + "...", cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)[0][0] > max_text_width:
-                clipped = clipped[:-1]
-            return clipped + "..."
-
-        lines = [fit_line(line) for line in [
-            f"Mission {self.state.value} | Mode {self.vehicle.mode} | WP {self.vehicle.mission_seq}",
-            f"Action: {self.status_message}",
-            f"Target: {self.current_target or 'none'} | Err {center_error} | Hold {centered_for:.1f}s",
-            f"Vision: {evidence_source} | Strict {strict_status}",
-            f"Payload geometry: {payload_vision}",
-            f"Search gate: {gate}",
-            f"Done: {done} | Runs {self.mission_done_count} | Guided bounces {self.guided_bounce_count}",
-            f"Completed payload locks: {drop_locks}",
-            f"Alt {alt} | Hspd {fmt(self.vehicle.horizontal_speed_m_s, 'm/s')} | Vspd {fmt(None if self.vehicle.velocity_down_m_s is None else -self.vehicle.velocity_down_m_s, 'm/s')} | Acc {fmt(self.vehicle.acceleration_m_s2, 'm/s2')}",
-        ]]
-        line_height = max(16, int(38 * font_scale))
-        panel_width = min(w - 16, max(cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)[0][0] for line in lines) + 20)
-        panel_height = 12 + line_height * len(lines)
-        panel = out.copy()
-        cv2.rectangle(panel, (8, 8), (8 + panel_width, 8 + panel_height), (0, 0, 0), -1)
-        alpha = float(self.config["display"].get("overlay_background_alpha", 0.42))
-        cv2.addWeighted(panel, alpha, out, 1.0 - alpha, 0, out)
-        y = 28
-        for line in lines:
-            cv2.putText(out, line, (18, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
-            y += line_height
-        return out
+        return draw_mission_overlay(self, frame, detections)
 
     def run(self) -> int:
         print("=" * 72)
@@ -2377,26 +1236,6 @@ class Controller:
             self.log_file.close()
             cv2.destroyAllWindows()
         return 0
-
-
-def manage_payload_state(config: dict[str, Any], reset: bool) -> int:
-    state_cfg = config.get("payload_state", {})
-    if not bool(state_cfg.get("enabled", False)):
-        print("[PAYLOAD STATE] disabled in this profile")
-        return 0
-    path = Path(str(state_cfg["path"]))
-    if reset:
-        if path.exists():
-            path.unlink()
-            print(f"[PAYLOAD STATE] reset: {path}")
-        else:
-            print(f"[PAYLOAD STATE] already empty: {path}")
-        return 0
-    if not path.exists():
-        print(f"[PAYLOAD STATE] empty: {path}")
-        return 0
-    print(path.read_text(encoding="utf-8"), end="")
-    return 0
 
 
 def main() -> int:

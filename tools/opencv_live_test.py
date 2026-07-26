@@ -30,6 +30,28 @@ DEFAULT_CONFIG = (
 TARGETS = {"red_triangle", "blue_hexagon"}
 
 
+def primary_rejection(detector) -> str:
+    """Describe the largest rejected colour region, not the last tiny contour."""
+    rejected = [
+        candidate
+        for candidate in detector.last_candidates
+        if candidate.get("status") == "rejected"
+        and candidate.get("bbox")
+        and len(candidate["bbox"]) == 4
+    ]
+    if not rejected:
+        return "none"
+    candidate = max(
+        rejected,
+        key=lambda item: int(item["bbox"][2]) * int(item["bbox"][3]),
+    )
+    target = str(candidate.get("target", "target"))
+    reason = str(candidate.get("reason", "strict geometry failed"))
+    if reason == "partially_visible":
+        reason = "partially visible - keep the whole shape inside frame"
+    return f"{target}: {reason}"
+
+
 def scale_detection(
     item: Detection,
     source_shape: tuple[int, ...],
@@ -158,9 +180,12 @@ def draw_live_overlay(
                 1,
                 cv2.LINE_AA,
             )
+        label = candidate_labels.get(status, status.upper())
+        if status == "rejected" and candidate.get("reason"):
+            label = f"REJECTED: {candidate['reason']}"
         cv2.putText(
             output,
-            candidate_labels.get(status, status.upper()),
+            label,
             (x, max(16, y - 5)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.38,
@@ -213,11 +238,7 @@ def draw_live_overlay(
             cv2.LINE_AA,
         )
     hits = tracker.status()
-    rejection = (
-        detector.last_rejections[-1]["reason"]
-        if detector.last_rejections
-        else "none"
-    )
+    rejection = primary_rejection(detector)
     tracking = detector.tracking_state
     strict = (
         "none"
@@ -235,7 +256,7 @@ def draw_live_overlay(
         f"Confirmation evidence triangle {hits['red_triangle']} | hexagon {hits['blue_hexagon']}",
         f"Camera FPS {raw_fps:.1f} | vision FPS {processed_fps:.1f} | age {age_ms:.1f}ms",
         f"Lens {metadata.get('LensPosition', 'n/a')} | exposure {metadata.get('ExposureTime', 'n/a')}us | gain {metadata.get('AnalogueGain', 'n/a')}",
-        f"Last rejection: {rejection}",
+        f"Main rejection: {rejection}",
         "Keys: q quit | s save | m masks | r reset | v record",
     ]
     return draw_panel(output, lines)

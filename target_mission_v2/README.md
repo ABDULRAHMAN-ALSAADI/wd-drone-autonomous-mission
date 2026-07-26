@@ -10,8 +10,14 @@ If you are changing mission logic, this folder is where the implementation
 lives. If you only remember one thing:
 
 ```text
-mission_controller.py = mission state machine and MAVLink control
-vision.py             = target detection
+mission_controller.py = mission state machine and control loop
+vehicle.py            = MAVLink telemetry, commands, and parameters
+vision.py             = target detection and tracking
+camera_worker.py      = non-blocking latest-frame capture
+video_stream.py       = non-blocking annotated MJPEG stream
+payload.py            = target mapping and payload action state
+safety.py             = guidance and payload release gates
+overlay.py            = operator diagnostics drawn on video
 control.py            = small tested math helpers
 parameter_config.json = normal SITL/operator tuning
 real_mission/parameter_config/mission2_target_payload.json = real Mission 2 profile

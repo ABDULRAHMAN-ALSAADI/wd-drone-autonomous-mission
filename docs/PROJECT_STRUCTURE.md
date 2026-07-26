@@ -52,6 +52,12 @@ Use this folder when a teammate wants to reproduce the simulation.
 - `mission_controller.py`: mission state machine and MAVLink control loop.
 - `vision.py`: red triangle and blue hexagon detector.
 - `camera_sources.py`: SITL camera and Pi Camera Module 3 input.
+- `camera_worker.py`: background capture with a single latest-frame slot.
+- `vehicle.py`: MAVLink telemetry, commands, and parameter handling.
+- `safety.py`: guidance-health and payload-release safety gates.
+- `payload.py`: payload mapping, persistence, verification, release, and reset.
+- `overlay.py`: annotated operator diagnostics.
+- `video_stream.py`: background MJPEG encoding and laptop stream server.
 - `control.py`: small centering and altitude math helpers.
 - `test_mission_controller.py`: mission and vision unit tests.
 - `parameter_config.json`: SITL/operator tuning file.
