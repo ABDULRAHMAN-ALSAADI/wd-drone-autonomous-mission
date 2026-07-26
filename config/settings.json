@@ -7,7 +7,7 @@
       "heartbeat_timeout_s": 15.0
     },
     "cube_pi_uart": {
-      "connection": "/dev/serial0",
+      "connection": "/dev/ttyAMA0",
       "baud": 921600,
       "heartbeat_timeout_s": 15.0
     }

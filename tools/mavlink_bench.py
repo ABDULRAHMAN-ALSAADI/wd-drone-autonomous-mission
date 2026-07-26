@@ -14,7 +14,7 @@ from typing import Any, Optional
 from pymavlink import mavutil
 
 
-DEFAULT_UART = "/dev/serial0"
+DEFAULT_UART = "/dev/ttyAMA0"
 DEFAULT_BAUD = 921600
 AUTOPILOT_COMPONENTS = {mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1}
 VELOCITY_ONLY_MASK = 3527
@@ -698,7 +698,14 @@ def command_motor_test(args) -> int:
 
 
 def add_connection_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--connection", default=DEFAULT_UART, help="MAVLink endpoint, e.g. /dev/serial0 or udpin:0.0.0.0:14551")
+    parser.add_argument(
+        "--connection",
+        default=DEFAULT_UART,
+        help=(
+            "MAVLink endpoint, e.g. /dev/ttyAMA0 "
+            "or udpin:0.0.0.0:14551"
+        ),
+    )
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD)
     parser.add_argument("--timeout", type=float, default=15.0)
 

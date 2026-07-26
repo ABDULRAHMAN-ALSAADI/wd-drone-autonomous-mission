@@ -107,7 +107,8 @@ Keep `payload.simulate_only` set to `true` until:
 - SITL mission passes repeatedly;
 - bench servo channel/PWM is verified;
 - payload mechanism is mechanically safe;
-- real camera target detection is proven;
+- real camera target detection is validated at representative flight
+  distances, angles, lighting, motion, and backgrounds;
 - guided centering direction is verified at low speed;
 - abort plan is agreed by the team.
 

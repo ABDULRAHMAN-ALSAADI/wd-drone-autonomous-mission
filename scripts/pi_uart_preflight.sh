@@ -3,10 +3,12 @@ set -euo pipefail
 
 PI_ALIAS="${PI_ALIAS:-pi5}"
 REMOTE_DIR="${REMOTE_DIR:-~/FOR_COMP/wd-drone-autonomous-mission}"
+MAVLINK_CONNECTION="${MAVLINK_CONNECTION:-/dev/ttyAMA0}"
 
 ssh "$PI_ALIAS" "
 set -e
 cd $REMOTE_DIR
+MAVLINK_CONNECTION='$MAVLINK_CONNECTION'
 
 fail() {
     echo \"[FAIL] \$1\" >&2
@@ -22,10 +24,11 @@ echo \"[INFO] commit=\$(git rev-parse --short HEAD 2>/dev/null || echo unknown)\
 echo \"[INFO] temp=\$(vcgencmd measure_temp)\"
 echo \"[INFO] throttled=\$(vcgencmd get_throttled)\"
 
-[ -e /dev/serial0 ] || fail \"/dev/serial0 does not exist\"
-SERIAL_TARGET=\$(readlink -f /dev/serial0)
-echo \"[INFO] /dev/serial0 -> \$SERIAL_TARGET\"
-[ -r /dev/serial0 ] && [ -w /dev/serial0 ] || fail \"current user cannot read/write /dev/serial0\"
+[ -e \"\$MAVLINK_CONNECTION\" ] || fail \"\$MAVLINK_CONNECTION does not exist\"
+SERIAL_TARGET=\$(readlink -f \"\$MAVLINK_CONNECTION\")
+echo \"[INFO] \$MAVLINK_CONNECTION -> \$SERIAL_TARGET\"
+[ -r \"\$MAVLINK_CONNECTION\" ] && [ -w \"\$MAVLINK_CONNECTION\" ] || \
+    fail \"current user cannot read/write \$MAVLINK_CONNECTION\"
 ok \"serial device exists and is accessible\"
 
 if grep -Eq 'console=tty(AMA|S)[0-9]+' /proc/cmdline; then

@@ -1,6 +1,6 @@
 {
   "mavlink": {
-    "connection": "/dev/serial0",
+    "connection": "/dev/ttyAMA0",
     "baud": 921600,
     "heartbeat_timeout_s": 8.0
   },
@@ -68,11 +68,13 @@
   },
   "payload": {
     "simulate_only": true,
-    "servo_channel": 9,
-    "release_pwm": 1900,
-    "reset_pwm": 1100,
-    "release_hold_s": 1.0,
-    "total_action_time_s": 1.5
+    "mechanism": "selector_servo",
+    "servo_channel": 5,
+    "blue_payload_pwm": 1300,
+    "red_payload_pwm": 1700,
+    "neutral_pwm": 1500,
+    "release_hold_s": 3.0,
+    "total_action_time_s": 3.5
   },
   "safety": {
     "max_center_time_s": null,

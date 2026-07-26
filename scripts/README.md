@@ -43,7 +43,7 @@ This `scripts/` folder is the lower-level toolbox behind those wrappers.
 Useful read-only health command:
 
 ```bash
-./scripts/mavlink_bench.sh health --connection /dev/serial0 --baud 921600 --seconds 10
+./test_components/mavlink/health.sh
 ```
 
 Motor tests require explicit safety flags and propellers removed.

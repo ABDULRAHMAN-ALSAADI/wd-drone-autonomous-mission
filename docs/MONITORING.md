@@ -11,7 +11,7 @@ From the Pi:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission
-./scripts/mavlink_bench.sh health --connection /dev/serial0 --baud 921600 --seconds 10
+./test_components/mavlink/health.sh
 ```
 
 This is read-only. It summarizes:

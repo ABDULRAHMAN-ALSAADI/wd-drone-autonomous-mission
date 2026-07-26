@@ -17,9 +17,14 @@ On the Pixhawk/Cube TELEM port, set the serial protocol and baud to match the
 Pi connection. This repo defaults to:
 
 ```text
-/dev/serial0
+/dev/ttyAMA0
 921600 baud
 ```
+
+This is a measured project-specific choice. On the tested Raspberry Pi 5,
+`/dev/serial0` points to `/dev/ttyAMA10`, while the Cube heartbeat arrives on
+`/dev/ttyAMA0`. Check the selected mission profile instead of assuming the
+`serial0` alias is correct on every Pi.
 
 ## Pi UART Preflight
 
@@ -27,7 +32,7 @@ Before connecting Pixhawk, the Pi UART must be dedicated to MAVLink. The ready
 state is:
 
 ```text
-/dev/serial0 -> ttyAMA0
+/dev/ttyAMA0 exists and is readable/writable by the `dialout` user
 GPIO14 = TXD0
 GPIO15 = RXD0
 no console=ttyAMA... in /proc/cmdline
@@ -65,7 +70,7 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission
 First test only the link:
 
 ```bash
-./scripts/mavlink_bench.sh status --connection /dev/serial0 --baud 921600 --seconds 10
+./test_components/mavlink/status.sh
 ```
 
 Expected result:
@@ -91,25 +96,25 @@ If heartbeat times out, do not try mode, servo, or motor commands yet. Check:
 Read-only health summary:
 
 ```bash
-./scripts/mavlink_bench.sh health --connection /dev/serial0 --baud 921600 --seconds 10
+./test_components/mavlink/health.sh
 ```
 
 List modes:
 
 ```bash
-./scripts/mavlink_bench.sh modes --connection /dev/serial0 --baud 921600
+./scripts/mavlink_bench.sh modes --connection /dev/ttyAMA0 --baud 921600
 ```
 
 Request GUIDED:
 
 ```bash
-./scripts/mavlink_bench.sh set-mode GUIDED --connection /dev/serial0 --baud 921600
+./scripts/mavlink_bench.sh set-mode GUIDED --connection /dev/ttyAMA0 --baud 921600
 ```
 
 Return to STABILIZE:
 
 ```bash
-./scripts/mavlink_bench.sh set-mode STABILIZE --connection /dev/serial0 --baud 921600
+./scripts/mavlink_bench.sh set-mode STABILIZE --connection /dev/ttyAMA0 --baud 921600
 ```
 
 The script watches heartbeat after the request. If it says the requested mode
@@ -142,23 +147,28 @@ STABILIZE -> GUIDED -> ARM -> AUTO -> RTL -> STABILIZE -> DISARM
 The tool refuses to arm unless both safety flags are present. It does not force
 arming or bypass ArduPilot pre-arm checks.
 
-## Payload Servo Bench Test
+## Payload Servo And Vision Bench Test
 
 Props off. Payload disconnected first if you are unsure about the channel.
 
 ```bash
-./scripts/mavlink_bench.sh servo \
-  --connection /dev/serial0 \
-  --baud 921600 \
-  --channel 5 \
-  --pwm 1900 \
-  --reset-pwm 1100 \
-  --hold 1.0 \
+./test_components/mavlink/servo_payload_test.sh \
+  --target red_triangle \
+  --i-understand-props-off \
+  --i-accept-servo-motion
+
+./test_components/mavlink/servo_payload_test.sh \
+  --target blue_hexagon \
   --i-understand-props-off \
   --i-accept-servo-motion
 ```
 
-Channel 5 matches the current payload configuration and means MAIN OUT 5.
+The tested selector mapping is `1300 -> 1500` for a red triangle and
+`1700 -> 1500` for a blue hexagon, with a three-second hold. Channel 5 means
+MAIN OUT 5.
+
+For automatic recognition plus the physical selector, follow
+[Component Test Commands](../test_components/COMMANDS.md#8-payload-servo-and-opencv-integration-test).
 
 ## AUTO Speed Ownership
 
@@ -173,7 +183,7 @@ Props off is mandatory. The script refuses more than 15 percent throttle.
 
 ```bash
 ./scripts/mavlink_bench.sh motor-test \
-  --connection /dev/serial0 \
+  --connection /dev/ttyAMA0 \
   --baud 921600 \
   --motor 1 \
   --throttle-percent 5 \

@@ -54,7 +54,8 @@ Real profile through the engine directly:
 ./run.sh ../real_mission/parameter_config/mission2_target_payload.json
 ```
 
-The real profile uses `/dev/serial0` at `921600` baud for the Cube UART link.
+The tested real profile uses `/dev/ttyAMA0` at `921600` baud for the Cube UART
+link.
 Use `parameter_config.json`, `operator_config.json`, or `configs/sim_gazebo.json`
 for Ubuntu SITL.
 

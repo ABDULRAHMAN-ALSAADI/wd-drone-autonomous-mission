@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 
 from tools.mavlink_bench import (
     VELOCITY_ONLY_MASK,
+    build_parser,
     command_guided_velocity_test,
     command_motor_test,
     command_servo,
@@ -15,6 +16,11 @@ from tools.mavlink_bench import (
 
 
 class MavlinkBenchTests(unittest.TestCase):
+    def test_default_uart_matches_tested_pi_connection(self) -> None:
+        args = build_parser().parse_args(["status"])
+        self.assertEqual(args.connection, "/dev/ttyAMA0")
+        self.assertEqual(args.baud, 921600)
+
     def test_format_rc_channels_marks_changed_channel(self) -> None:
         text = format_rc_channels({1: 1500, 7: 1801}, changed={7})
         self.assertIn(" CH01=1500", text)

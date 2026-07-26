@@ -64,7 +64,8 @@ camera, UART connection, flight controller, payload mechanism, or aircraft.
   flight termination and in-flight disarm commands.
 - Put hazardous bench commands only under guarded test tools.
 - Do not weaken target-shape rejection without positive and negative tests.
-- Do not silently change `/dev/serial0`, baud `921600`, servo channel, PWM,
+- Do not silently change the tested `/dev/ttyAMA0` connection, baud `921600`,
+  servo channel, PWM,
   search waypoint or return behavior.
 - Update configuration documentation with every new tunable field.
 - Prefer a focused change over a broad rewrite during flight-test preparation.

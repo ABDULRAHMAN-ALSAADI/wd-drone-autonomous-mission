@@ -29,7 +29,8 @@ This is the bench-test folder.
 - `mavlink/`: Cube/Pi heartbeat, health, mode, arm, servo, and motor tests.
 - `software/`: local code and config checks.
 - `preflight/`: read-only Pi preflight check that combines software, camera,
-  MAVLink status, and first-flight-safe config checks.
+  MAVLink status, and reviewed config-default checks. Its output is not flight
+  clearance.
 
 Use this folder before trusting the real mission.
 

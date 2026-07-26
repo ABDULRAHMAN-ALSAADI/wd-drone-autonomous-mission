@@ -5,6 +5,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 exec ./scripts/mavlink_bench.sh motor-test \
-    --connection /dev/serial0 \
-    --baud 921600 \
+    --connection "${MAVLINK_CONNECTION:-/dev/ttyAMA0}" \
+    --baud "${MAVLINK_BAUD:-921600}" \
     "$@"

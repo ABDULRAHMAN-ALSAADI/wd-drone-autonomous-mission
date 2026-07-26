@@ -72,6 +72,7 @@ Useful examples:
 ./test_components/mavlink/status.sh
 ./test_components/mavlink/health.sh
 ./test_components/mavlink/bench_sequence.sh --dry-run
+./test_components/mavlink/opencv_servo_payload_test.sh --help
 ```
 
 The avionics bench sequence requested for testing is:
@@ -140,4 +141,6 @@ Do not edit `.venv/`, `.git/`, `__pycache__/`, or logs.
 4. `test_components/COMMANDS.md`
 5. `simulation/README.md`
 6. `docs/SAFETY_AND_FAILSAFES.md`
-7. `docs/PIXHAWK_PI_TEST_DAY.md`
+7. `docs/REAL_DRONE_CHECKLIST.md`
+8. `docs/HARDWARE_TEST_LOG.md`
+9. `docs/PIXHAWK_PI_TEST_DAY.md`

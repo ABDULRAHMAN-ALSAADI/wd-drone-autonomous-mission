@@ -58,7 +58,7 @@ cannot reliably bind the same UDP listening port.
 The real Raspberry Pi/Cube profile uses:
 
 ```text
-/dev/serial0
+/dev/ttyAMA0
 921600 baud
 ```
 

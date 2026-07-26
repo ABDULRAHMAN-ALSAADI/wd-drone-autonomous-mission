@@ -5,6 +5,9 @@ Camera Module 3 frames directly on the Raspberry Pi 5 through Picamera2.
 Camera tests never connect to MAVLink and never send motor, mode, or payload
 commands.
 
+For the separate guarded OpenCV plus physical selector-servo test, follow
+[Component Test Commands](../test_components/COMMANDS.md#8-payload-servo-and-opencv-integration-test).
+
 ## 1. Install Once On The Pi
 
 Run on the Raspberry Pi:
@@ -45,7 +48,8 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission
 Expected results:
 
 - the IMX708 Camera Module 3 is listed;
-- resolution is 1280x720 at 30 FPS;
+- resolution is 1280x720; the active profile requests up to 60 FPS, while the
+  measured full vision pipeline has been approximately 30 FPS;
 - source is `picamera2`, not `rpicam_mjpeg`;
 - `get_throttled=0x0`;
 - frame age stays bounded;

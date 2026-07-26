@@ -682,6 +682,30 @@ class MissionConfigTests(unittest.TestCase):
         )
         self.assertEqual(config["payload"]["release_hold_s"], 3.0)
 
+    def test_legacy_real_pi_profile_uses_calibrated_selector_positions(self):
+        profile_path = (
+            Path(__file__).with_name("configs")
+            / "real_pi_camera_module_3.json"
+        )
+        config = load_config(profile_path)
+        self.assertEqual(
+            payload_output_for_target(config["payload"], "red_triangle"),
+            {
+                "servo_channel": 5,
+                "release_pwm": 1300,
+                "reset_pwm": 1500,
+            },
+        )
+        self.assertEqual(
+            payload_output_for_target(config["payload"], "blue_hexagon"),
+            {
+                "servo_channel": 5,
+                "release_pwm": 1700,
+                "reset_pwm": 1500,
+            },
+        )
+        self.assertEqual(config["payload"]["release_hold_s"], 3.0)
+
     def test_enforce_parameters_can_be_disabled(self):
         class FakeVehicle:
             def read_parameter(self, name, timeout_s=8.0):

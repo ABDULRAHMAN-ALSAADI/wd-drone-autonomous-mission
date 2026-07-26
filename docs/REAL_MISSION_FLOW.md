@@ -216,7 +216,8 @@ Before trusting it for payload release:
 3. Test at 5 m, 7 m, and 10 m.
 4. Test in sunlight and shade.
 5. Verify that blue rectangles and red rectangles are rejected.
-6. Keep payload simulation enabled until detection and centering are proven.
+6. Keep payload simulation enabled until detection and centering are verified
+   at representative flight conditions.
 
 YOLO/AI HAT+ can be added later as an optional backend, but the simple detector
 should remain as a fallback until the trained model passes real-world tests.

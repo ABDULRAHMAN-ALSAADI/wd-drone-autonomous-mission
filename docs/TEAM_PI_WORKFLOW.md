@@ -119,7 +119,7 @@ When the Pixhawk is connected and propellers are removed:
 ```bash
 ssh pi5
 cd ~/FOR_COMP/wd-drone-autonomous-mission
-./scripts/mavlink_bench.sh status --connection /dev/serial0 --baud 921600 --seconds 10
+./test_components/mavlink/status.sh
 ```
 
 Only after heartbeat works should the team test mode requests or servo output.

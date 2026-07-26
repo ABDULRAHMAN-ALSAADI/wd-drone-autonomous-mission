@@ -30,6 +30,9 @@ Choose the path that matches what you want to do:
 | Run the Gazebo + ArduPilot simulation | [Simulation Guide](simulation/README.md) |
 | Prepare Raspberry Pi and flight hardware | [Real Mission Guide](real_mission/README.md) |
 | Test one camera, MAVLink, servo, or motor component | [Component Test Commands](test_components/COMMANDS.md) |
+| Repeat the tested OpenCV + servo bench procedure | [Two-Terminal Hardware Test](test_components/COMMANDS.md#complete-two-terminal-test) |
+| Decide what remains before flight | [Real Drone And First-Flight Checklist](docs/REAL_DRONE_CHECKLIST.md) |
+| See what was physically verified | [Hardware Test Log](docs/HARDWARE_TEST_LOG.md) |
 | Understand the code | [Architecture](docs/ARCHITECTURE.md) and [Project Structure](docs/PROJECT_STRUCTURE.md) |
 | Contribute a change | [Contributing Guide](CONTRIBUTING.md) |
 
@@ -90,9 +93,10 @@ separate because they need additional hardware or software.
 | [`tests/`](tests/) | Tests for the observer and shared tools |
 | [`docs/`](docs/) | Architecture, safety, operations, calibration, and roadmap documents |
 
-The [`main`](../../tree/main) branch is the OpenCV reference implementation.
-The [`yolov8-mission-pi5`](../../tree/yolov8-mission-pi5) branch contains the
-YOLOv8/Hailo candidate-detection implementation.
+The [`main`](https://github.com/ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission/tree/main)
+branch is the OpenCV reference implementation. The
+[`yolov8-mission-pi5`](https://github.com/ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission/tree/yolov8-mission-pi5)
+branch contains the YOLOv8/Hailo candidate-detection implementation.
 
 ## Real Hardware
 
@@ -103,7 +107,9 @@ Do not jump from cloning the repository to flight. Use this progression:
 3. Review [Safety and Failsafes](docs/SAFETY_AND_FAILSAFES.md).
 4. Run read-only Raspberry Pi and MAVLink checks.
 5. Run guarded propeller-off bench tests.
-6. Use a team-reviewed flight-test plan with a competent safety pilot.
+6. Close every gate in the
+   [Real Drone And First-Flight Checklist](docs/REAL_DRONE_CHECKLIST.md).
+7. Use a team-reviewed flight-test plan with a competent safety pilot.
 
 Physical payload output is disabled by default:
 

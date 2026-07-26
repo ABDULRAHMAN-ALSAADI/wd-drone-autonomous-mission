@@ -2,7 +2,7 @@
   "extends": "opencv_real_simulated_payload.json",
   "_operator_notes": [
     "Template only: it intentionally remains simulate_only.",
-    "Choose and configure separate_servos or selector_servo before physical use.",
+    "It inherits the tested selector-servo mapping; verify that mapping on the actual airframe before physical use.",
     "Never disable simulation until a props-off bench test validates mapping and PWM."
   ],
   "mission": {
@@ -11,7 +11,13 @@
   },
   "payload": {
     "simulate_only": true,
-    "mechanism": null
+    "mechanism": "selector_servo",
+    "servo_channel": 5,
+    "blue_payload_pwm": 1300,
+    "red_payload_pwm": 1700,
+    "neutral_pwm": 1500,
+    "release_hold_s": 3.0,
+    "total_action_time_s": 3.5
   },
   "payload_state": {
     "enabled": true,

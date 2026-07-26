@@ -18,7 +18,7 @@
     "safety.manual_override_behavior": "If the pilot/failsafe changes to a non-AUTO/non-GUIDED mode, the Pi stops commanding and waits for AUTO instead of fighting the pilot."
   },
   "mavlink": {
-    "connection": "/dev/serial0",
+    "connection": "/dev/ttyAMA0",
     "baud": 921600,
     "heartbeat_timeout_s": 8.0
   },
@@ -88,12 +88,14 @@
   },
   "payload": {
     "simulate_only": true,
+    "mechanism": "selector_servo",
     "servo_channel": 5,
-    "release_pwm": 1900,
-    "reset_pwm": 1100,
+    "blue_payload_pwm": 1300,
+    "red_payload_pwm": 1700,
+    "neutral_pwm": 1500,
     "command_ack_timeout_s": 2.0,
-    "release_hold_s": 1.0,
-    "total_action_time_s": 1.5
+    "release_hold_s": 3.0,
+    "total_action_time_s": 3.5
   },
   "payload_state": {
     "enabled": false,

@@ -15,7 +15,8 @@ cd ~/FOR_COMP/wd-drone-autonomous-mission
 ./real_mission/run_mission2_target_payload.sh
 ```
 
-The Pi connects to the Cube on `/dev/serial0`, reads the Pi Camera Module 3,
+The tested Pi connects to the Cube on `/dev/ttyAMA0` at `921600` baud, reads
+the Pi Camera Module 3,
 waits for the AUTO mission to reach the configured search waypoint, searches for
 the blue hexagon and red triangle, centers in GUIDED, triggers the payload servo
 when enabled, resumes AUTO after the first target, and requests RTL after both
@@ -207,6 +208,10 @@ For a standalone camera/detector test when the mission is not running, use:
 ```bash
 ./scripts/pi_camera_live.sh
 ```
+
+For the complete propeller-off OpenCV plus selector-servo test, including the
+required Pi/laptop terminal order and troubleshooting, use
+[`test_components/COMMANDS.md`](../test_components/COMMANDS.md#8-payload-servo-and-opencv-integration-test).
 
 ## Tunable Parameters
 

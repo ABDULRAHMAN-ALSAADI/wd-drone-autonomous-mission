@@ -54,7 +54,7 @@ checks = [
     ("mission2.name", cfg["mission"]["name"] == "mission2_target_payload"),
     ("mission2.search_enabled", cfg["mission"]["search_enabled"] is True),
     ("mission1.search_enabled", mission1["mission"]["search_enabled"] is False),
-    ("mavlink.connection", cfg["mavlink"]["connection"] == "/dev/serial0"),
+    ("mavlink.connection", cfg["mavlink"]["connection"] == "/dev/ttyAMA0"),
     ("mavlink.baud", int(cfg["mavlink"]["baud"]) == 921600),
     ("payload.servo_channel", int(cfg["payload"]["servo_channel"]) == 5),
     ("payload.simulate_only", cfg["payload"]["simulate_only"] is True),
@@ -71,8 +71,10 @@ for name, ok in checks:
     failed = failed or not ok
 
 if failed:
-    raise SystemExit("Real mission safety config is not in first-flight-safe state")
+    raise SystemExit("Reviewed real-mission configuration defaults do not match")
 PY
 
 echo
-echo "[PREFLIGHT OK] read-only checks completed"
+echo "[CHECKS COMPLETE] automated read-only checks finished"
+echo "[REVIEW REQUIRED] Resolve every warning above and complete docs/REAL_DRONE_CHECKLIST.md."
+echo "[NOT FLIGHT CLEARANCE] This script cannot approve an aircraft for flight."

@@ -17,6 +17,13 @@ Use it to prove each piece works before enabling the real mission:
 Start with `COMMANDS.md`. It explains what each command tests, where to run it,
 and what a good result looks like.
 
+Use the
+[complete repeatable camera-recognition-servo procedure](COMMANDS.md#8-payload-servo-and-opencv-integration-test).
+Record physical results in the
+[hardware test log](../docs/HARDWARE_TEST_LOG.md), then use the
+[real-drone checklist](../docs/REAL_DRONE_CHECKLIST.md) to decide what remains
+before flight.
+
 ## Safety Rule
 
 Never run servo, arm, or motor tests with propellers installed.

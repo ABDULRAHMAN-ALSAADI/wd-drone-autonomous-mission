@@ -34,7 +34,7 @@ import pymavlink  # noqa: F401
 import serial  # noqa: F401
 
 cfg = json.loads(Path("real_mission/parameter_config/mission2_target_payload.json").read_text())
-assert cfg["mavlink"]["connection"] == "/dev/serial0", cfg["mavlink"]
+assert cfg["mavlink"]["connection"] == "/dev/ttyAMA0", cfg["mavlink"]
 assert int(cfg["mavlink"]["baud"]) == 921600, cfg["mavlink"]
 assert cfg["navigation"]["search_speed_source"] == "qgc_mission", cfg["navigation"]
 assert cfg["control"]["altitude_control"] == "off", cfg["control"]
@@ -44,10 +44,15 @@ assert cfg["mission"]["search_enabled"] is True, cfg["mission"]
 print("[OK] Python imports and real mission config are bench-safe")
 PY
 
-[ -e /dev/serial0 ] || fail "/dev/serial0 does not exist"
-SERIAL_TARGET=$(readlink -f /dev/serial0)
-echo "[INFO] /dev/serial0 -> $SERIAL_TARGET"
-[ -r /dev/serial0 ] && [ -w /dev/serial0 ] || fail "current user cannot read/write /dev/serial0"
+MAVLINK_CONNECTION=$(
+    python -c \
+        'import json; print(json.load(open("real_mission/parameter_config/mission2_target_payload.json"))["mavlink"]["connection"])'
+)
+[ -e "$MAVLINK_CONNECTION" ] || fail "$MAVLINK_CONNECTION does not exist"
+SERIAL_TARGET=$(readlink -f "$MAVLINK_CONNECTION")
+echo "[INFO] $MAVLINK_CONNECTION -> $SERIAL_TARGET"
+[ -r "$MAVLINK_CONNECTION" ] && [ -w "$MAVLINK_CONNECTION" ] || \
+    fail "current user cannot read/write $MAVLINK_CONNECTION"
 ok "serial device exists and is accessible"
 
 if grep -Eq 'console=tty(AMA|S)[0-9]+' /proc/cmdline; then
@@ -74,8 +79,8 @@ ok "MAVLink bench and guarded motor-test commands are available"
 echo
 echo "[READY] Tomorrow bench order:"
 echo "1. PROPS OFF. Connect Cube TELEM TX/RX/GND to Pi GPIO15/GPIO14/GND."
-echo "2. ./scripts/mavlink_bench.sh status --connection /dev/serial0 --baud 921600 --seconds 10"
-echo "3. ./scripts/mavlink_bench.sh health --connection /dev/serial0 --baud 921600 --seconds 10"
+echo "2. ./test_components/mavlink/status.sh"
+echo "3. ./test_components/mavlink/health.sh"
 echo "4. Test STABILIZE, GUIDED, AUTO, then back to STABILIZE."
 echo "5. Servo/output tests only after channel is verified and payload is safe."
 echo "6. Motor-test only with props removed and explicit safety flags."

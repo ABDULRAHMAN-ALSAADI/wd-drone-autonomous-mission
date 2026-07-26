@@ -312,9 +312,13 @@ quantization process documented in `hailo_compile/README.md`.
 The configured real link is:
 
 ```text
-device: /dev/serial0
+device: /dev/ttyAMA0
 baud:   921600
 ```
+
+On the tested Raspberry Pi 5, `/dev/serial0` points to `/dev/ttyAMA10` and is
+not the Cube link. Use the profile value and verify it with
+`./test_components/mavlink/status.sh`.
 
 With the Cube connected and propellers removed, begin with read-only checks:
 

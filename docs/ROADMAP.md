@@ -33,7 +33,7 @@
 - [x] Display annotated detection output
 - [x] Reject fixed-wing rectangular targets
 - [x] Add multi-frame target confirmation
-- [ ] Validate against real Pi Camera Module 3 frames
+- [x] Validate both target classes against real Pi Camera Module 3 frames
 
 ## Phase 5 — Visual centering
 
@@ -49,13 +49,13 @@
 - [x] Map blue payload to red triangle
 - [x] Add release interlocks
 - [x] Simulate servo output
-- [ ] Test real Cube AUX output without propellers
+- [x] Test real Cube MAIN OUT 5 selector output without propellers
 
 ## Phase 7 — Raspberry Pi and AI HAT+
 
-- [ ] Configure Raspberry Pi UART
-- [ ] Verify Cube heartbeat over `/dev/serial0`
-- [ ] Configure Camera Module 3
+- [x] Configure Raspberry Pi UART as `/dev/ttyAMA0` at `921600`
+- [x] Verify Cube vehicle heartbeat `src=1:1`
+- [x] Configure and benchmark Camera Module 3
 - [ ] Train and validate target model
 - [ ] Convert model to Hailo HEF
 - [ ] Add `yolo_shape_gate` backend after model validation
@@ -70,3 +70,7 @@
 - [ ] Centering-only test
 - [ ] Dummy payload drop test
 - [ ] Complete autonomous mission test
+
+Physical evidence for completed hardware items is recorded in
+[`HARDWARE_TEST_LOG.md`](HARDWARE_TEST_LOG.md). Flight-validation items remain
+open.
