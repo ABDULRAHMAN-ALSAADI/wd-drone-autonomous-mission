@@ -15,9 +15,6 @@ diverse, inclusive, and healthy community.
 - Welcome questions from beginners.
 - Respect privacy, attribution, and the limits of other contributors.
 
-Harassment, personal attacks, discriminatory language, deliberate
-intimidation, publishing private information, and unsafe pressure around
-aircraft testing are not acceptable.
 
 ## Enforcement
 
