@@ -101,13 +101,87 @@ def draw_live_overlay(
     tracker: HitTracker,
     detector,
     metadata: dict,
+    process_shape: tuple[int, ...],
 ) -> np.ndarray:
     output = frame.copy()
     cv2.drawMarker(
         output, desired, (255, 255, 255), cv2.MARKER_CROSS, 26, 1
     )
+    candidate_colours = {
+        "colour_candidate": (0, 220, 255),
+        "geometric_candidate": (0, 140, 255),
+        "confirmed_geometry": (0, 255, 0),
+        "temporary_colour_tracking": (0, 220, 255),
+        "rejected": (150, 150, 150),
+    }
+    candidate_labels = {
+        "colour_candidate": "COLOUR CANDIDATE",
+        "geometric_candidate": "GEOMETRIC CANDIDATE",
+        "confirmed_geometry": "STRICT GEOMETRY",
+        "temporary_colour_tracking": "TEMP COLOUR TRACK",
+        "rejected": "COLOUR CANDIDATE REJECTED",
+    }
+    for candidate in detector.last_candidates:
+        bbox = candidate.get("bbox")
+        if not bbox or len(bbox) != 4:
+            continue
+        x, y, width, height = (int(value) for value in bbox)
+        scale_x = output.shape[1] / max(1, process_shape[1])
+        scale_y = output.shape[0] / max(1, process_shape[0])
+        x = round(x * scale_x)
+        y = round(y * scale_y)
+        width = round(width * scale_x)
+        height = round(height * scale_y)
+        status = str(candidate.get("status", "colour_candidate"))
+        colour = candidate_colours.get(status, (0, 220, 255))
+        cv2.rectangle(
+            output,
+            (x, y),
+            (x + width, y + height),
+            colour,
+            1,
+        )
+        if status == "rejected":
+            cv2.line(
+                output,
+                (x, y),
+                (x + width, y + height),
+                colour,
+                1,
+                cv2.LINE_AA,
+            )
+            cv2.line(
+                output,
+                (x + width, y),
+                (x, y + height),
+                colour,
+                1,
+                cv2.LINE_AA,
+            )
+        cv2.putText(
+            output,
+            candidate_labels.get(status, status.upper()),
+            (x, max(16, y - 5)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.38,
+            colour,
+            1,
+            cv2.LINE_AA,
+        )
+
     for item in detections:
-        colour = (0, 0, 255) if item.target == "red_triangle" else (255, 0, 0)
+        if item.source == "colour_track":
+            colour = (0, 220, 255)
+            evidence = "TEMP COLOUR TRACK"
+        elif item.source == "geometry_track":
+            colour = (0, 255, 0)
+            evidence = "STRICT TRACK"
+        elif locked_target == item.target:
+            colour = (0, 255, 0)
+            evidence = "CONFIRMED TARGET"
+        else:
+            colour = (0, 140, 255)
+            evidence = "GEOMETRIC CANDIDATE"
         cv2.rectangle(
             output,
             (item.bbox_x, item.bbox_y),
@@ -128,9 +202,8 @@ def draw_live_overlay(
         cv2.putText(
             output,
             (
-                f"{item.target} total={item.total_score:.2f} "
+                f"{evidence}: {item.target} total={item.total_score:.2f} "
                 f"shape={item.shape_score:.2f} err={error:.0f}px "
-                f"{item.source}"
             ),
             (item.bbox_x, max(18, item.bbox_y - 7)),
             cv2.FONT_HERSHEY_SIMPLEX,
@@ -145,10 +218,21 @@ def draw_live_overlay(
         if detector.last_rejections
         else "none"
     )
+    tracking = detector.tracking_state
+    strict = (
+        "none"
+        if tracking is None
+        else (
+            f"age={max(0.0, time.monotonic() - tracking.last_strong_geometry_at):.2f}s "
+            f"fails={tracking.failed_geometry_checks}/"
+            f"{detector.max_failed_geometry_checks}"
+        )
+    )
     lines = [
         "OpenCV CAMERA TEST | MAVLink OFF | payload OFF",
         f"Vision {state} | lock {locked_target or 'none'}",
-        f"Evidence triangle {hits['red_triangle']} | hexagon {hits['blue_hexagon']}",
+        f"Strict geometry {strict}",
+        f"Confirmation evidence triangle {hits['red_triangle']} | hexagon {hits['blue_hexagon']}",
         f"Camera FPS {raw_fps:.1f} | vision FPS {processed_fps:.1f} | age {age_ms:.1f}ms",
         f"Lens {metadata.get('LensPosition', 'n/a')} | exposure {metadata.get('ExposureTime', 'n/a')}us | gain {metadata.get('AnalogueGain', 'n/a')}",
         f"Last rejection: {rejection}",
@@ -300,7 +384,12 @@ def main() -> int:
                         vision_state = "TRACKING"
                     else:
                         vision_state = "TEMPORARILY_LOST"
-                        if now - last_track_at > 0.75:
+                        if detector.tracking_state is None:
+                            tracker.reset()
+                            locked_target = None
+                            vision_state = "LOCK_DROPPED"
+                            last_track_at = now
+                        elif now - last_track_at > 0.75:
                             reacquired = detector.search_processed(
                                 processed, {locked_target}
                             )
@@ -313,7 +402,7 @@ def main() -> int:
                                 detections = [selected]
                                 last_track_at = now
                                 vision_state = "REACQUIRED"
-                        if now - last_track_at > float(
+                        if locked_target is not None and now - last_track_at > float(
                             config["safety"].get("max_lost_detection_s", 4.0)
                         ):
                             detector.reset_tracking()
@@ -352,6 +441,7 @@ def main() -> int:
                 tracker,
                 detector,
                 camera_frame.metadata,
+                process_image.shape,
             )
             if stream is not None:
                 stream.publish(latest_view)

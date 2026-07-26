@@ -32,6 +32,11 @@ Do not edit Python code for normal tuning. Start here first.
 | `safety.camera_frame_timeout_s` | Active-target camera freeze timeout. | Start at `2.0`; set `null` only for debugging. |
 | `vision.required_hits` | Number of stable detections before target lock. | Higher is safer but slower. |
 | `vision.search_min_area_px` | Smallest target area accepted during search. | Lower for higher altitude, higher to reject noise. |
+| `vision.strong_verify_interval_s` | Interval between full geometric checks while temporarily tracking by colour. | Keep between `0.3` and `0.5` seconds. |
+| `vision.max_strong_geometry_age_s` | Maximum permitted age of the last valid shape result. | Keep near `0.7` seconds. |
+| `vision.max_failed_geometry_checks` | Failed strict checks allowed before the visual lock is removed. | Keep at `2`. |
+| `camera.lens_position` | Fixed Camera Module 3 focus in inverse metres. | Calibrate at the real target distance; `0.15` is only a starting point near 6.7 m. |
+| `camera.max_exposure_time_us` | Exposure cap used when AE is frozen after warm-up. | Start around `6000` us and validate outdoors for blur and brightness. |
 | `payload.simulate_only` | If `true`, no servo command is sent. | Keep `true` until servo bench passes. |
 | `payload.servo_channel` | Pixhawk output channel for payload. | `5` when the servo signal is on MAIN OUT / signal 5. |
 | `payload.release_pwm` | PWM sent to release payload. | Test on bench before flight. |
@@ -43,6 +48,11 @@ Do not edit Python code for normal tuning. Start here first.
 | `display.mjpeg_stream_fps` | Laptop monitoring rate; it does not change vision/control rate. | `10` keeps CPU/network use modest. |
 
 ## Camera Window
+
+The real Mission 2 profile uses direct Picamera2 arrays. It warms up automatic
+exposure and white balance, then freezes exposure, gain, white balance, and the
+manually calibrated lens position. Continuous autofocus is not used during the
+mission.
 
 The laptop viewer also reads this config for Camera Module 3 and vision tuning:
 

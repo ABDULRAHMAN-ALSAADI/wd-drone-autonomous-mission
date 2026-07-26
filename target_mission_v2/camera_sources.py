@@ -324,10 +324,74 @@ class Picamera2Camera:
         warmup_s = max(0.0, float(camera_config.get("warmup_s", 1.0)))
         if warmup_s:
             time.sleep(warmup_s)
+        self.locked_controls: dict[str, Any] = {}
+        if bool(camera_config.get("lock_auto_controls_after_warmup", False)):
+            metadata = dict(self.camera.capture_metadata())
+            self.locked_controls = self._locked_auto_controls(
+                metadata,
+                max_exposure_time_us=int(
+                    camera_config["max_exposure_time_us"]
+                ),
+                max_analogue_gain=float(
+                    camera_config.get("max_analogue_gain", 8.0)
+                ),
+            )
+            self.camera.set_controls(self.locked_controls)
+            lock_settle_s = max(
+                0.0,
+                float(camera_config.get("lock_settle_s", 0.15)),
+            )
+            if lock_settle_s:
+                time.sleep(lock_settle_s)
         print(
             f"[CAMERA] Picamera2 direct arrays camera={camera_index} "
             f"{width}x{height}@{framerate:g} format={pixel_format}"
         )
+        if self.locked_controls:
+            print(
+                "[CAMERA] flight controls locked "
+                f"exposure={self.locked_controls['ExposureTime']}us "
+                f"gain={self.locked_controls['AnalogueGain']:.2f} "
+                f"colour_gains={self.locked_controls['ColourGains']} "
+                f"lens={camera_config.get('lens_position')}"
+            )
+
+    @staticmethod
+    def _locked_auto_controls(
+        metadata: dict[str, Any],
+        max_exposure_time_us: int,
+        max_analogue_gain: float,
+    ) -> dict[str, Any]:
+        """Freeze settled AE/AWB values while enforcing a blur limit."""
+        if max_exposure_time_us <= 0:
+            raise ValueError("camera.max_exposure_time_us must be positive")
+        if max_analogue_gain <= 0:
+            raise ValueError("camera.max_analogue_gain must be positive")
+        missing = [
+            key
+            for key in ("ExposureTime", "AnalogueGain", "ColourGains")
+            if metadata.get(key) is None
+        ]
+        if missing:
+            raise RuntimeError(
+                "Picamera2 warm-up metadata is missing: "
+                + ", ".join(missing)
+            )
+        measured_exposure = max(1, int(metadata["ExposureTime"]))
+        exposure = min(measured_exposure, int(max_exposure_time_us))
+        measured_gain = max(1.0, float(metadata["AnalogueGain"]))
+        compensated_gain = measured_gain * measured_exposure / exposure
+        gain = min(float(max_analogue_gain), compensated_gain)
+        colour_gains = tuple(float(value) for value in metadata["ColourGains"])
+        if len(colour_gains) != 2:
+            raise RuntimeError("Picamera2 ColourGains metadata must have two values")
+        return {
+            "AeEnable": False,
+            "ExposureTime": exposure,
+            "AnalogueGain": gain,
+            "AwbEnable": False,
+            "ColourGains": colour_gains,
+        }
 
     def _camera_controls(self, camera_config: dict[str, Any], framerate: float) -> dict[str, Any]:
         values: dict[str, Any] = {}

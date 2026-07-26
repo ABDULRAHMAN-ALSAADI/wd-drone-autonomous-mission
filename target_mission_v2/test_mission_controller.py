@@ -4,6 +4,7 @@ import math
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 import cv2
@@ -249,9 +250,20 @@ class VisionTests(unittest.TestCase):
         image = np.zeros((540, 960, 3), np.uint8)
         points = np.array([[300, 185], [388, 135], [480, 188], [478, 295], [392, 355], [298, 300]], np.int32)
         cv2.fillConvexPoly(image, points, (210, 70, 105))
-        tracked, _ = self.detector.track_colour(image, "blue_hexagon", (390, 245), max_jump_px=120)
+        processed = self.detector.preprocess(image, received_at_s=10.0)
+        strict = self.detector.search_processed(processed, {"blue_hexagon"})
+        self.assertTrue(strict)
+        self.detector.begin_tracking(strict[0], now=10.0)
+        tracked = self.detector.track_processed(
+            self.detector.preprocess(image, received_at_s=10.1),
+            "blue_hexagon",
+            (390, 245),
+            max_jump_px=120,
+        )
         self.assertIsNotNone(tracked)
         self.assertEqual(tracked.target, "blue_hexagon")
+        self.assertEqual(tracked.source, "colour_track")
+        self.assertEqual(tracked.status, "temporary_colour_tracking")
 
     def test_tracker_rejects_unknown_target(self):
         image = np.zeros((540, 960, 3), np.uint8)
@@ -259,14 +271,44 @@ class VisionTests(unittest.TestCase):
         self.assertIsNone(tracked)
 
     def test_triangle_tracking_fallback_keeps_broken_confirmed_triangle(self):
+        clean = np.zeros((540, 960, 3), np.uint8)
+        cv2.fillConvexPoly(clean, np.array([[480, 80], [300, 420], [660, 420]], np.int32), (0, 0, 255))
+        strict = self.detector.search_processed(
+            self.detector.preprocess(clean, received_at_s=10.0),
+            {"red_triangle"},
+        )
+        self.assertTrue(strict)
+        self.detector.begin_tracking(strict[0], now=10.0)
         image = np.zeros((540, 960, 3), np.uint8)
         cv2.fillConvexPoly(image, np.array([[480, 80], [300, 420], [660, 420]], np.int32), (0, 0, 255))
         cv2.rectangle(image, (430, 330), (530, 455), (0, 0, 0), -1)
         detections, _ = self.detector.search(image)
         self.assertNotIn("red_triangle", {item.target for item in detections})
-        tracked, _ = self.detector.track_colour(image, "red_triangle", (480, 280), max_jump_px=220)
+        tracked = self.detector.track_processed(
+            self.detector.preprocess(image, received_at_s=10.1),
+            "red_triangle",
+            (480, 280),
+            max_jump_px=220,
+        )
         self.assertIsNotNone(tracked)
         self.assertEqual(tracked.target, "red_triangle")
+        self.assertEqual(tracked.source, "colour_track")
+
+    def test_colour_only_detection_cannot_add_confirmation_evidence(self):
+        image = np.zeros((540, 960, 3), np.uint8)
+        points = np.array([[300, 185], [388, 135], [480, 188], [478, 295], [392, 355], [298, 300]], np.int32)
+        cv2.fillConvexPoly(image, points, (255, 0, 0))
+        strict = self.detections(image)[0]
+        colour_only = replace(
+            strict,
+            source="colour_track",
+            status="temporary_colour_tracking",
+        )
+        tracker = HitTracker(required_hits=1)
+        self.assertIsNone(
+            tracker.update([colour_only], {"blue_hexagon"}, now=1.0)
+        )
+        self.assertEqual(tracker.status(1.0)["blue_hexagon"], 0)
 
     def test_triangle_tracking_fallback_rejects_round_red_blob(self):
         image = np.zeros((540, 960, 3), np.uint8)
@@ -968,6 +1010,7 @@ class ControllerFlowTests(unittest.TestCase):
         )
         ctrl.last_seen_at = time.monotonic()
         ctrl.center_started_at = time.monotonic() - 1.0
+        ctrl.detector.begin_tracking(ctrl.last_detection, time.monotonic())
         ctrl.update(self.blank_frame(), [], self.blank_masks())
         self.assertEqual(ctrl.state, State.CENTER)
         self.assertEqual(ctrl.current_target, "red_triangle")
@@ -1060,6 +1103,90 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertTrue(ctrl.mission_timeout_warned)
         self.assertNotIn("RTL", vehicle.mode_requests)
 
+    def test_payload_geometry_requires_fresh_full_resolution_shape(self):
+        ctrl = self.controller()
+        ctrl.state = State.PAYLOAD
+        ctrl.current_target = "blue_hexagon"
+        ctrl.last_detection = Detection(
+            "blue_hexagon",
+            480,
+            270,
+            5000.0,
+            0.9,
+            6,
+            0,
+            0,
+            6,
+            0.75,
+            0.85,
+            0.95,
+            390,
+            190,
+            180,
+            160,
+            shape_score=0.9,
+            total_score=0.9,
+        )
+        rectangle = np.zeros((540, 960, 3), np.uint8)
+        cv2.rectangle(rectangle, (360, 190), (600, 350), (255, 0, 0), -1)
+        self.assertFalse(
+            ctrl.verify_payload_geometry(
+                rectangle,
+                960,
+                540,
+                time.monotonic(),
+                frame_id=20,
+            )
+        )
+        self.assertIsNone(ctrl.last_payload_geometry_detection)
+        errors = ctrl.payload_release_gate_errors()
+        self.assertTrue(
+            any(
+                "full-resolution strict geometry missing" in item
+                for item in errors
+            )
+        )
+        ctrl.payload_action(time.monotonic())
+        self.assertIsNone(ctrl.payload_release_sent_at)
+        self.assertEqual(ctrl.vehicle.servos, [])
+
+    def test_payload_geometry_accepts_centered_strict_hexagon(self):
+        ctrl = self.controller()
+        ctrl.state = State.PAYLOAD
+        ctrl.current_target = "blue_hexagon"
+        image = np.zeros((540, 960, 3), np.uint8)
+        points = np.asarray(
+            [
+                [390, 270],
+                [425, 210],
+                [535, 210],
+                [570, 270],
+                [535, 330],
+                [425, 330],
+            ],
+            np.int32,
+        )
+        cv2.fillConvexPoly(image, points, (255, 0, 0))
+        strict = ctrl.detector.search_processed(
+            ctrl.detector.preprocess(image),
+            {"blue_hexagon"},
+        )
+        self.assertTrue(strict)
+        ctrl.last_detection = strict[0]
+        self.assertTrue(
+            ctrl.verify_payload_geometry(
+                image,
+                960,
+                540,
+                time.monotonic(),
+                frame_id=21,
+            )
+        )
+        self.assertEqual(
+            ctrl.last_payload_geometry_detection.source,
+            "geometry_payload",
+        )
+
     def test_physical_payload_requires_ack_and_persists_attempt(self):
         vehicle = FakeVehicle()
         config = self.config()
@@ -1088,6 +1215,15 @@ class ControllerFlowTests(unittest.TestCase):
         ctrl.last_frame_at = started
         ctrl.last_tracking_at = started
         ctrl.last_strong_geometry_at = started
+        ctrl.last_payload_geometry_at = started
+        ctrl.last_payload_geometry_detection = replace(
+            ctrl.last_detection,
+            source="geometry_payload",
+            shape_score=0.9,
+            total_score=0.9,
+        )
+        ctrl.last_payload_geometry_error_px = 0.0
+        ctrl.last_payload_geometry_reason = "fresh full-resolution strict geometry"
         ctrl.last_center_error_px = 0.0
         ctrl.center_lock_completed_at = started
         ctrl.center_error_history.extend(

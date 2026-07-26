@@ -67,6 +67,20 @@ def load_labels(path: Optional[Path]) -> dict[str, set[str]]:
     return labels
 
 
+def crop_box(value: str) -> tuple[int, int, int, int]:
+    try:
+        values = tuple(int(item.strip()) for item in value.split(","))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "--crop must be x,y,width,height"
+        ) from exc
+    if len(values) != 4 or min(values) < 0 or values[2] <= 0 or values[3] <= 0:
+        raise argparse.ArgumentTypeError(
+            "--crop must contain non-negative x/y and positive width/height"
+        )
+    return values
+
+
 def apply_tuning(vision: dict, args: argparse.Namespace) -> dict:
     output = dict(vision)
     overrides = {
@@ -122,6 +136,11 @@ def main() -> int:
     parser.add_argument("--labels", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--input-fps", type=float, default=10.0)
+    parser.add_argument(
+        "--crop",
+        type=crop_box,
+        help="Optional x,y,width,height crop before production preprocessing.",
+    )
     parser.add_argument("--save-masks", action="store_true")
     parser.add_argument("--save-rois", action="store_true")
     parser.add_argument("--min-area", type=float)
@@ -160,6 +179,14 @@ def main() -> int:
         "blue_hexagon": [],
     }
     target_counts: Counter[str] = Counter()
+    confirmation_counts: Counter[str] = Counter()
+    valid_locks: Counter[str] = Counter()
+    payload_authorizations: Counter[str] = Counter()
+    temporary_colour_tracking_frames = 0
+    strict_tracking_frames = 0
+    lock_drops = 0
+    locked_target: Optional[str] = None
+    payload_authorized_targets: set[str] = set()
     writer = None
     total_ms: list[float] = []
 
@@ -167,6 +194,20 @@ def main() -> int:
         for frame_id, image, source_key in source:
             timestamp = (frame_id - 1) / args.input_fps
             started = time.perf_counter()
+            if args.crop is not None:
+                crop_x, crop_y, crop_width, crop_height = args.crop
+                if (
+                    crop_x + crop_width > image.shape[1]
+                    or crop_y + crop_height > image.shape[0]
+                ):
+                    raise ValueError(
+                        f"--crop {args.crop} exceeds frame "
+                        f"{image.shape[1]}x{image.shape[0]}"
+                    )
+                image = image[
+                    crop_y : crop_y + crop_height,
+                    crop_x : crop_x + crop_width,
+                ]
             process_image = resize_width(
                 image, int(vision.get("process_width", image.shape[1]))
             )
@@ -176,20 +217,103 @@ def main() -> int:
                 captured_at_s=timestamp,
                 received_at_s=timestamp,
             )
-            detections = detector.search_processed(processed)
-            confirmed = tracker.update(
-                detections,
-                {"red_triangle", "blue_hexagon"},
-                now=timestamp,
-                frame_id=frame_id,
-            )
+            confirmed = None
             state = "SEARCH"
-            if confirmed is not None:
-                state = f"CONFIRMED:{confirmed.target}"
-                confirmation_times.setdefault(
-                    confirmed.target,
-                    timestamp - first_seen.get(confirmed.target, timestamp),
+            if locked_target is None:
+                detections = detector.search_processed(processed)
+                confirmed = tracker.update(
+                    detections,
+                    {"red_triangle", "blue_hexagon"},
+                    now=timestamp,
+                    frame_id=frame_id,
                 )
+                if confirmed is not None:
+                    selected = next(
+                        (
+                            item
+                            for item in detections
+                            if item.target == confirmed.target
+                        ),
+                        None,
+                    )
+                    if selected is not None:
+                        locked_target = selected.target
+                        detector.begin_tracking(selected, timestamp)
+                        confirmation_counts[selected.target] += 1
+                        valid_locks[selected.target] += 1
+                        state = f"CONFIRMED:{selected.target}"
+                        confirmation_times.setdefault(
+                            selected.target,
+                            timestamp
+                            - first_seen.get(selected.target, timestamp),
+                        )
+            else:
+                tracking = detector.tracking_state
+                previous_center = (
+                    (round(tracking.center[0]), round(tracking.center[1]))
+                    if tracking is not None
+                    else (
+                        process_image.shape[1] // 2,
+                        process_image.shape[0] // 2,
+                    )
+                )
+                tracked = detector.track_processed(
+                    processed,
+                    locked_target,
+                    previous_center,
+                    float(vision.get("max_lock_jump_px", 160.0)),
+                )
+                detections = [] if tracked is None else [tracked]
+                if tracked is not None:
+                    state = (
+                        "TEMP_COLOUR_TRACK"
+                        if tracked.source == "colour_track"
+                        else "STRICT_TRACK"
+                    )
+                    if tracked.source == "colour_track":
+                        temporary_colour_tracking_frames += 1
+                    else:
+                        strict_tracking_frames += 1
+
+                    desired_x = process_image.shape[1] / 2.0
+                    desired_y = process_image.shape[0] / 2.0
+                    tolerance = float(
+                        config.get("control", {}).get(
+                            "center_tolerance_px",
+                            20.0,
+                        )
+                    )
+                    center_error = math.hypot(
+                        tracked.center_x - desired_x,
+                        tracked.center_y - desired_y,
+                    )
+                    if (
+                        locked_target not in payload_authorized_targets
+                        and center_error <= tolerance
+                    ):
+                        strict_payload = detector.verify_target_frame(
+                            image,
+                            locked_target,
+                            expected_center_normalized=(
+                                tracked.center_x
+                                / max(1.0, float(process_image.shape[1])),
+                                tracked.center_y
+                                / max(1.0, float(process_image.shape[0])),
+                            ),
+                            frame_id=frame_id,
+                            captured_at_s=timestamp,
+                            received_at_s=timestamp,
+                        )
+                        if strict_payload is not None:
+                            payload_authorized_targets.add(locked_target)
+                            payload_authorizations[locked_target] += 1
+                elif detector.tracking_state is None:
+                    state = "LOCK_DROPPED"
+                    lock_drops += 1
+                    locked_target = None
+                    tracker.reset()
+                else:
+                    state = "STRICT_RECHECK_FAILED"
             for item in detections:
                 first_seen.setdefault(item.target, timestamp)
                 target_counts[item.target] += 1
@@ -209,6 +333,8 @@ def main() -> int:
                     "red_state": tracker.state("red_triangle").value,
                     "blue_state": tracker.state("blue_hexagon").value,
                     "confirmed": None if confirmed is None else confirmed.target,
+                    "lock": locked_target,
+                    "state": state,
                 }
             )
             for rejection in detector.last_rejections:
@@ -317,7 +443,25 @@ def main() -> int:
         )
     summary = {
         "frames": len(state_rows),
-        "detections": dict(target_counts),
+        "detections": {
+            target: int(target_counts[target])
+            for target in ("red_triangle", "blue_hexagon")
+        },
+        "confirmed_targets": {
+            target: int(confirmation_counts[target])
+            for target in ("red_triangle", "blue_hexagon")
+        },
+        "valid_locks": {
+            target: int(valid_locks[target])
+            for target in ("red_triangle", "blue_hexagon")
+        },
+        "payload_authorizations": {
+            target: int(payload_authorizations[target])
+            for target in ("red_triangle", "blue_hexagon")
+        },
+        "temporary_colour_tracking_frames": temporary_colour_tracking_frames,
+        "strict_tracking_frames": strict_tracking_frames,
+        "lock_drops": lock_drops,
         "confirmation_time_s": confirmation_times,
         "center_jitter_px": jitter,
         "processing_ms": {

@@ -124,6 +124,8 @@ class LocalTrackingState:
     last_strong_geometry_at: float
     confidence: float
     frame_id: int
+    last_geometry_check_at: float
+    failed_geometry_checks: int = 0
 
 
 class HitTracker:
@@ -202,7 +204,14 @@ class HitTracker:
         timestamp = time.monotonic() if now is None else float(now)
         by_target: dict[str, Detection] = {}
         for detection in detections:
-            if detection.target in allowed_targets:
+            # Temporal evidence is mission authority. Colour-only tracking is
+            # deliberately excluded even if a caller accidentally passes it.
+            strict_geometry = (
+                str(detection.source).startswith("geometry")
+                and detection.status == "valid_shape"
+                and detection.shape_score > 0.0
+            )
+            if detection.target in allowed_targets and strict_geometry:
                 current = by_target.get(detection.target)
                 if current is None or detection.total_score > current.total_score:
                     by_target[detection.target] = detection
@@ -361,6 +370,8 @@ class StrictShapeDetector:
         tracking_roi_min_padding_px: int = 36,
         tracking_max_image_speed_fraction_s: float = 0.80,
         strong_verify_interval_s: float = 0.5,
+        max_strong_geometry_age_s: float = 0.7,
+        max_failed_geometry_checks: int = 2,
     ) -> None:
         self.search_min_area_px = float(search_min_area_px)
         self.tracking_min_area_px = float(tracking_min_area_px)
@@ -391,6 +402,11 @@ class StrictShapeDetector:
             0.05, float(tracking_max_image_speed_fraction_s)
         )
         self.strong_verify_interval_s = max(0.05, float(strong_verify_interval_s))
+        self.max_strong_geometry_age_s = max(
+            self.strong_verify_interval_s,
+            float(max_strong_geometry_age_s),
+        )
+        self.max_failed_geometry_checks = max(1, int(max_failed_geometry_checks))
         if not 0.0 < self.search_max_area_fraction <= 1.0:
             raise ValueError("vision.search_max_area_fraction must be in (0, 1]")
         if morphology_kernel_size < 1 or morphology_kernel_size % 2 == 0:
@@ -409,12 +425,19 @@ class StrictShapeDetector:
         self.epsilons = (0.008, 0.012, 0.016, 0.021, 0.027, 0.034)
         self.preprocess_counts = {"hsv": 0, "red_mask": 0, "blue_mask": 0}
         self.last_rejections: list[dict[str, Any]] = []
+        self.last_candidates: list[dict[str, Any]] = []
+        self.last_lock_drop_reason = ""
+        self.last_payload_verification: dict[str, Any] = {}
         self.tracking_state: Optional[LocalTrackingState] = None
         self._triangle_template = np.asarray(
             [[[50, 4]], [[4, 96]], [[96, 96]]], dtype=np.int32
         )
         self._hexagon_template = np.asarray(
             [[[6, 50]], [[28, 10]], [[72, 10]], [[94, 50]], [[72, 90]], [[28, 90]]],
+            dtype=np.int32,
+        )
+        self._rectangle_template = np.asarray(
+            [[[5, 5]], [[95, 5]], [[95, 95]], [[5, 95]]],
             dtype=np.int32,
         )
 
@@ -452,6 +475,21 @@ class StrictShapeDetector:
                 for key, value in metrics.items()
             )
             print(f"[VISION REJECT] {target}: {reason}; {values}")
+
+    @staticmethod
+    def _candidate_status(
+        target: str,
+        contour: np.ndarray,
+        status: str,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        x, y, width, height = cv2.boundingRect(contour)
+        return {
+            "target": target,
+            "bbox": (int(x), int(y), int(width), int(height)),
+            "status": status,
+            "reason": reason,
+        }
 
     @staticmethod
     def _fill_mask_holes(mask: np.ndarray) -> np.ndarray:
@@ -674,6 +712,7 @@ class StrictShapeDetector:
         partially_visible: bool,
         source: str,
         debug_metrics: dict[str, Any],
+        status: Optional[str] = None,
     ) -> Optional[Detection]:
         moments = cv2.moments(contour)
         if abs(moments["m00"]) < 1e-9:
@@ -706,7 +745,11 @@ class StrictShapeDetector:
             total_score=round(total_score, 3),
             partially_visible=partially_visible,
             source=source,
-            status="partially_visible" if partially_visible else "valid_shape",
+            status=(
+                status
+                if status is not None
+                else "partially_visible" if partially_visible else "valid_shape"
+            ),
             debug_metrics=debug_metrics,
         )
 
@@ -748,15 +791,21 @@ class StrictShapeDetector:
         )
         match_score = math.exp(-5.0 * max(0.0, match_value))
         approximation = (
-            triangles[len(triangles) // 2]
+            min(
+                triangles,
+                key=lambda item: (
+                    self._side_ratio(item),
+                    float(np.std(self._angles(item))),
+                ),
+            )
             if triangles
             else min(approximations, key=lambda item: abs(len(item) - 3))
         )
         angles = self._angles(approximation) if len(approximation) == 3 else []
         angle_score = (
-            1.0
-            if angles and min(angles) >= 20.0 and max(angles) <= 140.0
-            else 0.35 if angles else 0.0
+            float(np.mean([self._closeness(value, 60.0, 55.0) for value in angles]))
+            if angles
+            else 0.0
         )
         side_ratio = self._side_ratio(approximation)
         side_score = max(0.0, 1.0 - (side_ratio - 1.0) / 3.0)
@@ -781,20 +830,36 @@ class StrictShapeDetector:
             "rotated_aspect": round(aspect, 3),
             "colour_score": round(colour_score, 3),
             "shape_score": round(shape_score, 3),
+            "extent": round(extent, 3),
+            "circularity": round(circularity, 3),
+            "solidity": round(solidity, 3),
+            "bbox": (x, y, width, height),
         }
         if partially_visible:
             self._record_rejection("red_triangle", "partially_visible", debug)
             return None
-        if aspect > 3.2 or solidity < 0.72:
+        if triangle_votes < 2:
+            self._record_rejection("red_triangle", "unstable_three_corner_geometry", debug)
+            return None
+        if four_votes >= 2 and four_votes >= triangle_votes:
+            self._record_rejection("red_triangle", "strong_four_corner_evidence", debug)
+            return None
+        if aspect > 3.0 or solidity < 0.82:
             self._record_rejection("red_triangle", "thin_or_low_solidity", debug)
             return None
-        if four_votes >= 2 and triangle_votes < 2:
-            self._record_rejection("red_triangle", "obvious_four_corner_shape", debug)
+        if not 0.28 <= extent <= 0.72:
+            self._record_rejection("red_triangle", "triangle_extent_out_of_range", debug)
             return None
-        if extent > 0.76 and triangle_votes < 2:
-            self._record_rejection("red_triangle", "obvious_rectangle", debug)
+        if enclosing_ratio < 0.70:
+            self._record_rejection("red_triangle", "poor_triangle_enclosure", debug)
             return None
-        if circularity > 0.86 and triangle_votes == 0:
+        if not angles or min(angles) < 15.0 or max(angles) > 150.0:
+            self._record_rejection("red_triangle", "invalid_internal_angles", debug)
+            return None
+        if side_ratio > 3.5:
+            self._record_rejection("red_triangle", "inconsistent_triangle_sides", debug)
+            return None
+        if circularity > 0.86:
             self._record_rejection("red_triangle", "obvious_circle", debug)
             return None
         if shape_score < self.triangle_score_threshold:
@@ -823,6 +888,7 @@ class StrictShapeDetector:
         self, contour: np.ndarray, processed: ProcessedVisionFrame, source: str
     ) -> Optional[Detection]:
         hull = cv2.convexHull(contour)
+        raw_area = float(cv2.contourArea(contour))
         area = float(cv2.contourArea(hull))
         perimeter = float(cv2.arcLength(hull, True))
         if area <= 0 or perimeter <= 0:
@@ -831,28 +897,45 @@ class StrictShapeDetector:
         counts = [len(item) for item in approximations]
         triangle_votes = sum(count == 3 for count in counts)
         four_votes = sum(count == 4 for count in counts)
-        near_hexagons = [
+        exact_hexagons = [
             item
             for item in approximations
-            if 5 <= len(item) <= 7 and cv2.isContourConvex(item)
+            if len(item) == 6 and cv2.isContourConvex(item)
         ]
-        exact_hexagons = [item for item in near_hexagons if len(item) == 6]
         hex_votes = len(exact_hexagons)
         approximation = (
-            min(near_hexagons, key=lambda item: abs(len(item) - 6))
-            if near_hexagons
+            min(
+                exact_hexagons,
+                key=lambda item: (
+                    self._side_ratio(item),
+                    float(np.std(self._angles(item))),
+                ),
+            )
+            if exact_hexagons
             else min(approximations, key=lambda item: abs(len(item) - 6))
         )
-        solidity, extent, circularity = self._metrics(hull, area, perimeter)
-        x, y, width, height = cv2.boundingRect(hull)
+        solidity = raw_area / max(1e-6, area)
         rotated_width, rotated_height = cv2.minAreaRect(hull)[1]
+        rect_area = float(rotated_width * rotated_height)
+        extent = raw_area / rect_area if rect_area > 0 else 0.0
+        hull_extent = area / rect_area if rect_area > 0 else 0.0
+        circularity = 4.0 * math.pi * area / (perimeter * perimeter)
+        x, y, width, height = cv2.boundingRect(hull)
         aspect = max(rotated_width, rotated_height) / max(
             1e-6, min(rotated_width, rotated_height)
         )
         partially_visible = self._is_partially_visible(hull, processed)
-        colour_score = min(1.0, area / float(max(1, width * height)) / 0.82)
+        colour_score = min(1.0, raw_area / float(max(1, width * height)) / 0.82)
         match_value = float(
             cv2.matchShapes(hull, self._hexagon_template, cv2.CONTOURS_MATCH_I1, 0.0)
+        )
+        rectangle_match = float(
+            cv2.matchShapes(
+                hull,
+                self._rectangle_template,
+                cv2.CONTOURS_MATCH_I1,
+                0.0,
+            )
         )
         match_score = math.exp(-6.0 * max(0.0, match_value))
         side_ratio = self._side_ratio(approximation)
@@ -862,15 +945,13 @@ class StrictShapeDetector:
             angle_score = float(
                 np.mean([self._closeness(value, 120.0, 50.0) for value in angles])
             )
-        elif len(approximation) in {5, 7}:
-            angle_score = 0.55
         else:
             angle_score = 0.0
         vertex_scores = [
-            1.0 if count == 6 else 0.65 if count in {5, 7} else 0.0 for count in counts
+            1.0 if count == 6 else 0.0 for count in counts
         ]
         vertex_score = float(np.mean(vertex_scores))
-        hull_ratio = float(cv2.contourArea(contour)) / max(1e-6, area)
+        hull_ratio = solidity
         shape_score = (
             0.24 * vertex_score
             + 0.16 * match_score
@@ -885,33 +966,65 @@ class StrictShapeDetector:
         debug = {
             "vertex_counts": counts,
             "match_shapes": round(match_value, 4),
+            "rectangle_match": round(rectangle_match, 4),
             "side_ratio": round(side_ratio, 3),
             "angles": [round(value, 1) for value in angles],
+            "angle_std": round(float(np.std(angles)), 2) if angles else None,
             "rotated_aspect": round(aspect, 3),
             "hull_ratio": round(hull_ratio, 3),
+            "extent": round(extent, 3),
+            "hull_extent": round(hull_extent, 3),
+            "circularity": round(circularity, 3),
+            "solidity": round(solidity, 3),
             "colour_score": round(colour_score, 3),
             "shape_score": round(shape_score, 3),
+            "bbox": (x, y, width, height),
         }
         if partially_visible:
             self._record_rejection("blue_hexagon", "partially_visible", debug)
             return None
-        if aspect > 1.85 or solidity < 0.78:
+        if hex_votes < 2:
+            self._record_rejection("blue_hexagon", "unstable_six_corner_geometry", debug)
+            return None
+        strong_four_corner_evidence = (
+            four_votes >= 2 and four_votes >= hex_votes
+        )
+        strong_rectangle_match = (
+            four_votes >= 1
+            and rectangle_match < 0.04
+            and hull_extent > 0.86
+        )
+        if strong_four_corner_evidence or strong_rectangle_match:
+            self._record_rejection("blue_hexagon", "strong_rectangular_evidence", debug)
+            return None
+        if aspect > 1.75 or solidity < 0.88:
             self._record_rejection("blue_hexagon", "thin_or_low_solidity", debug)
             return None
-        if four_votes >= 2 and not near_hexagons:
-            self._record_rejection("blue_hexagon", "obvious_four_corner_shape", debug)
+        if not 0.52 <= extent <= 0.86 or hull_extent > 0.88:
+            self._record_rejection("blue_hexagon", "hexagon_extent_out_of_range", debug)
             return None
-        if extent > 0.84 and hex_votes == 0:
-            self._record_rejection("blue_hexagon", "obvious_rectangle", debug)
+        if len(approximation) != 6 or not cv2.isContourConvex(approximation):
+            self._record_rejection("blue_hexagon", "non_convex_six_corner_geometry", debug)
             return None
-        if circularity > 0.94 and not near_hexagons:
+        if (
+            not angles
+            or min(angles) < 75.0
+            or max(angles) > 155.0
+            or float(np.std(angles)) > 24.0
+        ):
+            self._record_rejection("blue_hexagon", "invalid_internal_angles", debug)
+            return None
+        if side_ratio > 2.35:
+            self._record_rejection("blue_hexagon", "inconsistent_hexagon_sides", debug)
+            return None
+        if not 0.55 <= circularity <= 0.95:
             self._record_rejection("blue_hexagon", "obvious_circle", debug)
             return None
         if shape_score < self.hexagon_score_threshold:
             self._record_rejection("blue_hexagon", "hexagon_score_below_threshold", debug)
             return None
         return self._make_detection(
-            hull,
+            contour,
             approximation,
             "blue_hexagon",
             processed,
@@ -933,9 +1046,11 @@ class StrictShapeDetector:
         self,
         processed: ProcessedVisionFrame,
         allowed_targets: Optional[set[str]] = None,
+        source: str = "geometry_search",
     ) -> list[Detection]:
         search_started = time.perf_counter()
         self.last_rejections.clear()
+        self.last_candidates.clear()
         allowed = allowed_targets or {"red_triangle", "blue_hexagon"}
         detections: list[Detection] = []
         for target, mask in (
@@ -951,20 +1066,38 @@ class StrictShapeDetector:
             processed.timings_ms[f"{target}_candidate_extraction"] = candidate_ms
             verification_ms = 0.0
             for contour in candidates:
+                candidate = self._candidate_status(
+                    target,
+                    contour,
+                    "colour_candidate",
+                )
                 area = float(cv2.contourArea(contour))
                 valid, reason, metrics = self._scale_status(contour, area, processed)
                 if not valid:
                     self._record_rejection(target, reason, metrics)
+                    candidate.update(status="rejected", reason=reason)
+                    self.last_candidates.append(candidate)
                     continue
                 verification_started = time.perf_counter()
+                rejection_count = len(self.last_rejections)
                 item = (
-                    self._triangle(contour, processed, "geometry_search")
+                    self._triangle(contour, processed, source)
                     if target == "red_triangle"
-                    else self._hexagon(contour, processed, "geometry_search")
+                    else self._hexagon(contour, processed, source)
                 )
                 verification_ms += (
                     time.perf_counter() - verification_started
                 ) * 1000.0
+                if item is None:
+                    reject_reason = (
+                        self.last_rejections[-1]["reason"]
+                        if len(self.last_rejections) > rejection_count
+                        else "strict_geometry_failed"
+                    )
+                    candidate.update(status="rejected", reason=reject_reason)
+                else:
+                    candidate.update(status="geometric_candidate", reason="")
+                self.last_candidates.append(candidate)
                 if item is not None and (
                     best is None or item.total_score > best.total_score
                 ):
@@ -984,7 +1117,13 @@ class StrictShapeDetector:
         return self.search_processed(processed), processed.masks
 
     def begin_tracking(self, detection: Detection, now: Optional[float] = None) -> None:
+        if (
+            not str(detection.source).startswith("geometry")
+            or detection.status != "valid_shape"
+        ):
+            raise ValueError("A tracking lock requires a strict geometric detection")
         timestamp = time.monotonic() if now is None else float(now)
+        self.last_lock_drop_reason = ""
         self.tracking_state = LocalTrackingState(
             target=detection.target,
             center=(float(detection.center_x), float(detection.center_y)),
@@ -995,9 +1134,12 @@ class StrictShapeDetector:
             last_strong_geometry_at=timestamp,
             confidence=float(detection.total_score or detection.confidence),
             frame_id=detection.frame_id,
+            last_geometry_check_at=timestamp,
+            failed_geometry_checks=0,
         )
 
-    def reset_tracking(self) -> None:
+    def reset_tracking(self, reason: str = "") -> None:
+        self.last_lock_drop_reason = reason
         self.tracking_state = None
 
     def _tracking_roi(
@@ -1097,6 +1239,7 @@ class StrictShapeDetector:
             self._is_partially_visible(contour, processed),
             "colour_track",
             {"tracking_fallback": True, "rotated_aspect": round(aspect, 3)},
+            status="temporary_colour_tracking",
         )
 
     def track_processed(
@@ -1107,21 +1250,39 @@ class StrictShapeDetector:
         max_jump_px: float = 220.0,
     ) -> Optional[Detection]:
         tracking_started = time.perf_counter()
+        self.last_rejections.clear()
         if target not in {"red_triangle", "blue_hexagon"}:
             return None
+        previous = (
+            self.tracking_state
+            if self.tracking_state and self.tracking_state.target == target
+            else None
+        )
+        # Colour can maintain an existing lock; it can never create one.
+        if previous is None or previous.last_strong_geometry_at <= 0.0:
+            self.reset_tracking("tracking requested without a strict geometry lock")
+            return None
+
         left, top, right, bottom, predicted, movement_gate = self._tracking_roi(
             processed, target, previous_center, max_jump_px
         )
         mask = processed.red_mask if target == "red_triangle" else processed.blue_mask
         roi = mask[top:bottom, left:right]
         contours, _ = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        previous = self.tracking_state if self.tracking_state and self.tracking_state.target == target else None
         options: list[tuple[float, Detection, bool]] = []
         now = processed.received_at_s
+        self.last_candidates.clear()
         require_strong = (
-            previous is None
-            or now - previous.last_strong_geometry_at >= self.strong_verify_interval_s
+            now - previous.last_geometry_check_at >= self.strong_verify_interval_s
         )
+        # After a failed scheduled check, stay still until the next scheduled
+        # strict check. Do not quietly resume colour tracking in between.
+        if previous.failed_geometry_checks and not require_strong:
+            processed.timings_ms["tracking_total"] = (
+                time.perf_counter() - tracking_started
+            ) * 1000.0
+            return None
+
         for local_contour in contours:
             contour = self._global_contour(local_contour, left, top)
             area = float(cv2.contourArea(contour))
@@ -1131,16 +1292,48 @@ class StrictShapeDetector:
             )
             if area < minimum_area:
                 continue
-            strict = None
+            candidate = self._candidate_status(
+                target,
+                contour,
+                "colour_candidate",
+            )
+            strict: Optional[Detection] = None
             if require_strong:
+                rejection_count = len(self.last_rejections)
                 strict = (
                     self._triangle(contour, processed, "geometry_track")
                     if target == "red_triangle"
                     else self._hexagon(contour, processed, "geometry_track")
                 )
-            item = strict
-            if item is None:
-                item = self._colour_tracking_detection(contour, target, processed, previous)
+                if strict is None:
+                    reject_reason = (
+                        self.last_rejections[-1]["reason"]
+                        if len(self.last_rejections) > rejection_count
+                        else "strict_geometry_failed"
+                    )
+                    candidate.update(status="rejected", reason=reject_reason)
+                else:
+                    candidate.update(status="confirmed_geometry", reason="")
+                self.last_candidates.append(candidate)
+                item = strict
+            else:
+                item = self._colour_tracking_detection(
+                    contour,
+                    target,
+                    processed,
+                    previous,
+                )
+                if item is None:
+                    candidate.update(
+                        status="rejected",
+                        reason="colour_track_association_failed",
+                    )
+                else:
+                    candidate.update(
+                        status="temporary_colour_tracking",
+                        reason="",
+                    )
+                self.last_candidates.append(candidate)
             if item is None:
                 continue
             distance = math.hypot(item.center_x - predicted[0], item.center_y - predicted[1])
@@ -1151,6 +1344,26 @@ class StrictShapeDetector:
                 area_penalty = abs(math.log(max(1e-6, item.area_px / previous.area_px)))
             association_cost = distance / max(1.0, movement_gate) + 0.35 * area_penalty
             options.append((association_cost, item, strict is not None))
+
+        if require_strong and not options:
+            previous.last_geometry_check_at = now
+            previous.failed_geometry_checks += 1
+            geometry_age = now - previous.last_strong_geometry_at
+            if (
+                previous.failed_geometry_checks >= self.max_failed_geometry_checks
+                or geometry_age >= self.max_strong_geometry_age_s
+            ):
+                reason = (
+                    "strict geometry lock expired: "
+                    f"failures={previous.failed_geometry_checks} "
+                    f"age={geometry_age:.2f}s"
+                )
+                self.reset_tracking(reason)
+            processed.timings_ms["tracking_total"] = (
+                time.perf_counter() - tracking_started
+            ) * 1000.0
+            return None
+
         if not options:
             processed.timings_ms["tracking_total"] = (
                 time.perf_counter() - tracking_started
@@ -1158,20 +1371,16 @@ class StrictShapeDetector:
             return None
 
         _, selected, strong = min(options, key=lambda value: value[0])
-        if previous is None:
-            velocity = (0.0, 0.0)
-            last_strong = now if strong else 0.0
-        else:
-            dt = max(1e-3, now - previous.last_valid_at)
-            measured_velocity = (
-                (selected.center_x - previous.center[0]) / dt,
-                (selected.center_y - previous.center[1]) / dt,
-            )
-            velocity = (
-                0.55 * measured_velocity[0] + 0.45 * previous.velocity_px_s[0],
-                0.55 * measured_velocity[1] + 0.45 * previous.velocity_px_s[1],
-            )
-            last_strong = now if strong else previous.last_strong_geometry_at
+        dt = max(1e-3, now - previous.last_valid_at)
+        measured_velocity = (
+            (selected.center_x - previous.center[0]) / dt,
+            (selected.center_y - previous.center[1]) / dt,
+        )
+        velocity = (
+            0.55 * measured_velocity[0] + 0.45 * previous.velocity_px_s[0],
+            0.55 * measured_velocity[1] + 0.45 * previous.velocity_px_s[1],
+        )
+        last_strong = now if strong else previous.last_strong_geometry_at
         self.tracking_state = LocalTrackingState(
             target=target,
             center=(float(selected.center_x), float(selected.center_y)),
@@ -1182,6 +1391,10 @@ class StrictShapeDetector:
             last_strong_geometry_at=last_strong,
             confidence=float(selected.total_score or selected.confidence),
             frame_id=processed.frame_id,
+            last_geometry_check_at=(
+                now if strong else previous.last_geometry_check_at
+            ),
+            failed_geometry_checks=0 if strong else previous.failed_geometry_checks,
         )
         processed.timings_ms["tracking_total"] = (
             time.perf_counter() - tracking_started
@@ -1200,6 +1413,96 @@ class StrictShapeDetector:
             self.track_processed(processed, target, previous_center, max_jump_px),
             processed.masks,
         )
+
+    def verify_target_frame(
+        self,
+        frame: np.ndarray,
+        target: str,
+        expected_center_normalized: Optional[tuple[float, float]] = None,
+        max_center_distance_fraction: float = 0.25,
+        frame_id: int = 0,
+        captured_at_s: Optional[float] = None,
+        received_at_s: Optional[float] = None,
+    ) -> Optional[Detection]:
+        """Run an independent full-frame strict check before payload authority.
+
+        This intentionally does not use the tracking ROI or colour association.
+        The prior overlay diagnostics are restored because this verification can
+        run at a different resolution than the normal processing frame.
+        """
+        if target not in {"red_triangle", "blue_hexagon"}:
+            self.last_payload_verification = {
+                "target": target,
+                "accepted": False,
+                "reason": "unknown_target",
+            }
+            return None
+        if not 0.0 < float(max_center_distance_fraction) <= 1.0:
+            raise ValueError("max_center_distance_fraction must be in (0, 1]")
+
+        saved_candidates = list(self.last_candidates)
+        saved_rejections = list(self.last_rejections)
+        processed = self.preprocess(
+            frame,
+            frame_id=frame_id,
+            captured_at_s=captured_at_s,
+            received_at_s=received_at_s,
+        )
+        try:
+            detections = self.search_processed(
+                processed,
+                {target},
+                source="geometry_payload",
+            )
+            rejections = list(self.last_rejections)
+            if not detections:
+                reason = (
+                    rejections[-1]["reason"]
+                    if rejections
+                    else "no_strict_geometry"
+                )
+                self.last_payload_verification = {
+                    "target": target,
+                    "accepted": False,
+                    "reason": reason,
+                    "frame_id": frame_id,
+                }
+                return None
+
+            selected = max(detections, key=lambda item: item.total_score)
+            if expected_center_normalized is not None:
+                expected_x = float(expected_center_normalized[0]) * processed.width
+                expected_y = float(expected_center_normalized[1]) * processed.height
+                distance = math.hypot(
+                    selected.center_x - expected_x,
+                    selected.center_y - expected_y,
+                )
+                limit = float(max_center_distance_fraction) * math.hypot(
+                    processed.width,
+                    processed.height,
+                )
+                if distance > limit:
+                    self.last_payload_verification = {
+                        "target": target,
+                        "accepted": False,
+                        "reason": "strict_geometry_not_associated_with_lock",
+                        "distance_px": round(distance, 2),
+                        "limit_px": round(limit, 2),
+                        "frame_id": frame_id,
+                    }
+                    return None
+
+            self.last_payload_verification = {
+                "target": target,
+                "accepted": True,
+                "reason": "fresh_full_resolution_geometry",
+                "frame_id": frame_id,
+                "source": selected.source,
+            }
+            return selected
+        finally:
+            self.last_candidates = saved_candidates
+            self.last_rejections = saved_rejections
 
 
 def create_detector(vision_config: dict[str, Any]) -> StrictShapeDetector:
@@ -1256,5 +1559,11 @@ def create_detector(vision_config: dict[str, Any]) -> StrictShapeDetector:
         ),
         strong_verify_interval_s=float(
             vision_config.get("strong_verify_interval_s", 0.5)
+        ),
+        max_strong_geometry_age_s=float(
+            vision_config.get("max_strong_geometry_age_s", 0.7)
+        ),
+        max_failed_geometry_checks=int(
+            vision_config.get("max_failed_geometry_checks", 2)
         ),
     )

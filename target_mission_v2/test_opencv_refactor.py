@@ -8,7 +8,7 @@ import unittest
 import cv2
 import numpy as np
 
-from camera_sources import CameraFrame
+from camera_sources import CameraFrame, Picamera2Camera
 from vision import Detection, HitTracker, StrictShapeDetector
 
 
@@ -66,6 +66,22 @@ class CameraFrameTests(unittest.TestCase):
         )
         self.assertIsNone(frame.sensor_age_s(now))
         self.assertAlmostEqual(frame.capture_age_s(now), 0.03, places=2)
+
+    def test_warmup_controls_cap_exposure_and_lock_white_balance(self):
+        controls = Picamera2Camera._locked_auto_controls(
+            {
+                "ExposureTime": 12000,
+                "AnalogueGain": 2.0,
+                "ColourGains": (1.4, 1.7),
+            },
+            max_exposure_time_us=6000,
+            max_analogue_gain=8.0,
+        )
+        self.assertFalse(controls["AeEnable"])
+        self.assertFalse(controls["AwbEnable"])
+        self.assertEqual(controls["ExposureTime"], 6000)
+        self.assertEqual(controls["AnalogueGain"], 4.0)
+        self.assertEqual(controls["ColourGains"], (1.4, 1.7))
 
 
 class PreprocessingTests(unittest.TestCase):
@@ -216,6 +232,114 @@ class ShapeRejectionTests(unittest.TestCase):
         cv2.fillConvexPoly(image, triangle, (0, 0, 245))
         image = cv2.GaussianBlur(image, (7, 7), 1.3)
         self.assertIn("red_triangle", self.targets(image))
+
+    def test_notched_blue_rectangle_never_confirms_or_locks(self):
+        tracker = HitTracker(required_hits=3, window_s=1.5, max_jump_px=160)
+        for frame_id in range(12):
+            image = np.zeros((540, 960, 3), np.uint8)
+            cv2.rectangle(image, (260, 150), (650, 360), (255, 0, 0), -1)
+            cv2.rectangle(image, (420, 145), (500, 205), (0, 0, 0), -1)
+            image = cv2.GaussianBlur(image, (5, 5), 0.8)
+            processed = self.detector.preprocess(
+                image,
+                frame_id=frame_id,
+                captured_at_s=frame_id * 0.1,
+                received_at_s=frame_id * 0.1,
+            )
+            detections = self.detector.search_processed(
+                processed,
+                {"blue_hexagon"},
+            )
+            self.assertEqual(detections, [])
+            self.assertIsNone(
+                tracker.update(
+                    detections,
+                    {"blue_hexagon"},
+                    now=frame_id * 0.1,
+                    frame_id=frame_id,
+                )
+            )
+        self.assertEqual(tracker.status(1.1)["blue_hexagon"], 0)
+        self.assertIsNone(self.detector.tracking_state)
+        self.assertIsNone(
+            self.detector.verify_target_frame(
+                image,
+                "blue_hexagon",
+                frame_id=12,
+                captured_at_s=1.2,
+                received_at_s=1.2,
+            )
+        )
+
+
+class StrictTrackingTests(unittest.TestCase):
+    def setUp(self):
+        self.detector = StrictShapeDetector(
+            search_min_area_px=100,
+            strong_verify_interval_s=0.3,
+            max_strong_geometry_age_s=0.7,
+            max_failed_geometry_checks=2,
+        )
+        self.hexagon = np.zeros((540, 960, 3), np.uint8)
+        points = np.asarray(
+            [[300, 185], [388, 135], [480, 188], [478, 295], [392, 355], [298, 300]],
+            np.int32,
+        )
+        cv2.fillConvexPoly(self.hexagon, points, (255, 0, 0))
+        processed = self.detector.preprocess(
+            self.hexagon,
+            frame_id=1,
+            captured_at_s=1.0,
+            received_at_s=1.0,
+        )
+        strict = self.detector.search_processed(
+            processed,
+            {"blue_hexagon"},
+        )
+        self.assertTrue(strict)
+        self.initial = strict[0]
+        self.detector.begin_tracking(self.initial, now=1.0)
+
+    @staticmethod
+    def round_blue_blob() -> np.ndarray:
+        image = np.zeros((540, 960, 3), np.uint8)
+        cv2.ellipse(image, (390, 245), (105, 85), 0, 0, 360, (255, 0, 0), -1)
+        return image
+
+    def track(self, image: np.ndarray, timestamp: float):
+        processed = self.detector.preprocess(
+            image,
+            frame_id=round(timestamp * 100),
+            captured_at_s=timestamp,
+            received_at_s=timestamp,
+        )
+        return self.detector.track_processed(
+            processed,
+            "blue_hexagon",
+            (self.initial.center_x, self.initial.center_y),
+            max_jump_px=160,
+        )
+
+    def test_colour_tracking_is_temporary_between_strict_checks(self):
+        tracked = self.track(self.round_blue_blob(), 1.1)
+        self.assertIsNotNone(tracked)
+        self.assertEqual(tracked.source, "colour_track")
+        self.assertEqual(tracked.status, "temporary_colour_tracking")
+
+    def test_failed_strict_check_never_falls_back_to_colour(self):
+        self.assertIsNone(self.track(self.round_blue_blob(), 1.31))
+        self.assertIsNotNone(self.detector.tracking_state)
+        self.assertEqual(
+            self.detector.tracking_state.failed_geometry_checks,
+            1,
+        )
+        self.assertIsNone(self.track(self.round_blue_blob(), 1.40))
+
+    def test_two_failed_geometry_checks_drop_lock(self):
+        self.assertIsNone(self.track(self.round_blue_blob(), 1.31))
+        self.assertIsNone(self.track(self.round_blue_blob(), 1.62))
+        self.assertIsNone(self.detector.tracking_state)
+        self.assertIn("failures=2", self.detector.last_lock_drop_reason)
 
 
 if __name__ == "__main__":
