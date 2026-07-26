@@ -15,13 +15,3 @@ diverse, inclusive, and healthy community.
 - Welcome questions from beginners.
 - Respect privacy, attribution, and the limits of other contributors.
 
-
-## Enforcement
-
-Report unacceptable behavior privately to the repository owner through their
-GitHub profile. The maintainers may edit or remove contributions and may
-temporarily or permanently restrict participation when behavior is
-inappropriate, threatening, or harmful.
-
-This policy is adapted from the Contributor Covenant, version 2.1:
-https://www.contributor-covenant.org/version/2/1/code_of_conduct/
