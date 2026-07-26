@@ -225,8 +225,11 @@ Important values:
   2 search.
 - `payload.simulate_only`: keep `true` until servo tests pass; set `false` only
   when the payload mechanism is physically ready.
-- `payload.servo_channel`, `payload.release_pwm`, `payload.reset_pwm`: payload
-  output settings.
+- `payload.servo_channel`: Pixhawk servo output used by the selector.
+- `payload.blue_payload_pwm`, `payload.red_payload_pwm`: target-dependent
+  selector positions.
+- `payload.neutral_pwm`: midpoint restored after every release.
+- `payload.release_hold_s`: time held at the selected payload position.
 - `control.center_max_speed_m_s`: max horizontal speed during GUIDED centering.
 - `control.center_tolerance_px`: pixel error accepted as centered.
 - `vision.search_min_area_px`: target size threshold for the real camera.

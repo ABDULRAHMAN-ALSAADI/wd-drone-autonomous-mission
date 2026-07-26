@@ -204,16 +204,43 @@ does not bypass ArduPilot pre-arm checks.
 Run only with propellers removed. Disconnect the payload mechanism first if the
 channel is uncertain.
 
+Red-triangle / blue-payload selector test (`1300 -> 1500`):
+
 ```bash
 ./test_components/mavlink/servo_payload_test.sh \
+  --target red_triangle \
   --i-understand-props-off \
   --i-accept-servo-motion
 ```
 
-This sends `release_pwm`, waits, then sends `reset_pwm` on the configured servo
-channel. Your real config currently targets Pixhawk MAIN OUT / signal 5. If the
-wrong output moves, stop and fix Mission Planner servo mapping. The tool refuses
-to run while the Cube reports armed.
+Blue-hexagon / red-payload selector test (`1700 -> 1500`):
+
+```bash
+./test_components/mavlink/servo_payload_test.sh \
+  --target blue_hexagon \
+  --i-understand-props-off \
+  --i-accept-servo-motion
+```
+
+Each test holds the selected position for the configured three seconds and
+returns the servo to neutral. Your real config targets Pixhawk MAIN OUT /
+signal 5. If the wrong output moves, stop and fix Mission Planner servo
+mapping. The tool refuses to run while the Cube reports armed.
+
+Strict OpenCV plus physical servo test:
+
+```bash
+./test_components/mavlink/opencv_servo_payload_test.sh \
+  --target red_triangle \
+  --i-understand-props-off \
+  --i-accept-servo-motion \
+  --i-confirm-payload-zone-clear
+```
+
+Use `--target blue_hexagon` for the other selector position. Connection, baud,
+servo channel, target PWM, neutral PWM, and hold time come from the real Mission
+2 profile. The bench tool sends no arm, mode, motor, or velocity commands and
+allows only one release per run.
 
 ## 8A. GUIDED Body-Velocity Command Test
 

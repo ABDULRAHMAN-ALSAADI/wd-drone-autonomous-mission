@@ -19,6 +19,7 @@ for directory in (ROOT / "target_mission_v2", ROOT / "tools"):
 from camera_sources import CameraFrame  # noqa: E402
 from opencv_common import LatestCameraReader  # noqa: E402
 from opencv_live_test import desired_point, scale_detection  # noqa: E402
+from opencv_servo_bench_test import servo_settings_from_config  # noqa: E402
 from test_opencv_refactor import detection  # noqa: E402
 
 
@@ -126,6 +127,41 @@ class CoordinateMappingTests(unittest.TestCase):
                 500,
             ),
             (400, 300),
+        )
+
+
+class ServoProfileTests(unittest.TestCase):
+    def test_bench_servo_settings_follow_target_mapping(self):
+        config = {
+            "payload": {
+                "mechanism": "selector_servo",
+                "servo_channel": 5,
+                "blue_payload_pwm": 1300,
+                "red_payload_pwm": 1700,
+                "neutral_pwm": 1500,
+                "release_hold_s": 3.0,
+                "command_ack_timeout_s": 2.0,
+            }
+        }
+        self.assertEqual(
+            servo_settings_from_config(config, "red_triangle"),
+            {
+                "servo_channel": 5,
+                "release_pwm": 1300,
+                "reset_pwm": 1500,
+                "release_hold_s": 3.0,
+                "ack_timeout_s": 2.0,
+            },
+        )
+        self.assertEqual(
+            servo_settings_from_config(config, "blue_hexagon"),
+            {
+                "servo_channel": 5,
+                "release_pwm": 1700,
+                "reset_pwm": 1500,
+                "release_hold_s": 3.0,
+                "ack_timeout_s": 2.0,
+            },
         )
 
 
