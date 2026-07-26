@@ -241,8 +241,14 @@ order during the same run. Each target can trigger only once. Connection, baud,
 servo channel, target PWM, neutral PWM, and hold time come from the real Mission
 2 profile. Before starting vision, the tool commands and confirms neutral
 `1500` PWM. It also sends neutral on normal exit, timeout, `Ctrl+C`, and error
-paths while the Cube remains disarmed. The bench tool sends no arm, mode, motor,
-or velocity commands.
+paths. Servo ACK waits and the configured three-second hold run without blocking
+camera processing, so the laptop feed remains live while the selector moves.
+After both targets trigger once, the video remains open in monitoring mode until
+you press `Ctrl+C`; shutdown commands neutral `1500` before closing the stream.
+If an ACK is lost or rejected, the tool commands neutral, shows a latched fault,
+keeps retrying neutral until the Cube accepts it, and leaves the monitoring
+stream open instead of attempting another release.
+The bench tool sends no arm, mode, motor, or velocity commands.
 
 ## 8A. GUIDED Body-Velocity Command Test
 

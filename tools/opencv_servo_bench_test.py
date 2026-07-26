@@ -6,6 +6,7 @@ import argparse
 import math
 import time
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -37,6 +38,137 @@ DEFAULT_CONFIG = (
 SERVO_COMMAND = mavutil.mavlink.MAV_CMD_DO_SET_SERVO
 ACCEPTED = "MAV_RESULT_ACCEPTED"
 MISSION_TARGETS = frozenset({"red_triangle", "blue_hexagon"})
+SERVO_IDLE = "IDLE"
+SERVO_WAIT_RELEASE_ACK = "WAIT_RELEASE_ACK"
+SERVO_HOLD = "HOLD"
+SERVO_WAIT_RESET_ACK = "WAIT_RESET_ACK"
+SERVO_FAULT = "FAULT"
+FAULT_NEUTRAL_RETRY_S = 1.0
+
+
+@dataclass
+class ServoSequence:
+    """Non-blocking release/hold/reset state for one target at a time."""
+
+    phase: str = SERVO_IDLE
+    target: Optional[str] = None
+    settings: Optional[dict[str, float | int]] = None
+    command_sent_at: float = 0.0
+    hold_until: float = 0.0
+    fault_reason: Optional[str] = None
+    fault_neutral_confirmed: bool = False
+    fault_neutral_last_attempt_at: float = 0.0
+    fault_neutral_attempts: int = 0
+
+    def begin_release(
+        self,
+        target: str,
+        settings: dict[str, float | int],
+        now: float,
+    ) -> None:
+        if self.phase != SERVO_IDLE:
+            raise RuntimeError("Cannot start a release while another is active")
+        self.phase = SERVO_WAIT_RELEASE_ACK
+        self.target = target
+        self.settings = settings
+        self.command_sent_at = now
+        self.hold_until = now + float(settings["release_hold_s"])
+        self.fault_reason = None
+        self.fault_neutral_confirmed = False
+        self.fault_neutral_last_attempt_at = 0.0
+        self.fault_neutral_attempts = 0
+
+    def handle_ack(self, result: str, now: float) -> Optional[str]:
+        if self.phase == SERVO_FAULT:
+            if (
+                self.fault_neutral_attempts > 0
+                and result == ACCEPTED
+            ):
+                self.fault_neutral_confirmed = True
+            return None
+        if self.phase not in {
+            SERVO_WAIT_RELEASE_ACK,
+            SERVO_WAIT_RESET_ACK,
+        }:
+            return None
+        if result == "MAV_RESULT_IN_PROGRESS":
+            return None
+        if result != ACCEPTED:
+            self.fail(
+                f"Servo command was rejected during {self.phase}: {result}"
+            )
+            return None
+        if self.phase == SERVO_WAIT_RELEASE_ACK:
+            self.phase = SERVO_HOLD
+            return None
+        completed_target = self.target
+        self.phase = SERVO_IDLE
+        self.target = None
+        self.settings = None
+        self.command_sent_at = 0.0
+        self.hold_until = 0.0
+        self.fault_reason = None
+        self.fault_neutral_confirmed = False
+        self.fault_neutral_last_attempt_at = 0.0
+        self.fault_neutral_attempts = 0
+        return completed_target
+
+    def begin_reset(self, now: float) -> None:
+        if self.phase != SERVO_HOLD:
+            raise RuntimeError("Cannot reset before the release hold")
+        self.phase = SERVO_WAIT_RESET_ACK
+        self.command_sent_at = now
+
+    def check_ack_timeout(self, now: float) -> Optional[str]:
+        if self.phase not in {
+            SERVO_WAIT_RELEASE_ACK,
+            SERVO_WAIT_RESET_ACK,
+        }:
+            return None
+        assert self.settings is not None
+        timeout_s = float(self.settings["ack_timeout_s"])
+        if now - self.command_sent_at > timeout_s:
+            reason = (
+                f"Servo ACK timeout during {self.phase} "
+                f"after {timeout_s:.1f}s"
+            )
+            self.fail(reason)
+            return reason
+        return None
+
+    def fail(self, reason: str) -> None:
+        self.phase = SERVO_FAULT
+        self.fault_reason = reason
+        self.command_sent_at = 0.0
+        self.hold_until = 0.0
+        self.fault_neutral_confirmed = False
+        self.fault_neutral_last_attempt_at = 0.0
+        self.fault_neutral_attempts = 0
+
+    def fault_neutral_due(
+        self,
+        now: float,
+        retry_s: float = FAULT_NEUTRAL_RETRY_S,
+    ) -> bool:
+        if self.phase != SERVO_FAULT:
+            return False
+        if self.fault_neutral_confirmed:
+            return False
+        return (
+            self.fault_neutral_attempts == 0
+            or now - self.fault_neutral_last_attempt_at >= retry_s
+        )
+
+    def note_fault_neutral_attempt(self, now: float) -> None:
+        if self.phase != SERVO_FAULT:
+            raise RuntimeError("Cannot record fault neutral outside a fault")
+        self.fault_neutral_last_attempt_at = now
+        self.fault_neutral_attempts += 1
+
+    def hold_remaining_s(self, now: float) -> float:
+        if self.phase != SERVO_HOLD:
+            return 0.0
+        return max(0.0, self.hold_until - now)
 
 
 def servo_settings_from_config(
@@ -106,7 +238,7 @@ def neutral_commands_from_settings(
     ]
 
 
-def send_servo(master, channel: int, pwm: int, timeout_s: float) -> bool:
+def issue_servo_command(master, channel: int, pwm: int) -> None:
     print(f"[SERVO COMMAND] channel={channel} pwm={pwm}")
     master.mav.command_long_send(
         master.target_system,
@@ -121,26 +253,65 @@ def send_servo(master, channel: int, pwm: int, timeout_s: float) -> bool:
         0,
         0,
     )
+
+
+def send_servo(master, channel: int, pwm: int, timeout_s: float) -> bool:
+    """Blocking command used only before streaming and during final cleanup."""
+    issue_servo_command(master, channel, pwm)
     result = wait_ack(master, SERVO_COMMAND, timeout_s=timeout_s)
     print(f"[SERVO ACK] {result or 'timeout'}")
     return result == ACCEPTED
 
 
-def read_latest_vehicle_heartbeat(master) -> Optional[tuple[str, bool]]:
-    latest = None
-    while True:
-        message = master.recv_match(type="HEARTBEAT", blocking=False)
+def mav_result_name(result_code: int) -> str:
+    result = mavutil.mavlink.enums["MAV_RESULT"].get(int(result_code))
+    return result.name if result else str(result_code)
+
+
+def read_vehicle_updates(
+    master,
+) -> tuple[Optional[tuple[str, bool]], list[str]]:
+    """Drain MAVLink once so heartbeat and servo ACK handling never blocks video."""
+    latest_heartbeat = None
+    servo_acks: list[str] = []
+    for _ in range(200):
+        message = master.recv_match(blocking=False)
         if message is None:
-            return latest
-        if not heartbeat_is_target_vehicle(message, master.target_system):
+            return latest_heartbeat, servo_acks
+        message_type = message.get_type()
+        if message_type == "HEARTBEAT":
+            if not heartbeat_is_target_vehicle(
+                message,
+                master.target_system,
+            ):
+                continue
+            latest_heartbeat = (
+                mavutil.mode_string_v10(message),
+                bool(
+                    message.base_mode
+                    & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
+                ),
+            )
             continue
-        latest = (
-            mavutil.mode_string_v10(message),
-            bool(
-                message.base_mode
-                & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
-            ),
-        )
+        if (
+            message_type == "COMMAND_ACK"
+            and message.get_srcSystem() == master.target_system
+            and message.get_srcComponent() == master.target_component
+            and int(message.command) == int(SERVO_COMMAND)
+        ):
+            target_system = int(getattr(message, "target_system", 0))
+            target_component = int(
+                getattr(message, "target_component", 0)
+            )
+            if target_system not in {0, int(master.source_system)}:
+                continue
+            if target_component not in {
+                0,
+                int(master.source_component),
+            }:
+                continue
+            servo_acks.append(mav_result_name(int(message.result)))
+    return latest_heartbeat, servo_acks
 
 
 def select_detection(
@@ -332,7 +503,12 @@ def parse_args() -> argparse.Namespace:
         help="Expert override; normally read from the mission profile.",
     )
     parser.add_argument("--heartbeat-max-age-s", type=float, default=3.0)
-    parser.add_argument("--duration-s", type=float, default=180.0)
+    parser.add_argument(
+        "--duration-s",
+        type=float,
+        default=0.0,
+        help="Optional timeout; zero keeps monitoring until Ctrl+C.",
+    )
     parser.add_argument("--stream-bind", default="127.0.0.1")
     parser.add_argument("--stream-port", type=int, default=5602)
     parser.add_argument("--i-understand-props-off", action="store_true")
@@ -372,8 +548,10 @@ def validate_args(
             )
         if float(servo_settings["ack_timeout_s"]) <= 0:
             raise ValueError(f"{target} ack-timeout-s must be positive")
-    if args.heartbeat_max_age_s <= 0 or args.duration_s <= 0:
-        raise ValueError("heartbeat-max-age-s and duration-s must be positive")
+    if args.heartbeat_max_age_s <= 0:
+        raise ValueError("heartbeat-max-age-s must be positive")
+    if args.duration_s < 0:
+        raise ValueError("duration-s must be zero or positive")
 
 
 def main() -> int:
@@ -458,13 +636,17 @@ def main() -> int:
     active_target: Optional[str] = None
     completed_targets: set[str] = set()
     all_completed = False
+    servo_sequence = ServoSequence()
     state = "SEARCH_STRICT_GEOMETRY"
     process_times: deque[float] = deque(maxlen=120)
 
     try:
-        while time.monotonic() - started_at < args.duration_s:
+        while (
+            args.duration_s <= 0
+            or time.monotonic() - started_at < args.duration_s
+        ):
             now = time.monotonic()
-            heartbeat = read_latest_vehicle_heartbeat(master)
+            heartbeat, servo_acks = read_vehicle_updates(master)
             if heartbeat is not None:
                 mode, armed = heartbeat
                 last_vehicle_heartbeat_at = now
@@ -472,6 +654,157 @@ def main() -> int:
                 raise RuntimeError(
                     "Vehicle became armed; servo bench test stopped"
                 )
+            heartbeat_age_s = now - last_vehicle_heartbeat_at
+
+            for result in servo_acks:
+                neutral_was_pending = (
+                    servo_sequence.phase == SERVO_FAULT
+                    and servo_sequence.fault_neutral_attempts > 0
+                    and not servo_sequence.fault_neutral_confirmed
+                )
+                completed_target = servo_sequence.handle_ack(result, now)
+                print(
+                    f"[SERVO ACK] phase={servo_sequence.phase} "
+                    f"result={result}"
+                )
+                if (
+                    neutral_was_pending
+                    and servo_sequence.fault_neutral_confirmed
+                ):
+                    print(
+                        "[SERVO FAULT NEUTRAL CONFIRMED] "
+                        "Cube accepted neutral PWM"
+                    )
+                if completed_target is None:
+                    continue
+                completed_targets.add(completed_target)
+                active_target = None
+                centered_since = None
+                tracker.reset()
+                reset_tracking = getattr(
+                    detector,
+                    "reset_tracking",
+                    None,
+                )
+                if callable(reset_tracking):
+                    reset_tracking()
+                state = f"RELEASE_COMPLETE_{completed_target}"
+                print(
+                    f"[BENCH RELEASE COMPLETE] target={completed_target}; "
+                    "release and neutral reset accepted; physical payload "
+                    "release is not sensed"
+                )
+                all_completed = completed_targets == requested_targets
+                if all_completed:
+                    state = "BENCH_COMPLETE_MONITORING"
+                    print(
+                        "[BENCH TEST COMPLETE] all requested targets released "
+                        "once; monitoring continues until Ctrl+C"
+                    )
+                else:
+                    print(
+                        "[READY FOR NEXT TARGET] remaining="
+                        f"{sorted(requested_targets - completed_targets)}"
+                    )
+
+            if (
+                servo_sequence.phase
+                in {
+                    SERVO_WAIT_RELEASE_ACK,
+                    SERVO_HOLD,
+                    SERVO_WAIT_RESET_ACK,
+                }
+                and heartbeat_age_s > args.heartbeat_max_age_s
+            ):
+                servo_sequence.fail(
+                    "Vehicle heartbeat became stale during servo action"
+                )
+            servo_sequence.check_ack_timeout(now)
+
+            if (
+                servo_sequence.phase == SERVO_FAULT
+            ):
+                assert servo_sequence.settings is not None
+                if servo_sequence.fault_neutral_attempts == 0:
+                    print(
+                        f"[SERVO FAULT] {servo_sequence.fault_reason}; "
+                        "commanding neutral and keeping the video live"
+                    )
+                if servo_sequence.fault_neutral_due(now):
+                    if servo_sequence.fault_neutral_attempts == 0:
+                        fault_heartbeat, stale_acks = read_vehicle_updates(
+                            master
+                        )
+                        if fault_heartbeat is not None:
+                            mode, armed = fault_heartbeat
+                            last_vehicle_heartbeat_at = now
+                        if stale_acks:
+                            print(
+                                "[STALE SERVO ACK DISCARDED BEFORE NEUTRAL] "
+                                f"count={len(stale_acks)}"
+                            )
+                    attempt = servo_sequence.fault_neutral_attempts + 1
+                    try:
+                        issue_servo_command(
+                            master,
+                            int(
+                                servo_sequence.settings[
+                                    "servo_channel"
+                                ]
+                            ),
+                            int(servo_sequence.settings["reset_pwm"]),
+                        )
+                        print(
+                            "[SERVO FAULT NEUTRAL PENDING] "
+                            f"attempt={attempt}"
+                        )
+                    except Exception as exc:
+                        print(
+                            "[SERVO FAULT NEUTRAL SEND FAILED] "
+                            f"attempt={attempt}: {exc}"
+                        )
+                    finally:
+                        servo_sequence.note_fault_neutral_attempt(now)
+                centered_since = None
+                neutral_state = (
+                    "NEUTRAL_CONFIRMED"
+                    if servo_sequence.fault_neutral_confirmed
+                    else "NEUTRAL_PENDING"
+                )
+                state = (
+                    f"SERVO_FAULT_{neutral_state}_"
+                    f"{servo_sequence.target}"
+                )
+            elif servo_sequence.phase == SERVO_HOLD:
+                remaining_s = servo_sequence.hold_remaining_s(now)
+                state = (
+                    f"SERVO_HOLD_{servo_sequence.target}_"
+                    f"{remaining_s:.1f}s"
+                )
+                if remaining_s <= 0.0:
+                    assert servo_sequence.settings is not None
+                    try:
+                        issue_servo_command(
+                            master,
+                            int(
+                                servo_sequence.settings[
+                                    "servo_channel"
+                                ]
+                            ),
+                            int(servo_sequence.settings["reset_pwm"]),
+                        )
+                    except Exception as exc:
+                        servo_sequence.fail(
+                            f"Neutral reset command send failed: {exc}"
+                        )
+                        state = f"SERVO_FAULT_{servo_sequence.target}"
+                    else:
+                        servo_sequence.begin_reset(now)
+                        state = f"WAIT_RESET_ACK_{servo_sequence.target}"
+            elif servo_sequence.phase == SERVO_WAIT_RELEASE_ACK:
+                state = f"WAIT_RELEASE_ACK_{servo_sequence.target}"
+            elif servo_sequence.phase == SERVO_WAIT_RESET_ACK:
+                state = f"WAIT_RESET_ACK_{servo_sequence.target}"
 
             camera_frame = reader.latest()
             if (
@@ -569,7 +902,12 @@ def main() -> int:
                 and error_px is not None
                 and error_px <= tolerance_px
             )
-            if heartbeat_age_s > args.heartbeat_max_age_s:
+            if all_completed:
+                centered_since = None
+                state = "BENCH_COMPLETE_MONITORING"
+            elif servo_sequence.phase != SERVO_IDLE:
+                centered_since = None
+            elif heartbeat_age_s > args.heartbeat_max_age_s:
                 centered_since = None
                 state = "BLOCKED_STALE_HEARTBEAT"
             elif not strict_confirmed:
@@ -589,7 +927,9 @@ def main() -> int:
                 else now - centered_since
             )
             ready = (
-                centered
+                not all_completed
+                and servo_sequence.phase == SERVO_IDLE
+                and centered
                 and centered_for_s >= center_hold_s
                 and heartbeat_age_s <= args.heartbeat_max_age_s
             )
@@ -616,62 +956,47 @@ def main() -> int:
                     state = f"FULL_RES_REJECTED: {reason}"
                     print(f"[PAYLOAD BLOCKED] {reason}")
                 else:
-                    mode, armed = wait_vehicle_state(master, 2.0)
-                    last_vehicle_heartbeat_at = time.monotonic()
+                    heartbeat, stale_servo_acks = read_vehicle_updates(master)
+                    command_now = time.monotonic()
+                    if heartbeat is not None:
+                        mode, armed = heartbeat
+                        last_vehicle_heartbeat_at = command_now
+                    if stale_servo_acks:
+                        print(
+                            "[STALE SERVO ACK DISCARDED] "
+                            f"count={len(stale_servo_acks)}"
+                        )
                     if armed:
                         raise RuntimeError(
                             "Vehicle armed before servo command; blocked"
                         )
-                    print(f"[FULL RES VERIFIED] {reason}")
-                    if not send_servo(
-                        master,
-                        int(servo_settings["servo_channel"]),
-                        int(servo_settings["release_pwm"]),
-                        float(servo_settings["ack_timeout_s"]),
+                    if (
+                        command_now - last_vehicle_heartbeat_at
+                        > args.heartbeat_max_age_s
                     ):
-                        raise RuntimeError(
-                            "Release servo command was not accepted"
+                        centered_since = None
+                        state = "BLOCKED_STALE_HEARTBEAT"
+                    else:
+                        print(f"[FULL RES VERIFIED] {reason}")
+                        servo_sequence.begin_release(
+                            active_target,
+                            servo_settings,
+                            time.monotonic(),
                         )
-                    time.sleep(float(servo_settings["release_hold_s"]))
-                    mode, armed = wait_vehicle_state(master, 2.0)
-                    last_vehicle_heartbeat_at = time.monotonic()
-                    if armed:
-                        raise RuntimeError(
-                            "Vehicle armed before servo reset; test stopped"
-                        )
-                    if not send_servo(
-                        master,
-                        int(servo_settings["servo_channel"]),
-                        int(servo_settings["reset_pwm"]),
-                        float(servo_settings["ack_timeout_s"]),
-                    ):
-                        raise RuntimeError(
-                            "Servo reset command was not accepted"
-                        )
-                    completed_target = active_target
-                    completed_targets.add(completed_target)
-                    active_target = None
-                    centered_since = None
-                    tracker.reset()
-                    reset_tracking = getattr(
-                        detector,
-                        "reset_tracking",
-                        None,
-                    )
-                    if callable(reset_tracking):
-                        reset_tracking()
-                    state = f"RELEASE_COMPLETE_{completed_target}"
-                    print(
-                        f"[BENCH RELEASE COMPLETE] target={completed_target}; "
-                        "command accepted and reset accepted; physical payload "
-                        "release is not sensed"
-                    )
-                    all_completed = completed_targets == requested_targets
-                    if not all_completed:
-                        print(
-                            "[READY FOR NEXT TARGET] remaining="
-                            f"{sorted(requested_targets - completed_targets)}"
-                        )
+                        centered_since = None
+                        try:
+                            issue_servo_command(
+                                master,
+                                int(servo_settings["servo_channel"]),
+                                int(servo_settings["release_pwm"]),
+                            )
+                        except Exception as exc:
+                            servo_sequence.fail(
+                                f"Release command send failed: {exc}"
+                            )
+                            state = f"SERVO_FAULT_{active_target}"
+                        else:
+                            state = f"WAIT_RELEASE_ACK_{active_target}"
 
             fps = (
                 0.0
@@ -709,32 +1034,40 @@ def main() -> int:
                 completed_targets,
             )
             stream.publish(view)
-            if all_completed:
-                print("[BENCH TEST COMPLETE] all requested targets released once")
-                time.sleep(1.0)
-                return 0
     finally:
-        try:
-            _final_mode, final_armed = wait_vehicle_state(master, 1.0)
-            if final_armed:
+        print("[FINAL NEUTRAL] Returning every selector to neutral")
+        pending_neutral_acks = []
+        for channel, neutral_pwm, ack_timeout_s in neutral_commands:
+            try:
+                issue_servo_command(master, channel, neutral_pwm)
+                pending_neutral_acks.append((channel, ack_timeout_s))
+            except Exception as exc:
                 print(
-                    "[FINAL NEUTRAL BLOCKED] Vehicle is armed; "
-                    "neutral servo command was not sent"
+                    "[FINAL NEUTRAL SEND FAILED] "
+                    f"channel={channel}: {exc}"
                 )
-            else:
-                print("[FINAL NEUTRAL] Returning every selector to neutral")
-                for channel, neutral_pwm, ack_timeout_s in neutral_commands:
-                    send_servo(
-                        master,
-                        channel,
-                        neutral_pwm,
-                        ack_timeout_s,
-                    )
-        except Exception as exc:
-            print(f"[FINAL NEUTRAL FAILED] {exc}")
+        for channel, ack_timeout_s in pending_neutral_acks:
+            try:
+                result = wait_ack(
+                    master,
+                    SERVO_COMMAND,
+                    timeout_s=ack_timeout_s,
+                )
+                print(
+                    f"[FINAL NEUTRAL ACK] channel={channel} "
+                    f"{result or 'timeout'}"
+                )
+            except Exception as exc:
+                print(
+                    "[FINAL NEUTRAL ACK FAILED] "
+                    f"channel={channel}: {exc}"
+                )
         reader.stop()
         stream.stop()
 
+    if all_completed:
+        print("[COMPLETE] Monitoring duration ended after all target releases")
+        return 0
     print(
         "[TIMEOUT] completed="
         f"{sorted(completed_targets)} "
