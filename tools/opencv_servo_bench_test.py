@@ -84,6 +84,28 @@ def targets_for_run(target_option: str) -> set[str]:
     raise ValueError(f"Unknown target option: {target_option}")
 
 
+def neutral_commands_from_settings(
+    settings_by_target: dict[str, dict[str, float | int]],
+) -> list[tuple[int, int, float]]:
+    """Return one unambiguous neutral command for each configured channel."""
+    by_channel: dict[int, tuple[int, float]] = {}
+    for target, settings in settings_by_target.items():
+        channel = int(settings["servo_channel"])
+        reset_pwm = int(settings["reset_pwm"])
+        ack_timeout_s = float(settings["ack_timeout_s"])
+        previous = by_channel.get(channel)
+        if previous is not None and previous[0] != reset_pwm:
+            raise ValueError(
+                f"Conflicting neutral PWM values on channel {channel}: "
+                f"{previous[0]} and {reset_pwm} ({target})"
+            )
+        by_channel[channel] = (reset_pwm, ack_timeout_s)
+    return [
+        (channel, reset_pwm, ack_timeout_s)
+        for channel, (reset_pwm, ack_timeout_s) in sorted(by_channel.items())
+    ]
+
+
 def send_servo(master, channel: int, pwm: int, timeout_s: float) -> bool:
     print(f"[SERVO COMMAND] channel={channel} pwm={pwm}")
     master.mav.command_long_send(
@@ -363,6 +385,7 @@ def main() -> int:
         for target in requested_targets
     }
     validate_args(args, settings_by_target)
+    neutral_commands = neutral_commands_from_settings(settings_by_target)
     connection = str(
         args.connection or config["mavlink"]["connection"]
     )
@@ -387,6 +410,17 @@ def main() -> int:
     mode, armed = wait_vehicle_state(master, 3.0)
     if armed:
         raise SystemExit("Refusing test because the vehicle is armed")
+    print("[SERVO INITIALIZE] Commanding configured neutral before vision starts")
+    for channel, neutral_pwm, ack_timeout_s in neutral_commands:
+        if not send_servo(
+            master,
+            channel,
+            neutral_pwm,
+            ack_timeout_s,
+        ):
+            raise RuntimeError(
+                f"Neutral initialization was not accepted on channel {channel}"
+            )
 
     per_target = control.get("center_tolerance_px_by_target", {})
     center_hold_s = float(control.get("center_hold_s", 1.2))
@@ -424,8 +458,6 @@ def main() -> int:
     active_target: Optional[str] = None
     completed_targets: set[str] = set()
     all_completed = False
-    servo_needs_reset = False
-    pending_reset_settings: Optional[dict[str, float | int]] = None
     state = "SEARCH_STRICT_GEOMETRY"
     process_times: deque[float] = deque(maxlen=120)
 
@@ -600,8 +632,6 @@ def main() -> int:
                         raise RuntimeError(
                             "Release servo command was not accepted"
                         )
-                    servo_needs_reset = True
-                    pending_reset_settings = servo_settings
                     time.sleep(float(servo_settings["release_hold_s"]))
                     mode, armed = wait_vehicle_state(master, 2.0)
                     last_vehicle_heartbeat_at = time.monotonic()
@@ -618,8 +648,6 @@ def main() -> int:
                         raise RuntimeError(
                             "Servo reset command was not accepted"
                         )
-                    servo_needs_reset = False
-                    pending_reset_settings = None
                     completed_target = active_target
                     completed_targets.add(completed_target)
                     active_target = None
@@ -686,24 +714,24 @@ def main() -> int:
                 time.sleep(1.0)
                 return 0
     finally:
-        if servo_needs_reset and pending_reset_settings is not None:
-            try:
-                _final_mode, final_armed = wait_vehicle_state(master, 1.0)
-                if final_armed:
-                    print(
-                        "[FAILSAFE RESET BLOCKED] Vehicle is armed; "
-                        "neutral servo command was not sent"
-                    )
-                else:
-                    print("[FAILSAFE RESET] Returning selector to neutral")
+        try:
+            _final_mode, final_armed = wait_vehicle_state(master, 1.0)
+            if final_armed:
+                print(
+                    "[FINAL NEUTRAL BLOCKED] Vehicle is armed; "
+                    "neutral servo command was not sent"
+                )
+            else:
+                print("[FINAL NEUTRAL] Returning every selector to neutral")
+                for channel, neutral_pwm, ack_timeout_s in neutral_commands:
                     send_servo(
                         master,
-                        int(pending_reset_settings["servo_channel"]),
-                        int(pending_reset_settings["reset_pwm"]),
-                        float(pending_reset_settings["ack_timeout_s"]),
+                        channel,
+                        neutral_pwm,
+                        ack_timeout_s,
                     )
-            except Exception as exc:
-                print(f"[FAILSAFE RESET FAILED] {exc}")
+        except Exception as exc:
+            print(f"[FINAL NEUTRAL FAILED] {exc}")
         reader.stop()
         stream.stop()
 

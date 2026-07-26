@@ -239,7 +239,10 @@ Strict OpenCV plus physical servo test:
 The detector automatically accepts the red triangle and blue hexagon in either
 order during the same run. Each target can trigger only once. Connection, baud,
 servo channel, target PWM, neutral PWM, and hold time come from the real Mission
-2 profile. The bench tool sends no arm, mode, motor, or velocity commands.
+2 profile. Before starting vision, the tool commands and confirms neutral
+`1500` PWM. It also sends neutral on normal exit, timeout, `Ctrl+C`, and error
+paths while the Cube remains disarmed. The bench tool sends no arm, mode, motor,
+or velocity commands.
 
 ## 8A. GUIDED Body-Velocity Command Test
 

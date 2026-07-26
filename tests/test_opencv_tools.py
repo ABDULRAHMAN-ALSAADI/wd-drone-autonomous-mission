@@ -20,6 +20,7 @@ from camera_sources import CameraFrame  # noqa: E402
 from opencv_common import LatestCameraReader  # noqa: E402
 from opencv_live_test import desired_point, scale_detection  # noqa: E402
 from opencv_servo_bench_test import (  # noqa: E402
+    neutral_commands_from_settings,
     servo_settings_from_config,
     targets_for_run,
 )
@@ -139,6 +140,40 @@ class ServoProfileTests(unittest.TestCase):
             targets_for_run("both"),
             {"red_triangle", "blue_hexagon"},
         )
+
+    def test_shared_selector_has_one_neutral_initialization(self):
+        settings = {
+            "red_triangle": {
+                "servo_channel": 5,
+                "reset_pwm": 1500,
+                "ack_timeout_s": 2.0,
+            },
+            "blue_hexagon": {
+                "servo_channel": 5,
+                "reset_pwm": 1500,
+                "ack_timeout_s": 2.0,
+            },
+        }
+        self.assertEqual(
+            neutral_commands_from_settings(settings),
+            [(5, 1500, 2.0)],
+        )
+
+    def test_conflicting_neutral_positions_are_rejected(self):
+        settings = {
+            "red_triangle": {
+                "servo_channel": 5,
+                "reset_pwm": 1500,
+                "ack_timeout_s": 2.0,
+            },
+            "blue_hexagon": {
+                "servo_channel": 5,
+                "reset_pwm": 1400,
+                "ack_timeout_s": 2.0,
+            },
+        }
+        with self.assertRaises(ValueError):
+            neutral_commands_from_settings(settings)
 
     def test_bench_servo_settings_follow_target_mapping(self):
         config = {
