@@ -163,8 +163,8 @@ Props off. Payload disconnected first if you are unsure about the channel.
   --i-accept-servo-motion
 ```
 
-The tested selector mapping is `1300 -> 1500` for a red triangle and
-`1700 -> 1500` for a blue hexagon, with a three-second hold. Channel 5 means
+The tested selector mapping is `1700 -> 1500` for a red triangle (blue payload)
+and `1300 -> 1500` for a blue hexagon (red payload), with a three-second hold. Channel 5 means
 MAIN OUT 5.
 
 For automatic recognition plus the physical selector, follow

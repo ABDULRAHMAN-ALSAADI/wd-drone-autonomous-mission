@@ -32,6 +32,12 @@ Passed:
 - The exact implementation passed 133 software tests on Ubuntu and 15 focused
   non-hardware tests on the Raspberry Pi.
 
+Calibration correction: the observations above describe the selector positions
+used during that historical test, but the payload colours were later confirmed
+to use the opposite association. The current Mission 2 profile uses `1700` for
+the blue payload on a red triangle and `1300` for the red payload on a blue
+hexagon.
+
 Software tests additionally verified that either configured target may be
 presented first, each target can trigger at most once per run, and a lost or
 rejected servo command ACK latches a fault and keeps retrying neutral without

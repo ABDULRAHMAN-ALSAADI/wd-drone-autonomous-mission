@@ -665,7 +665,7 @@ class MissionConfigTests(unittest.TestCase):
             ),
             {
                 "servo_channel": 5,
-                "release_pwm": 1300,
+                "release_pwm": 1700,
                 "reset_pwm": 1500,
             },
         )
@@ -676,7 +676,7 @@ class MissionConfigTests(unittest.TestCase):
             ),
             {
                 "servo_channel": 5,
-                "release_pwm": 1700,
+                "release_pwm": 1300,
                 "reset_pwm": 1500,
             },
         )
@@ -692,7 +692,7 @@ class MissionConfigTests(unittest.TestCase):
             payload_output_for_target(config["payload"], "red_triangle"),
             {
                 "servo_channel": 5,
-                "release_pwm": 1300,
+                "release_pwm": 1700,
                 "reset_pwm": 1500,
             },
         )
@@ -700,7 +700,7 @@ class MissionConfigTests(unittest.TestCase):
             payload_output_for_target(config["payload"], "blue_hexagon"),
             {
                 "servo_channel": 5,
-                "release_pwm": 1700,
+                "release_pwm": 1300,
                 "reset_pwm": 1500,
             },
         )

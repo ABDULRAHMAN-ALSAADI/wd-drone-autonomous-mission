@@ -13,8 +13,8 @@
     "simulate_only": true,
     "mechanism": "selector_servo",
     "servo_channel": 5,
-    "blue_payload_pwm": 1300,
-    "red_payload_pwm": 1700,
+    "blue_payload_pwm": 1700,
+    "red_payload_pwm": 1300,
     "neutral_pwm": 1500,
     "release_hold_s": 3.0,
     "total_action_time_s": 3.5

@@ -39,8 +39,8 @@ Do not edit Python code for normal tuning. Start here first.
 | `payload.simulate_only` | If `true`, no servo command is sent. | Keep `true` until servo bench passes. |
 | `payload.servo_channel` | Pixhawk output channel for payload. | `5` when the servo signal is on MAIN OUT / signal 5. |
 | `payload.mechanism` | Selects the payload actuator layout. | Use `selector_servo` for one servo with two payload positions. |
-| `payload.blue_payload_pwm` | Selector position for the blue payload, used on the red triangle. | `1300` for the tested mechanism. |
-| `payload.red_payload_pwm` | Selector position for the red payload, used on the blue hexagon. | `1700` for the tested mechanism. |
+| `payload.blue_payload_pwm` | Selector position for the blue payload, used on the red triangle. | `1700` for the tested mechanism. |
+| `payload.red_payload_pwm` | Selector position for the red payload, used on the blue hexagon. | `1300` for the tested mechanism. |
 | `payload.neutral_pwm` | Servo position after the hold time. | `1500` for the tested midpoint. |
 | `payload.release_hold_s` | Seconds to hold the selected payload position before returning to neutral. | `3.0` for the tested mechanism. |
 | `payload.command_ack_timeout_s` | How long to wait for ArduPilot to accept a servo command. | `2.0`. |
@@ -69,8 +69,8 @@ The laptop viewer needs Wi-Fi/SSH to the Pi. It is not carried by RFD900x.
 The mission already knows the competition payload mapping:
 
 ```text
-red triangle  -> blue payload -> 1300 PWM -> wait 3 s -> 1500 PWM
-blue hexagon  -> red payload  -> 1700 PWM -> wait 3 s -> 1500 PWM
+red triangle  -> blue payload -> 1700 PWM -> wait 3 s -> 1500 PWM
+blue hexagon  -> red payload  -> 1300 PWM -> wait 3 s -> 1500 PWM
 ```
 
 Physical servo output only happens when:

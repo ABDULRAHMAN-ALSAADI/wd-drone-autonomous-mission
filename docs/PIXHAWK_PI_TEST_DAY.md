@@ -139,7 +139,8 @@ the channel is uncertain.
 ```
 
 These read the tested mapping from the Mission 2 profile: red triangle uses
-`1300 -> 1500`, and blue hexagon uses `1700 -> 1500`, with a three-second hold.
+`1700 -> 1500` for its blue payload, and blue hexagon uses `1300 -> 1500`
+for its red payload, with a three-second hold.
 Channel 5 means MAIN OUT 5. If the wrong output moves, stop and fix the channel
 mapping before continuing.
 

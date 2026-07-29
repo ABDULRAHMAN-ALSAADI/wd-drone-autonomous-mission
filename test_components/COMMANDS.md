@@ -208,7 +208,7 @@ does not bypass ArduPilot pre-arm checks.
 Run only with propellers removed. Disconnect the payload mechanism first if the
 channel is uncertain.
 
-Red-triangle / blue-payload selector test (`1300 -> 1500`):
+Red-triangle / blue-payload selector test (`1700 -> 1500`):
 
 ```bash
 ./test_components/mavlink/servo_payload_test.sh \
@@ -217,7 +217,7 @@ Red-triangle / blue-payload selector test (`1300 -> 1500`):
   --i-accept-servo-motion
 ```
 
-Blue-hexagon / red-payload selector test (`1700 -> 1500`):
+Blue-hexagon / red-payload selector test (`1300 -> 1500`):
 
 ```bash
 ./test_components/mavlink/servo_payload_test.sh \
@@ -297,8 +297,8 @@ on-screen center marker:
 
 | Detected target | Selector action |
 | --- | --- |
-| Red triangle | `1300` PWM for 3 seconds, then neutral `1500` |
-| Blue hexagon | `1700` PWM for 3 seconds, then neutral `1500` |
+| Red triangle | Blue payload: `1700` PWM for 3 seconds, then neutral `1500` |
+| Blue hexagon | Red payload: `1300` PWM for 3 seconds, then neutral `1500` |
 
 The detector automatically accepts the red triangle and blue hexagon in either
 order during the same run. Each target can trigger only once. Connection, baud,
