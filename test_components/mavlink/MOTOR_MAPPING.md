@@ -2,27 +2,27 @@
 
 Use this when the motor test spins the wrong physical motor.
 
-## What Happened In Your Test
+## Latest Test Result
 
 You reported:
 
 | Command | Motor that actually spun |
 | --- | --- |
-| `--motor 1` | physical M3 |
-| `--motor 2` | physical M4 |
-| `--motor 3` | physical M1 |
-| `--motor 4` | physical M2 |
+| `--motor 1` | physical M2 |
+| `--motor 2` | physical M1 |
+| `--motor 3` | not yet re-confirmed |
+| `--motor 4` | not yet re-confirmed |
 
-That means the ESC signal wires are crossed in pairs:
+The latest result means the M1 and M2 ESC signal assignments are exchanged:
 
 ```text
-output 1 <-> output 3
-output 2 <-> output 4
+output 1 <-> output 2
 ```
 
 ## Safe Physical Fix
 
-With propellers removed, swap only the ESC signal wires:
+With every propeller removed, disconnect the flight battery and all other
+airframe power. Swap only the M1 and M2 ESC signal assignments:
 
 | Pixhawk MAIN OUT | Should go to physical motor |
 | --- | --- |
@@ -31,14 +31,19 @@ With propellers removed, swap only the ESC signal wires:
 | MAIN OUT 3 | M3 |
 | MAIN OUT 4 | M4 |
 
-Based on your observed result, that means:
+Based on the latest observed result:
 
 ```text
-swap the signal wires on MAIN OUT 1 and MAIN OUT 3
-swap the signal wires on MAIN OUT 2 and MAIN OUT 4
+swap the signal assignments on MAIN OUT 1 and MAIN OUT 2
 ```
 
-Keep grounds common. Do not move battery power wires while powered.
+On a four-in-one ESC harness, correct the S1/S2 signal-pin order or the matching
+output assignment. Keep signal grounds paired and common. Do not move any wire
+while the aircraft is powered. Swapping two motor phase wires changes rotation
+direction only; it does not correct motor position numbering.
+
+Do not compensate by changing the Raspberry Pi motor-test command. ArduPilot
+must own the correct motor mapping for every flight mode and failsafe.
 
 ## Frame Type Check
 
@@ -56,7 +61,8 @@ Changing `FRAME_TYPE` requires rebooting the flight controller.
 
 ## Retest Order
 
-After rewiring or changing frame type, retest with propellers removed:
+After correcting the signal assignment or frame setup, retest all four outputs
+with propellers removed:
 
 ```bash
 ./test_components/mavlink/motor_test.sh --motor 1 --throttle-percent 5 --duration 1 --i-understand-props-off --i-accept-motor-spin
