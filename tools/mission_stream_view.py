@@ -80,6 +80,10 @@ def save_snapshot(frame: np.ndarray, directory: Path) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ssh-alias", default="pi5")
+    parser.add_argument(
+        "--direct-host",
+        help="Connect directly to this Pi IP instead of creating an SSH tunnel",
+    )
     parser.add_argument("--local-port", type=int, default=15602)
     parser.add_argument("--remote-port", type=int, default=5602)
     parser.add_argument("--tunnel-timeout", type=float, default=20.0)
@@ -88,13 +92,18 @@ def main() -> int:
     parser.add_argument("--snapshot-dir", type=Path, default=Path("data/mission_snapshots"))
     args = parser.parse_args()
 
-    tunnel = start_tunnel(
-        args.ssh_alias,
-        args.local_port,
-        args.remote_port,
-        args.tunnel_timeout,
-    )
-    url = f"http://127.0.0.1:{args.local_port}/stream.mjpg"
+    tunnel: subprocess.Popen | None = None
+    if args.direct_host:
+        url = f"http://{args.direct_host}:{args.remote_port}/stream.mjpg"
+        print(f"[DIRECT STREAM] Pi {args.direct_host}:{args.remote_port}")
+    else:
+        tunnel = start_tunnel(
+            args.ssh_alias,
+            args.local_port,
+            args.remote_port,
+            args.tunnel_timeout,
+        )
+        url = f"http://127.0.0.1:{args.local_port}/stream.mjpg"
     print(f"[MISSION VIDEO] {url}")
     print("[KEYS] q/esc quit | s snapshot")
     try:
@@ -106,6 +115,8 @@ def main() -> int:
                 "Verify on the Pi: "
                 f"ss -ltnp | grep ':{args.remote_port}'"
             )
+            if args.direct_host:
+                print("Direct mode requires the Pi stream to bind to 0.0.0.0.")
             print(f"Details: {exc}")
             return 2
 
@@ -142,7 +153,8 @@ def main() -> int:
             if key == ord("s"):
                 print(f"[SNAPSHOT] {save_snapshot(frame, args.snapshot_dir)}")
     finally:
-        stop_process(tunnel)
+        if tunnel is not None:
+            stop_process(tunnel)
         cv2.destroyAllWindows()
     return 0
 

@@ -56,7 +56,17 @@ The Pi-side OpenCV or mission process must be running and must print:
 
 [STREAM] http://127.0.0.1:5602/stream.mjpg
 
-Then open the laptop window:
+For the simplest test on a trusted shared Ethernet or Wi-Fi network, start the
+Pi camera test with:
+
+./test_components/camera/opencv_test.sh live --mode full --headless --stream --stream-bind 0.0.0.0
+
+Then open the laptop window directly, without SSH:
+
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./real_mission/open_laptop_camera_window.sh --direct-host PI_ADDRESS
+
+For an SSH-protected stream bound to Pi localhost, open the laptop window with:
 
 cd ~/FOR_COMP/wd-drone-autonomous-mission
 ./real_mission/open_laptop_camera_window.sh --ssh-alias pi5@PI_ETHERNET_ADDRESS
