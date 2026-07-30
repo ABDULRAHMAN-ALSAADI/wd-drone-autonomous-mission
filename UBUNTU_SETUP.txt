@@ -35,7 +35,44 @@ are machine-specific or intentionally excluded. The setup creates a fresh
 .venv for this laptop.
 
 
-3. NORMAL DAILY COMMANDS
+3. CONNECT THIS LAPTOP TO THE PI CAMERA OVER ETHERNET
+
+On the Raspberry Pi terminal, find its current Ethernet address:
+
+hostname -I
+ip -4 addr show eth0
+
+Use the plain address shown after "inet". Do not include "/24". On the Ubuntu
+laptop, establish SSH once before opening the video window:
+
+ssh pi5@PI_ETHERNET_ADDRESS
+
+Accept the host key when asked, enter the Pi user's password, verify that the
+prompt changes to "pi5@raspberrypi5", then run:
+
+exit
+
+The Pi-side OpenCV or mission process must be running and must print:
+
+[STREAM] http://127.0.0.1:5602/stream.mjpg
+
+Then open the laptop window:
+
+cd ~/FOR_COMP/wd-drone-autonomous-mission
+./real_mission/open_laptop_camera_window.sh --ssh-alias pi5@PI_ETHERNET_ADDRESS
+
+Replace PI_ETHERNET_ADDRESS with the actual address. For example, if the Pi
+shows "10.42.0.145/24", pass only "10.42.0.145".
+
+If SSH itself fails, the camera viewer cannot work. Diagnose SSH first:
+
+ssh -v pi5@PI_ETHERNET_ADDRESS true
+
+The viewer waits for SSH authentication and reports tunnel failures directly.
+It maps laptop port 15602 to the Pi-only stream on port 5602.
+
+
+4. NORMAL DAILY COMMANDS
 
 cd ~/FOR_COMP/wd-drone-autonomous-mission
 git switch main
@@ -44,7 +81,7 @@ source .venv/bin/activate
 ./scripts/check_project.sh
 
 
-4. START A SAFE DEVELOPMENT BRANCH
+5. START A SAFE DEVELOPMENT BRANCH
 
 Replace the example name and email with the friend's own GitHub details:
 
@@ -67,7 +104,7 @@ a GitHub collaborator, or the friend must fork the repository and use their
 own GitHub authentication.
 
 
-5. OPTIONAL SIMULATION
+6. OPTIONAL SIMULATION
 
 The project source is ready after step 1. Full simulation additionally needs
 Gazebo Harmonic, ArduPilot, and ardupilot_gazebo. Follow:
@@ -77,7 +114,7 @@ simulation/README.md
 These external projects are large and are not stored inside this GitHub repo.
 
 
-6. HARDWARE SAFETY
+7. HARDWARE SAFETY
 
 Laptop setup and unit tests do not connect to or command an aircraft.
 

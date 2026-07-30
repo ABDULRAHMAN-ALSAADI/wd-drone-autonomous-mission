@@ -79,6 +79,15 @@ fi
 echo "[2/3] Creating the project Python environment"
 "$ROOT/scripts/setup.sh"
 
+echo "[CHECK] Verifying laptop OpenCV and NumPy"
+"$ROOT/.venv/bin/python" - <<'PY'
+import cv2
+import numpy
+
+print(f"OpenCV: {cv2.__version__}")
+print(f"NumPy: {numpy.__version__}")
+PY
+
 echo "[3/3] Running the complete software test suite"
 "$ROOT/scripts/check_project.sh"
 
