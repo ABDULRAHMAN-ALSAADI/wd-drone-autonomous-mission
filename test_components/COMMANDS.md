@@ -400,7 +400,10 @@ test_components/mavlink/MOTOR_MAPPING.md
 ```
 
 Test one motor at a time. Do not increase throttle until direction and mapping
-are correct. The tool refuses to run while the Cube reports armed.
+are correct. `--motor` means the physical M-number shown in the BetaFlightX
+diagram; the tool translates M1/M2 to ArduPilot's motor-test sequence. It does
+not alter flight motor mixing. The tool refuses to run while the Cube reports
+armed.
 
 ## 10. Real Mission Smoke Test
 

@@ -20,6 +20,14 @@ AUTOPILOT_COMPONENTS = {mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1}
 VELOCITY_ONLY_MASK = 3527
 GUIDED_TEST_MAX_SPEED_MPS = 0.2
 GUIDED_TEST_MAX_DURATION_S = 1.0
+# ArduPilot FRAME_TYPE=12 (BetaFlightX) assigns motor-test sequence 1 to
+# physical M2 and sequence 2 to physical M1. The CLI accepts physical M labels.
+BETAFLIGHT_X_MOTOR_TEST_SEQUENCE = {
+    1: 2,
+    2: 1,
+    3: 3,
+    4: 4,
+}
 
 
 def heartbeat_is_vehicle(msg) -> bool:
@@ -662,6 +670,10 @@ def command_speed(args) -> int:
     return 0
 
 
+def motor_test_sequence(motor_number: int) -> int:
+    return BETAFLIGHT_X_MOTOR_TEST_SEQUENCE.get(motor_number, motor_number)
+
+
 def command_motor_test(args) -> int:
     if not args.i_understand_props_off or not args.i_accept_motor_spin:
         raise SystemExit("Refusing motor test. Remove props and pass both safety flags.")
@@ -675,8 +687,10 @@ def command_motor_test(args) -> int:
     _mode, armed = wait_vehicle_state(master, min(args.timeout, 3.0))
     if armed:
         raise SystemExit("Refusing motor test because the vehicle is armed")
+    test_sequence = motor_test_sequence(args.motor)
     print(
-        f"[MOTOR TEST] motor={args.motor} throttle={args.throttle_percent}% "
+        f"[MOTOR TEST] physical_motor=M{args.motor} test_sequence={test_sequence} "
+        f"throttle={args.throttle_percent}% "
         f"duration={args.duration}s PROPS-OFF ONLY"
     )
     master.mav.command_long_send(
@@ -684,7 +698,7 @@ def command_motor_test(args) -> int:
         master.target_component,
         mavutil.mavlink.MAV_CMD_DO_MOTOR_TEST,
         0,
-        float(args.motor),
+        float(test_sequence),
         0.0,
         float(args.throttle_percent),
         float(args.duration),
@@ -805,7 +819,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     motor = subparsers.add_parser("motor-test", help="guarded ArduPilot motor test. PROPS OFF ONLY.")
     add_connection_args(motor)
-    motor.add_argument("--motor", type=int, required=True)
+    motor.add_argument(
+        "--motor",
+        type=int,
+        required=True,
+        help="physical motor label M1..M4 for this FRAME_TYPE=12 BetaFlightX project",
+    )
     motor.add_argument("--throttle-percent", type=float, required=True)
     motor.add_argument("--duration", type=float, default=1.0)
     motor.add_argument("--i-understand-props-off", action="store_true")

@@ -1,6 +1,8 @@
-# Motor Mapping Fix
+# Motor Test Numbering
 
-Use this when the motor test spins the wrong physical motor.
+This project uses ArduPilot `FRAME_CLASS=1`, `FRAME_TYPE=12`
+(`BetaFlightX`). Its MAVLink motor-test command uses a test-sequence number,
+which is not the same as the physical M-number for M1 and M2.
 
 ## Latest Test Result
 
@@ -13,56 +15,40 @@ You reported:
 | `--motor 3` | not yet re-confirmed |
 | `--motor 4` | not yet re-confirmed |
 
-The latest result means the M1 and M2 ESC signal assignments are exchanged:
+Because the same motors run correctly from Mission Planner, this observation
+does not show an ESC wiring fault. The old recommendation to swap M1/M2 signal
+wires was incorrect and must not be followed.
 
-```text
-output 1 <-> output 2
-```
+The Pi bench command now accepts the physical motor label and translates it to
+ArduPilot's BetaFlightX motor-test sequence:
 
-## Safe Physical Fix
-
-With every propeller removed, disconnect the flight battery and all other
-airframe power. Swap only the M1 and M2 ESC signal assignments:
-
-| Pixhawk MAIN OUT | Should go to physical motor |
+| Requested physical motor | MAVLink test sequence |
 | --- | --- |
-| MAIN OUT 1 | M1 |
-| MAIN OUT 2 | M2 |
-| MAIN OUT 3 | M3 |
-| MAIN OUT 4 | M4 |
+| M1 | 2 |
+| M2 | 1 |
+| M3 | 3 |
+| M4 | 4 |
 
-Based on the latest observed result:
+This translation exists only in the guarded bench tool. It does not change
+ArduPilot motor mixing, normal flight outputs, or mission runtime.
 
-```text
-swap the signal assignments on MAIN OUT 1 and MAIN OUT 2
-```
-
-On a four-in-one ESC harness, correct the S1/S2 signal-pin order or the matching
-output assignment. Keep signal grounds paired and common. Do not move any wire
-while the aircraft is powered. Swapping two motor phase wires changes rotation
-direction only; it does not correct motor position numbering.
-
-Do not compensate by changing the Raspberry Pi motor-test command. ArduPilot
-must own the correct motor mapping for every flight mode and failsafe.
-
-## Frame Type Check
+## Frame Type Requirement
 
 Your picture is a Quad X Betaflight motor layout. In ArduPilot, that frame
 mixing is `FRAME_TYPE = 12` (`BetaFlightX`) with `FRAME_CLASS = 1` (`Quad`).
 
-Set or verify this in Mission Planner before flight:
+Verify this in Mission Planner:
 
 ```text
 FRAME_CLASS = 1
 FRAME_TYPE  = 12
 ```
 
-Changing `FRAME_TYPE` requires rebooting the flight controller.
+Do not use this bench mapping with another frame type.
 
 ## Retest Order
 
-After correcting the signal assignment or frame setup, retest all four outputs
-with propellers removed:
+Retest all four physical labels with propellers removed:
 
 ```bash
 ./test_components/mavlink/motor_test.sh --motor 1 --throttle-percent 5 --duration 1 --i-understand-props-off --i-accept-motor-spin

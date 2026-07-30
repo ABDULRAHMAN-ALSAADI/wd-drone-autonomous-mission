@@ -11,6 +11,7 @@ from tools.mavlink_bench import (
     command_set_mode,
     format_rc_channels,
     guided_velocity_steps,
+    motor_test_sequence,
     send_body_velocity_target,
 )
 
@@ -118,6 +119,40 @@ class MavlinkBenchTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             command_motor_test(args)
         connect.return_value.mav.command_long_send.assert_not_called()
+
+    def test_betaflight_x_physical_motor_labels_map_to_test_sequence(self) -> None:
+        self.assertEqual(
+            [motor_test_sequence(motor) for motor in range(1, 5)],
+            [2, 1, 3, 4],
+        )
+
+    @patch("tools.mavlink_bench.wait_ack", return_value="MAV_RESULT_ACCEPTED")
+    @patch("tools.mavlink_bench.wait_vehicle_state", return_value=("STABILIZE", False))
+    @patch("tools.mavlink_bench.connect")
+    def test_motor_test_sends_sequence_for_requested_physical_motor(
+        self,
+        connect: Mock,
+        _state: Mock,
+        _ack: Mock,
+    ) -> None:
+        master = connect.return_value
+        master.target_system = 1
+        master.target_component = 1
+        args = SimpleNamespace(
+            connection="/dev/ttyAMA0",
+            baud=921600,
+            timeout=15.0,
+            motor=1,
+            throttle_percent=5.0,
+            duration=1.0,
+            i_understand_props_off=True,
+            i_accept_motor_spin=True,
+        )
+
+        self.assertEqual(command_motor_test(args), 0)
+
+        command_args = master.mav.command_long_send.call_args.args
+        self.assertEqual(command_args[4], 2.0)
 
     @patch("tools.mavlink_bench.wait_vehicle_state", return_value=("STABILIZE", True))
     @patch("tools.mavlink_bench.connect")
