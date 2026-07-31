@@ -34,14 +34,22 @@ import pymavlink  # noqa: F401
 import serial  # noqa: F401
 
 cfg = json.loads(Path("real_mission/parameter_config/mission2_target_payload.json").read_text())
+physical_payload = not bool(cfg["payload"]["simulate_only"])
+payload_state = cfg.get("payload_state", {})
 assert cfg["mavlink"]["connection"] == "/dev/ttyAMA0", cfg["mavlink"]
 assert int(cfg["mavlink"]["baud"]) == 921600, cfg["mavlink"]
 assert cfg["navigation"]["search_speed_source"] == "qgc_mission", cfg["navigation"]
 assert cfg["control"]["altitude_control"] == "off", cfg["control"]
-assert cfg["payload"]["simulate_only"] is True, cfg["payload"]
+assert not physical_payload or (
+    payload_state.get("enabled") is True and payload_state.get("path")
+), (cfg["payload"], payload_state)
+assert int(cfg["payload"]["servo_channel"]) == 5, cfg["payload"]
+assert int(cfg["payload"]["blue_payload_pwm"]) == 1700, cfg["payload"]
+assert int(cfg["payload"]["red_payload_pwm"]) == 1300, cfg["payload"]
+assert int(cfg["payload"]["neutral_pwm"]) == 1500, cfg["payload"]
 assert cfg["mission"]["name"] == "mission2_target_payload", cfg["mission"]
 assert cfg["mission"]["search_enabled"] is True, cfg["mission"]
-print("[OK] Python imports and real mission config are bench-safe")
+print("[OK] Python imports and real mission payload safeguards are valid")
 PY
 
 MAVLINK_CONNECTION=$(

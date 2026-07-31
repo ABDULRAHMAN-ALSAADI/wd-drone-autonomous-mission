@@ -48,6 +48,15 @@ from pathlib import Path
 
 path = Path("real_mission/parameter_config/mission2_target_payload.json")
 cfg = json.loads(path.read_text(encoding="utf-8"))
+physical_payload = not bool(cfg["payload"]["simulate_only"])
+payload_state = cfg.get("payload_state", {})
+physical_payload_safe = (
+    not physical_payload
+    or (
+        payload_state.get("enabled") is True
+        and bool(payload_state.get("path"))
+    )
+)
 
 checks = [
     ("mission2.name", cfg["mission"]["name"] == "mission2_target_payload"),
@@ -55,7 +64,10 @@ checks = [
     ("mavlink.connection", cfg["mavlink"]["connection"] == "/dev/ttyAMA0"),
     ("mavlink.baud", int(cfg["mavlink"]["baud"]) == 921600),
     ("payload.servo_channel", int(cfg["payload"]["servo_channel"]) == 5),
-    ("payload.simulate_only", cfg["payload"]["simulate_only"] is True),
+    ("payload.physical_state_guard", physical_payload_safe),
+    ("payload.blue_payload_pwm", int(cfg["payload"]["blue_payload_pwm"]) == 1700),
+    ("payload.red_payload_pwm", int(cfg["payload"]["red_payload_pwm"]) == 1300),
+    ("payload.neutral_pwm", int(cfg["payload"]["neutral_pwm"]) == 1500),
     ("control.altitude_control", cfg["control"]["altitude_control"] == "off"),
     ("navigation.search_speed_source", cfg["navigation"]["search_speed_source"] == "qgc_mission"),
     ("safety.active_target_abort_mode", cfg["safety"]["active_target_abort_mode"] == "AUTO"),

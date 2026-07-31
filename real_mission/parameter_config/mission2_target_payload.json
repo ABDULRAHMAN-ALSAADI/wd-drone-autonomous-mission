@@ -119,7 +119,7 @@
     "image_x_to_right_sign": 1.0
   },
   "payload": {
-    "simulate_only": true,
+    "simulate_only": false,
     "mechanism": "selector_servo",
     "servo_channel": 5,
     "blue_payload_pwm": 1700,
@@ -130,7 +130,7 @@
     "total_action_time_s": 3.5
   },
   "payload_state": {
-    "enabled": false,
+    "enabled": true,
     "path": "logs/payload_state/mission2_target_payload.json"
   },
   "safety": {
