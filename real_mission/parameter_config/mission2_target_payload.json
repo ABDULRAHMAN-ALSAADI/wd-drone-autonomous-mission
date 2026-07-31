@@ -103,10 +103,10 @@
     "command_rate_hz": 10.0,
     "center_kp": 0.55,
     "center_max_speed_m_s": 0.35,
-    "center_tolerance_px": 22.0,
+    "center_tolerance_px": 32.0,
     "center_tolerance_px_by_target": {
-      "red_triangle": 18.0,
-      "blue_hexagon": 16.0
+      "red_triangle": 34.0,
+      "blue_hexagon": 32.0
     },
     "center_hold_s": 1.2,
     "target_lost_timeout_s": 4.0,
