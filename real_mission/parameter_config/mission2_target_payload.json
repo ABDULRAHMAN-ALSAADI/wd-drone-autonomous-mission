@@ -16,7 +16,7 @@
     "vision.search_border_margin_px": "Require the complete target to be visible before initial confirmation; active tracking may still follow it near an edge.",
     "camera.camera_index": "Logical Picamera2 camera number, not the physical connector. With one detected camera, keep 0 even if the ribbon is on CAM/DISP 1.",
     "camera.lens_position": "Manual focus calibration in inverse metres. 0.15 is a starting point near 6.7 m and must be calibrated at the actual flight height.",
-    "camera.adaptive_exposure": "Keep bounded camera auto-exposure active after warm-up so outdoor sun and shade changes do not clip the image; white balance and manual focus remain locked.",
+    "camera.adaptive_exposure": "Keep highlight-protecting camera auto-exposure active after warm-up so outdoor sun and shade changes do not clip the image; white balance and manual focus remain locked.",
     "camera.ae_constraint_mode": "highlight protects bright outdoor areas from clipping.",
     "camera.ae_exposure_mode": "short makes auto-exposure prefer shorter shutter times to reduce flight motion blur.",
     "camera.max_exposure_time_us": "Maximum exposure retained after warm-up when adaptive_exposure is false.",
