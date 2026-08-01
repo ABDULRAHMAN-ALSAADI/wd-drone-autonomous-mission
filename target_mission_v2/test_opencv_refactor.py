@@ -83,6 +83,23 @@ class CameraFrameTests(unittest.TestCase):
         self.assertEqual(controls["AnalogueGain"], 4.0)
         self.assertEqual(controls["ColourGains"], (1.4, 1.7))
 
+    def test_adaptive_exposure_keeps_ae_on_and_locks_white_balance(self):
+        controls = Picamera2Camera._locked_auto_controls(
+            {
+                "ExposureTime": 12000,
+                "AnalogueGain": 8.0,
+                "ColourGains": (1.4, 1.7),
+            },
+            max_exposure_time_us=6000,
+            max_analogue_gain=8.0,
+            keep_auto_exposure=True,
+        )
+        self.assertTrue(controls["AeEnable"])
+        self.assertFalse(controls["AwbEnable"])
+        self.assertEqual(controls["ColourGains"], (1.4, 1.7))
+        self.assertNotIn("ExposureTime", controls)
+        self.assertNotIn("AnalogueGain", controls)
+
 
 class PreprocessingTests(unittest.TestCase):
     def test_search_and_tracking_reuse_one_preprocessing_pass(self):

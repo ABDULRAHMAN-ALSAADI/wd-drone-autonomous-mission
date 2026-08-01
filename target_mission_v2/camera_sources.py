@@ -335,6 +335,9 @@ class Picamera2Camera:
                 max_analogue_gain=float(
                     camera_config.get("max_analogue_gain", 8.0)
                 ),
+                keep_auto_exposure=bool(
+                    camera_config.get("adaptive_exposure", False)
+                ),
             )
             self.camera.set_controls(self.locked_controls)
             lock_settle_s = max(
@@ -348,10 +351,16 @@ class Picamera2Camera:
             f"{width}x{height}@{framerate:g} format={pixel_format}"
         )
         if self.locked_controls:
+            if self.locked_controls.get("AeEnable", False):
+                exposure_status = "adaptive exposure=on"
+            else:
+                exposure_status = (
+                    f"exposure={self.locked_controls['ExposureTime']}us "
+                    f"gain={self.locked_controls['AnalogueGain']:.2f}"
+                )
             print(
-                "[CAMERA] flight controls locked "
-                f"exposure={self.locked_controls['ExposureTime']}us "
-                f"gain={self.locked_controls['AnalogueGain']:.2f} "
+                "[CAMERA] flight controls configured "
+                f"{exposure_status} "
                 f"colour_gains={self.locked_controls['ColourGains']} "
                 f"lens={camera_config.get('lens_position')}"
             )
@@ -361,42 +370,72 @@ class Picamera2Camera:
         metadata: dict[str, Any],
         max_exposure_time_us: int,
         max_analogue_gain: float,
+        keep_auto_exposure: bool = False,
     ) -> dict[str, Any]:
-        """Freeze settled AE/AWB values while enforcing a blur limit."""
+        """Freeze settled AWB and optionally AE values after warm-up."""
         if max_exposure_time_us <= 0:
             raise ValueError("camera.max_exposure_time_us must be positive")
         if max_analogue_gain <= 0:
             raise ValueError("camera.max_analogue_gain must be positive")
-        missing = [
-            key
-            for key in ("ExposureTime", "AnalogueGain", "ColourGains")
-            if metadata.get(key) is None
-        ]
+        required = ["ColourGains"]
+        if not keep_auto_exposure:
+            required.extend(("ExposureTime", "AnalogueGain"))
+        missing = [key for key in required if metadata.get(key) is None]
         if missing:
             raise RuntimeError(
                 "Picamera2 warm-up metadata is missing: "
                 + ", ".join(missing)
             )
+        colour_gains = tuple(float(value) for value in metadata["ColourGains"])
+        if len(colour_gains) != 2:
+            raise RuntimeError("Picamera2 ColourGains metadata must have two values")
+        locked: dict[str, Any] = {
+            "AeEnable": bool(keep_auto_exposure),
+            "AwbEnable": False,
+            "ColourGains": colour_gains,
+        }
+        if keep_auto_exposure:
+            return locked
         measured_exposure = max(1, int(metadata["ExposureTime"]))
         exposure = min(measured_exposure, int(max_exposure_time_us))
         measured_gain = max(1.0, float(metadata["AnalogueGain"]))
         compensated_gain = measured_gain * measured_exposure / exposure
-        gain = min(float(max_analogue_gain), compensated_gain)
-        colour_gains = tuple(float(value) for value in metadata["ColourGains"])
-        if len(colour_gains) != 2:
-            raise RuntimeError("Picamera2 ColourGains metadata must have two values")
-        return {
-            "AeEnable": False,
-            "ExposureTime": exposure,
-            "AnalogueGain": gain,
-            "AwbEnable": False,
-            "ColourGains": colour_gains,
-        }
+        locked["ExposureTime"] = exposure
+        locked["AnalogueGain"] = min(float(max_analogue_gain), compensated_gain)
+        return locked
 
     def _camera_controls(self, camera_config: dict[str, Any], framerate: float) -> dict[str, Any]:
         values: dict[str, Any] = {}
         frame_duration_us = max(1, round(1_000_000.0 / framerate))
         values["FrameDurationLimits"] = (frame_duration_us, frame_duration_us)
+
+        ae_constraint_mode = camera_config.get("ae_constraint_mode")
+        if ae_constraint_mode is not None:
+            constraint_modes = {
+                "normal": self._controls_module.AeConstraintModeEnum.Normal,
+                "highlight": self._controls_module.AeConstraintModeEnum.Highlight,
+                "shadows": self._controls_module.AeConstraintModeEnum.Shadows,
+            }
+            constraint_name = str(ae_constraint_mode).lower()
+            if constraint_name not in constraint_modes:
+                raise ValueError(
+                    "camera.ae_constraint_mode must be normal, highlight, or shadows"
+                )
+            values["AeConstraintMode"] = constraint_modes[constraint_name]
+
+        ae_exposure_mode = camera_config.get("ae_exposure_mode")
+        if ae_exposure_mode is not None:
+            exposure_modes = {
+                "normal": self._controls_module.AeExposureModeEnum.Normal,
+                "short": self._controls_module.AeExposureModeEnum.Short,
+                "long": self._controls_module.AeExposureModeEnum.Long,
+            }
+            exposure_name = str(ae_exposure_mode).lower()
+            if exposure_name not in exposure_modes:
+                raise ValueError(
+                    "camera.ae_exposure_mode must be normal, short, or long"
+                )
+            values["AeExposureMode"] = exposure_modes[exposure_name]
 
         autofocus_mode = str(camera_config.get("autofocus_mode", "manual")).lower()
         autofocus_modes = {
