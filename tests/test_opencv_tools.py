@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 import unittest
+from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +20,7 @@ for directory in (ROOT / "target_mission_v2", ROOT / "tools"):
 from camera_sources import CameraFrame  # noqa: E402
 from opencv_common import LatestCameraReader  # noqa: E402
 from opencv_live_test import desired_point, scale_detection  # noqa: E402
+from mission_stream_view import pop_latest_jpeg, recent_fps  # noqa: E402
 from opencv_servo_bench_test import (  # noqa: E402
     ACCEPTED,
     SERVO_COMMAND,
@@ -118,6 +120,7 @@ class LatestCameraReaderTests(unittest.TestCase):
         finally:
             reader.stop()
 
+
     def test_reader_stops_camera_and_thread(self):
         camera = FakeCamera()
         reader = LatestCameraReader(camera)
@@ -127,6 +130,20 @@ class LatestCameraReaderTests(unittest.TestCase):
         self.assertTrue(camera.released.is_set())
         self.assertIsNotNone(reader._thread)
         self.assertFalse(reader._thread.is_alive())
+
+
+class MissionStreamViewerTests(unittest.TestCase):
+    def test_newest_complete_jpeg_wins_and_incomplete_data_is_retained(self):
+        first = b"\xff\xd8old\xff\xd9"
+        newest = b"\xff\xd8new\xff\xd9"
+        incomplete = b"--frame\r\n\xff\xd8partial"
+        buffer = bytearray(b"header" + first + b"boundary" + newest + incomplete)
+
+        self.assertEqual(pop_latest_jpeg(buffer), newest)
+        self.assertEqual(buffer, b"\xff\xd8partial")
+
+    def test_recent_fps_uses_frame_arrival_times(self):
+        self.assertAlmostEqual(recent_fps(deque([10.0, 10.1, 10.2])), 10.0)
 
 
 class CoordinateMappingTests(unittest.TestCase):
