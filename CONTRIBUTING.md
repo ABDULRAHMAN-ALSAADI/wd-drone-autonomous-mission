@@ -66,14 +66,6 @@ camera, UART connection, flight controller, payload mechanism, or aircraft.
 - Update configuration documentation with every new tunable field.
 - Prefer a focused change over a broad rewrite during flight-test preparation.
 
-## Local Data
-
-Do not commit camera dumps, logs, or private flight data unless the team
-explicitly approves the release.
-
-Never commit credentials, `.env` files, SSH keys, telemetry containing private
-locations, or personal data. If sensitive information is committed, stop and
-follow `SECURITY.md`; deleting it in a later commit is not enough.
 
 ## Commit Message
 
