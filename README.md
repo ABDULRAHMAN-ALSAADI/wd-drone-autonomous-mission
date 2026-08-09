@@ -24,13 +24,10 @@ model, model compiler, or neural-network inference runtime.
 
 ## Mission Demonstration
 
-> **Video placeholder:** the final Gazebo and real-hardware Mission 2
-> demonstration will be embedded here after the team uploads the reviewed
-> recording to GitHub.
+[![Watch the WD Drone Mission 2 demonstration](https://img.youtube.com/vi/QQ8b78xBOo0/maxresdefault.jpg)](https://youtu.be/QQ8b78xBOo0)
 
-The recording should show AUTO flight, target confirmation, GUIDED centering,
-the simulated or physical payload event, AUTO continuation, and final RTL. Do
-not publish private locations, telemetry credentials, or unsafe bench footage.
+[Watch the Mission 2 system demonstration on YouTube](https://youtu.be/QQ8b78xBOo0).
+The video shows the project architecture and simulated autonomous mission flow.
 
 ## Start Here
 
