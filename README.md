@@ -212,8 +212,4 @@ private flight data, or camera dumps in a pull request.
 
 See the [Roadmap](docs/ROADMAP.md) for future work.
 
-## License
 
-An open-source license has not been selected yet. Public visibility alone does
-not grant permission to copy, modify, or redistribute the project. A `LICENSE`
-file should be added before inviting broad reuse.
