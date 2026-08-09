@@ -106,7 +106,7 @@ drone, move servos, or upload missions.
 ## Documents
 
 `docs/` holds longer operating knowledge: safety, wiring, test day, monitoring,
-camera calibration, and model plans.
+camera calibration, simulation, and mission operations.
 
 ## Generated Or Local-Only Folders
 

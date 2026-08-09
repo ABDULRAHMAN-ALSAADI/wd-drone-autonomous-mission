@@ -71,9 +71,8 @@ The active vision backend is:
 }
 ```
 
-Keep this backend for SITL, MAVLink bench tests, and first real-camera checks.
-Add YOLO or AI HAT inference only as a separate backend after the trained model
-passes the safety gates in `docs/VISION_MODEL_PLAN.md`.
+This strict OpenCV backend is the production detector for SITL, MAVLink bench
+tests, and real-camera operation.
 
 ## Operator Config
 

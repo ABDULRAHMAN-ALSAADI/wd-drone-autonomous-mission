@@ -10,11 +10,5 @@ The OpenCV camera tools may create:
 data/camera_snapshots/
 ```
 
-The YOLOv8 branch stores calibration images under:
-
-```text
-hailo_compile/calib_images/
-```
-
 Keep original data backed up separately. Commit only small documentation or
 manually reviewed metadata, never an accidental camera dump.

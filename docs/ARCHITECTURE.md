@@ -6,7 +6,6 @@ flowchart TD
     RFD[RFD900x telemetry]
     CUBE[Cube Orange Plus]
     PI[Raspberry Pi 5]
-    HAILO[AI HAT+]
     CAM[Camera Module 3 Standard]
     PAYLOAD[Payload servos]
     GPS[HERE3+ GNSS]
@@ -16,7 +15,6 @@ flowchart TD
     GPS --> CUBE
     CUBE <--> PI
     CAM --> PI
-    HAILO <--> PI
     CUBE --> PAYLOAD
 ```
 

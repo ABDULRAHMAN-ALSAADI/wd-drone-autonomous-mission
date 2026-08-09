@@ -17,7 +17,7 @@ The setup is successful when it ends with:
 
 [READY] Ubuntu development setup passed.
 
-The complete check currently runs 139 software tests. If any command fails,
+The setup runs the complete current software test suite. If any command fails,
 stop and send the complete terminal error to the team.
 
 
@@ -30,7 +30,7 @@ stop and send the complete terminal error to the team.
 - Watch the Pi camera later, after the friend receives separate Pi SSH access.
 
 The clone does not include your .venv, passwords, SSH keys, logs, camera
-recordings, model files, or the external ArduPilot/Gazebo source trees. Those
+recordings, or the external ArduPilot/Gazebo source trees. Those
 are machine-specific or intentionally excluded. The setup creates a fresh
 .venv for this laptop.
 

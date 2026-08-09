@@ -30,9 +30,6 @@ EXCLUDES=(
     --exclude="data/camera_snapshots/"
     --exclude="data/raw/"
     --exclude="data/processed/"
-    --exclude="models/*.hef"
-    --exclude="models/*.onnx"
-    --exclude="models/*.pt"
     --exclude="secrets/"
     --exclude=".env"
 )

@@ -174,8 +174,8 @@ reviewing it for the actual field.
 
 ## 6. Prepare The Raspberry Pi 5
 
-Use 64-bit Raspberry Pi OS. Install a cooler before sustained camera or Hailo
-work. The Pi and laptop must share Ethernet, Wi-Fi or a hotspot for SSH and the
+Use 64-bit Raspberry Pi OS. Install a cooler before sustained camera and
+OpenCV work. The Pi and laptop must share Ethernet, Wi-Fi or a hotspot for SSH and the
 laptop video window.
 
 Install the base packages on the Pi:
@@ -228,14 +228,8 @@ DRY_RUN=1 ./scripts/sync_to_pi.sh
 ./scripts/pi_validate.sh
 ```
 
-The sync excludes virtual environments, logs, datasets, model weights and
-secrets. It does not delete Pi files.
-
-Read-only hardware report from the laptop:
-
-```bash
-./test_components/camera/pi_camera_hailo_status.sh
-```
+The sync excludes virtual environments, logs, captured datasets and secrets.
+It does not delete Pi files.
 
 Camera test on the Pi:
 
@@ -355,7 +349,6 @@ Never commit:
 - `.venv/`, caches or logs;
 - private keys, passwords, hotspot details or `.env` secrets;
 - unreviewed camera dumps;
-- model weights until the team approves their release;
 - external ArduPilot or Gazebo build directories.
 
 See `CONTRIBUTING.md` for review expectations.

@@ -546,7 +546,7 @@ class MissionConfigTests(unittest.TestCase):
 
     def test_validate_config_rejects_unknown_vision_backend(self):
         config = self.config()
-        config["vision"]["backend"] = "yolo_experiment"
+        config["vision"]["backend"] = "unsupported_backend"
         with self.assertRaises(ValueError):
             validate_config(config)
 

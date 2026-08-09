@@ -134,5 +134,5 @@ vcgencmd measure_temp
 vcgencmd get_throttled
 ```
 
-Stop heavy work near 80 C. Do not run long OpenCV/YOLO workloads without
+Stop heavy work near 80 C. Do not run long OpenCV camera workloads without
 cooling.

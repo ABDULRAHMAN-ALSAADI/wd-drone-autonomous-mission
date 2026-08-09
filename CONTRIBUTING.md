@@ -66,12 +66,10 @@ camera, UART connection, flight controller, payload mechanism, or aircraft.
 - Update configuration documentation with every new tunable field.
 - Prefer a focused change over a broad rewrite during flight-test preparation.
 
-## Data And Models
+## Local Data
 
-Do not commit camera dumps, logs, private data, model weights or generated HEF
-compiler output unless the team explicitly approves the release. Keep a record
-of model source, class mapping, training version and checksum outside Git until
-then.
+Do not commit camera dumps, logs, or private flight data unless the team
+explicitly approves the release.
 
 Never commit credentials, `.env` files, SSH keys, telemetry containing private
 locations, or personal data. If sensitive information is committed, stop and

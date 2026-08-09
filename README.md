@@ -14,10 +14,23 @@ This repository was built for the 2026 UAV competition, but its simulation,
 vision, safety, and hardware-test tools are designed so future teams can study
 and improve them.
 
+This is the **OpenCV-only Mission 2 implementation**. It contains no trained
+model, model compiler, or neural-network inference runtime.
+
 > [!CAUTION]
 > This software can command a real aircraft. Start with unit tests and
 > simulation. Remove propellers for all hardware bench tests. A successful
 > software test does not make an aircraft safe to fly.
+
+## Mission Demonstration
+
+> **Video placeholder:** the final Gazebo and real-hardware Mission 2
+> demonstration will be embedded here after the team uploads the reviewed
+> recording to GitHub.
+
+The recording should show AUTO flight, target confirmation, GUIDED centering,
+the simulated or physical payload event, AUTO continuation, and final RTL. Do
+not publish private locations, telemetry credentials, or unsafe bench footage.
 
 ## Start Here
 
@@ -103,9 +116,9 @@ contribution workflow.
 | [`docs/`](docs/) | Architecture, safety, operations, calibration, and roadmap documents |
 
 The [`main`](https://github.com/ABDULRAHMAN-ALSAADI/wd-drone-autonomous-mission/tree/main)
-branch is the supported OpenCV Mission 2 implementation. Future model-assisted
-vision work is tracked in [Vision Model Plan](docs/VISION_MODEL_PLAN.md); it is
-not required for this setup.
+branch is the only supported Mission 2 implementation. Target authority comes
+from strict OpenCV colour and geometric-shape verification across multiple
+frames.
 
 ## Real Hardware
 
@@ -120,13 +133,20 @@ Do not jump from cloning the repository to flight. Use this progression:
    [Real Drone And First-Flight Checklist](docs/REAL_DRONE_CHECKLIST.md).
 7. Use a team-reviewed flight-test plan with a competent safety pilot.
 
-Physical payload output is disabled by default:
+The reusable starting profile keeps physical payload output disabled:
 
 ```json
 "payload": {
   "simulate_only": true
 }
 ```
+
+The operator launcher uses
+`real_mission/parameter_config/mission2_target_payload.json`. That tested team
+profile currently has physical output enabled for MAIN OUT 5 after the recorded
+propeller-off servo checks. New users must change it back to
+`"simulate_only": true` until their own mechanism and PWM mapping have passed
+the documented bench procedure.
 
 The project does not replace airframe inspection, correct ArduPilot setup,
 range checks, GPS/compass checks, tested RC recovery modes, legal compliance,
@@ -141,7 +161,9 @@ before installing propellers.
 
 Upload and review a small real-field AUTO route in Mission Planner/QGC. Confirm
 home, fence, RTL, altitude, speed, RC recovery, and that the first search-area
-item is MAVLink mission sequence `2`. Keep `payload.simulate_only=true`.
+item is MAVLink mission sequence `2`. Use payload simulation for an initial
+aircraft test; the checked-in operator profile must not be used unchanged by a
+new aircraft or payload mechanism.
 
 Start with **one target**. The Pi waits for the aircraft to be armed, in AUTO,
 and at mission sequence `2`. It then confirms
@@ -189,7 +211,7 @@ places to start.
 
 Please read [CONTRIBUTING.md](CONTRIBUTING.md), open an issue for large or
 safety-critical changes, and use a feature branch. Never include secrets, logs,
-private flight data, camera dumps, or large model files in a pull request.
+private flight data, or camera dumps in a pull request.
 
 See the [Roadmap](docs/ROADMAP.md) for future work.
 

@@ -160,8 +160,8 @@ The active flight backend is selected explicitly:
 }
 ```
 
-Future YOLO or AI HAT work should be added as a separate backend after the model
-passes the safety gates in `docs/VISION_MODEL_PLAN.md`.
+`strict_shape` is the production and supported vision backend in this
+repository.
 
 ## Install
 

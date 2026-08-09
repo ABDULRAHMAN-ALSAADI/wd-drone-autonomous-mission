@@ -30,8 +30,6 @@ This `scripts/` folder is the lower-level toolbox behind those wrappers.
   and save a live preview image.
 - `pi_camera_live.sh`: run on the Ubuntu laptop; opens a live Pi camera window
   and runs the mission OpenCV detector on that stream.
-- `../test_components/camera/pi_camera_hailo_status.sh`: read-only Pi camera
-  and Hailo AI HAT+ status report.
 - `pi_test_day_readiness.sh`: full safe readiness report for hardware test day.
 - `pi_cache_wheels.sh`: cache Python wheels on the Pi for poor internet.
 

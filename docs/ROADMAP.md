@@ -51,15 +51,11 @@
 - [x] Simulate servo output
 - [x] Test real Cube MAIN OUT 5 selector output without propellers
 
-## Phase 7 — Raspberry Pi and AI HAT+
+## Phase 7 — Raspberry Pi And Camera
 
 - [x] Configure Raspberry Pi UART as `/dev/ttyAMA0` at `921600`
 - [x] Verify Cube vehicle heartbeat `src=1:1`
 - [x] Configure and benchmark Camera Module 3
-- [ ] Train and validate target model
-- [ ] Convert model to Hailo HEF
-- [ ] Add `yolo_shape_gate` backend after model validation
-- [ ] Run inference on AI HAT+
 - [ ] Add systemd service and watchdog after manual launch is stable
 
 ## Phase 8 — Flight validation

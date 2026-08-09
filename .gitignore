@@ -21,8 +21,5 @@ logs/
 data/raw/
 data/processed/
 data/camera_snapshots/
-models/*.hef
-models/*.onnx
-models/*.pt
 secrets/
 .env

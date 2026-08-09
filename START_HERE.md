@@ -25,7 +25,7 @@ folders.
 ## Real Mission
 
 Deploy the current laptop source to the Pi without copying virtual
-environments, logs, model files, or captured images:
+environments, logs, or captured images:
 
 ```bash
 cd ~/FOR_COMP/wd-drone-autonomous-mission

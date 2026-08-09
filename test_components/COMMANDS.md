@@ -64,19 +64,6 @@ benchmark, replay, and image-capture workflow is in:
 docs/OPENCV_PI5_TESTING.md
 ```
 
-## 3A. Legacy Camera And Hailo Hardware Status
-
-Run on the Ubuntu laptop:
-
-```bash
-cd ~/FOR_COMP/wd-drone-autonomous-mission
-./test_components/camera/pi_camera_hailo_status.sh
-```
-
-This is read-only. It checks Pi temperature, throttling, camera boot overlay,
-detected `rpicam` cameras, video devices, Hailo PCIe visibility, and HailoRT
-installation state.
-
 ## 4. Legacy MJPEG Camera Health Without Window
 
 Run on the Raspberry Pi:

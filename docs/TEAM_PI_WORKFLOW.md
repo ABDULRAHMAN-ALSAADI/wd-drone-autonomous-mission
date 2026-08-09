@@ -54,8 +54,8 @@ DRY_RUN=1 ./scripts/sync_to_pi.sh
 ./scripts/sync_to_pi.sh
 ```
 
-The script excludes virtualenvs, caches, logs, raw data, model files, secrets,
-and `.env`. It does not delete files on the Pi.
+The script excludes virtualenvs, caches, logs, raw data, secrets, and `.env`.
+It does not delete files on the Pi.
 
 ## Prepare And Validate The Pi Copy
 

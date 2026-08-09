@@ -171,5 +171,5 @@ Before trusting it for payload release:
 6. Keep payload simulation enabled until detection and centering are verified
    at representative flight conditions.
 
-YOLO/AI HAT+ can be added later as an optional backend, but the simple detector
-should remain as a fallback until the trained model passes real-world tests.
+The production detector remains the strict OpenCV colour-and-geometry pipeline
+described in `target_mission_v2/README.md`.
