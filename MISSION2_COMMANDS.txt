@@ -42,8 +42,8 @@ changing RC PWM values. The tested connection is /dev/ttyAMA0 at 921600 baud.
   --i-accept-servo-motion \
   --i-confirm-payload-zone-clear
 
-Red triangle: 1300 for 3 seconds, then 1500.
-Blue hexagon: 1700 for 3 seconds, then 1500.
+Red triangle: blue payload at 1700 for 3 seconds, then neutral 1500.
+Blue hexagon: red payload at 1300 for 3 seconds, then neutral 1500.
 Press Ctrl+C after both pass and confirm neutral 1500.
 
 
